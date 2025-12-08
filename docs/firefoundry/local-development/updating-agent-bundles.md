@@ -1,12 +1,29 @@
 # Updating Agent Bundles
 
-After making changes to your agent bundle code, you need to rebuild and redeploy to see the changes in your local minikube cluster. This guide walks through the complete update workflow using talespring as an example.
+After making changes to your agent bundle code, you need to rebuild and redeploy to see the changes in your local cluster. This guide walks through the complete update workflow using talespring as an example.
 
 ## Prerequisites
 
 - Agent bundle already deployed (see [Deploying Talespring](./agent-development.md))
 - Code changes made in your project directory
-- minikube cluster running with port-forward to Kong proxy
+- Local cluster running (minikube or k3d) with port-forward to Kong proxy
+- [FF CLI installed and configured](./ff-cli-setup.md)
+
+## Quick Update with FF CLI
+
+For most updates, use these two commands:
+
+```bash
+# Rebuild Docker image
+ff-cli ops build talespring --minikube --tag latest
+
+# Upgrade the deployment (triggers rolling restart)
+ff-cli ops upgrade talespring --namespace ff-dev
+```
+
+That's it! The CLI handles Docker daemon switching, image building, and Helm upgrades automatically.
+
+For more details on these commands, see the [FF CLI Operations Guide](../../ff-cli/ops.md).
 
 ## Update Workflow Overview
 
@@ -14,7 +31,7 @@ The complete update cycle involves four steps:
 
 1. **Rebuild TypeScript** - Compile your code changes
 2. **Rebuild Docker image** - Package the new code into a container
-3. **Restart deployment** - Force Kubernetes to use the new image
+3. **Upgrade deployment** - Apply the new image via Helm upgrade
 4. **Verify changes** - Test that your updates are live
 
 ## Step 1: Make Code Changes
@@ -56,7 +73,21 @@ ls -la apps/talespring/dist/
 
 ## Step 3: Rebuild Docker Image
 
-**Important**: Always use minikube's Docker daemon so your cluster can access the image:
+Use the FF CLI to build the Docker image:
+
+```bash
+# Build for minikube (automatically uses minikube's Docker daemon)
+ff-cli ops build talespring --minikube --tag latest
+```
+
+The CLI automatically:
+- Switches to minikube's Docker daemon
+- Builds with the correct Dockerfile and build args
+- Uses multi-stage builds with layer caching
+
+**Alternative: Manual Docker Build**
+
+If you need manual control or want to troubleshoot:
 
 ```bash
 # Switch to minikube's Docker environment
@@ -74,12 +105,6 @@ docker build \
   .
 ```
 
-**Build process:**
-- Multi-stage build: builder stage compiles code, production stage packages runtime
-- Uses the same `latest` tag (no need to update Helm values)
-- Takes 30-60 seconds with caching
-- Previous layers are reused when possible
-
 **Verify the new image:**
 ```bash
 # Check image was created
@@ -89,9 +114,23 @@ docker images | grep talespring
 docker inspect talespring:latest | grep Created
 ```
 
-## Step 4: Restart Kubernetes Deployment
+## Step 4: Upgrade Kubernetes Deployment
 
-Since you're using `pullPolicy: Never` (local images only), Kubernetes won't automatically detect the new image. You must force a pod restart:
+Use the FF CLI to upgrade the deployment:
+
+```bash
+# Upgrade the deployment (triggers rolling restart)
+ff-cli ops upgrade talespring --namespace ff-dev
+```
+
+This command:
+- Runs `helm upgrade` with your values files
+- Automatically adds restart annotations to trigger pod recreation
+- Handles the rolling update process
+
+**Alternative: Manual Restart**
+
+If you only need to restart without changing Helm values:
 
 ```bash
 # Restart the deployment (rolling update)
@@ -158,16 +197,14 @@ kubectl logs -n ff-dev $POD_NAME -f
 
 ## Quick Reference Commands
 
-For fast iteration, combine all steps:
+**Using FF CLI (recommended):**
 
 ```bash
-# Complete rebuild and redeploy (one-liner)
+# Complete rebuild and redeploy
 cd /tmp/talespring-demo && \
   pnpm run build && \
-  eval $(minikube docker-env) && \
-  docker build --build-arg GITHUB_TOKEN=$GITHUB_TOKEN -t talespring:latest -f apps/talespring/Dockerfile . && \
-  kubectl rollout restart deployment/talespring-agent-bundle -n ff-dev && \
-  kubectl rollout status deployment/talespring-agent-bundle -n ff-dev
+  ff-cli ops build talespring --minikube --tag latest && \
+  ff-cli ops upgrade talespring --namespace ff-dev
 ```
 
 **Create a shell alias for frequent updates:**
@@ -175,12 +212,23 @@ cd /tmp/talespring-demo && \
 # Add to ~/.zshrc or ~/.bashrc
 alias ff-update-talespring='cd /tmp/talespring-demo && \
   pnpm run build && \
-  eval $(minikube docker-env) && \
-  docker build --build-arg GITHUB_TOKEN=$GITHUB_TOKEN -t talespring:latest -f apps/talespring/Dockerfile . && \
-  kubectl rollout restart deployment/talespring-agent-bundle -n ff-dev'
+  ff-cli ops build talespring --minikube --tag latest && \
+  ff-cli ops upgrade talespring --namespace ff-dev'
 
 # Usage
 ff-update-talespring
+```
+
+**Manual commands (for troubleshooting):**
+
+```bash
+# Complete rebuild and redeploy without FF CLI
+cd /tmp/talespring-demo && \
+  pnpm run build && \
+  eval $(minikube docker-env) && \
+  docker build --build-arg GITHUB_TOKEN=$GITHUB_TOKEN -t talespring:latest -f apps/talespring/Dockerfile . && \
+  kubectl rollout restart deployment/talespring-agent-bundle -n ff-dev && \
+  kubectl rollout status deployment/talespring-agent-bundle -n ff-dev
 ```
 
 ## Troubleshooting
@@ -276,7 +324,10 @@ docker build -t talespring:latest .
 
 **✅ Do this:**
 ```bash
-# Always use minikube's Docker daemon
+# Use FF CLI (handles Docker daemon automatically)
+ff-cli ops build talespring --minikube --tag latest
+
+# Or manually switch to minikube's Docker daemon
 eval $(minikube docker-env)
 docker build -t talespring:latest .
 ```
@@ -289,7 +340,10 @@ docker build -t talespring:latest .
 
 **✅ Do this:**
 ```bash
-# Explicitly restart deployment after rebuild
+# Use FF CLI to upgrade (includes restart)
+ff-cli ops upgrade talespring --namespace ff-dev
+
+# Or explicitly restart deployment after rebuild
 kubectl rollout restart deployment/talespring-agent-bundle -n ff-dev
 ```
 
@@ -301,31 +355,32 @@ If you're working with multiple agent bundles, the same workflow applies to each
 # Update analytics-service
 cd /path/to/my-project
 pnpm run build
-eval $(minikube docker-env)
-docker build --build-arg GITHUB_TOKEN=$GITHUB_TOKEN -t analytics-service:latest -f apps/analytics-service/Dockerfile .
-kubectl rollout restart deployment/analytics-service-agent-bundle -n ff-dev
+ff-cli ops build analytics-service --minikube --tag latest
+ff-cli ops upgrade analytics-service --namespace ff-dev
 
 # Update notification-service
-docker build --build-arg GITHUB_TOKEN=$GITHUB_TOKEN -t notification-service:latest -f apps/notification-service/Dockerfile .
-kubectl rollout restart deployment/notification-service-agent-bundle -n ff-dev
+ff-cli ops build notification-service --minikube --tag latest
+ff-cli ops upgrade notification-service --namespace ff-dev
 ```
 
 ## Next Steps
 
 Now that you can update agent bundles, explore:
 
+- **[FF CLI Operations Guide](../../ff-cli/ops.md)** - Full reference for build, install, and upgrade commands
+- **[FF CLI Profiles](../../ff-cli/profiles.md)** - Configure registries for different environments
 - **[Operations & Maintenance](../platform/operations.md)** - Monitor and maintain your deployments
 - **[Troubleshooting](./troubleshooting.md)** - Solve common issues
 - **Agent SDK Documentation** - Learn advanced patterns and features
 
 ## Summary
 
-The complete update workflow:
+The complete update workflow with FF CLI:
 
-1. ✅ Make code changes
-2. ✅ Rebuild: `pnpm run build`
-3. ✅ Rebuild Docker: `eval $(minikube docker-env) && docker build ...`
-4. ✅ Restart: `kubectl rollout restart deployment/...`
-5. ✅ Verify: Test endpoints through Kong
+1. Make code changes
+2. Rebuild TypeScript: `pnpm run build`
+3. Rebuild Docker: `ff-cli ops build <bundle> --minikube --tag latest`
+4. Upgrade deployment: `ff-cli ops upgrade <bundle> --namespace ff-dev`
+5. Verify: Test endpoints through Kong
 
 With practice, this cycle takes less than 2 minutes from code change to verified deployment!

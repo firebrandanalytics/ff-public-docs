@@ -164,8 +164,30 @@ ff-cli environment delete my-env
 The `ff-cli` tool provides:
 
 - **Environment Management**: Create, list, and delete FireFoundry environments
+- **Operations Commands**: Build Docker images and deploy agent bundles to Kubernetes
+- **Profile Management**: Configure registries and cluster targets for different environments
 - **Status Monitoring**: Check the health and status of deployed services
 - **Configuration**: Manage environment-specific settings
+
+### Operations Commands
+
+The `ops` commands handle building and deploying agent bundles:
+
+```bash
+# Build a Docker image for your agent bundle
+ff-cli ops build my-bundle --minikube --tag latest
+
+# Install an agent bundle to Kubernetes
+ff-cli ops install my-bundle --namespace ff-dev
+
+# Upgrade an existing deployment
+ff-cli ops upgrade my-bundle --namespace ff-dev
+
+# Check prerequisites
+ff-cli ops doctor
+```
+
+For complete documentation, see the **[FF CLI Operations Guide](../../ff-cli/ops.md)**.
 
 ## Troubleshooting
 
@@ -204,5 +226,7 @@ chmod +x /usr/local/bin/ff-cli
 With the FireFoundry CLI installed, you're ready to:
 
 1. **[Agent Development](./agent-development.md)** - Create your first agent bundle
-2. **[Operations & Maintenance](../platform/operations.md)** - Monitor and debug your agents
-3. **[Troubleshooting](./troubleshooting.md)** - Common issues and solutions
+2. **[FF CLI Operations Guide](../../ff-cli/ops.md)** - Learn build, install, and upgrade commands
+3. **[FF CLI Profiles Guide](../../ff-cli/profiles.md)** - Configure registries for different environments
+4. **[Operations & Maintenance](../platform/operations.md)** - Monitor and debug your agents
+5. **[Troubleshooting](./troubleshooting.md)** - Common issues and solutions

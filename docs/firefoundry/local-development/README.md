@@ -44,6 +44,8 @@ FireFoundry is a comprehensive platform for building and deploying AI agents tha
 
 ## Reference Guides
 
+- **[FF CLI Operations](../../ff-cli/ops.md)** - Build, install, and upgrade agent bundles
+- **[FF CLI Profiles](../../ff-cli/profiles.md)** - Configure registries for different environments
 - **[Operations & Maintenance](../platform/operations.md)** - Monitoring, debugging, and updates
 - **[Troubleshooting](./troubleshooting.md)** - Common issues and solutions
 - **[Updating Agent Bundles](./updating-agent-bundles.md)** - Deploy new versions

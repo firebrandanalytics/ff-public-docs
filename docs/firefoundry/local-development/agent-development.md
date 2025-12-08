@@ -50,7 +50,21 @@ This compiles TypeScript and prepares the agent bundle for deployment.
 
 ## Step 3: Build Docker Image
 
-Build the Docker image using minikube's Docker daemon (so Kubernetes can access it):
+Build the Docker image using the FireFoundry CLI:
+
+```bash
+# Build for minikube (image stays local)
+ff-cli ops build talespring --minikube --tag latest
+```
+
+This command:
+- Automatically switches to minikube's Docker daemon
+- Builds the image with the correct Dockerfile
+- Passes the `GITHUB_TOKEN` build arg for private package access
+
+**Alternative: Manual Docker Build**
+
+If you prefer manual control or need to troubleshoot:
 
 ```bash
 # Switch to minikube's Docker environment
@@ -64,13 +78,13 @@ docker build \
   .
 ```
 
-**Note**: The `GITHUB_TOKEN` build arg is required to access private FireFoundry packages during the build. This uses the token you configured in [FF CLI Setup](./ff-cli-setup.md).
-
 Verify the image was built:
 
 ```bash
 docker images | grep talespring
 ```
+
+For more details on build options, see the [FF CLI Operations Guide](../../ff-cli/ops.md).
 
 ## Step 4: Prepare Configuration Files
 
@@ -118,7 +132,21 @@ service:
 
 ## Step 5: Deploy to Kubernetes
 
-Deploy talespring using the FireFoundry agent-bundle Helm chart:
+Deploy talespring using the FireFoundry CLI:
+
+```bash
+# Deploy from the project root directory
+ff-cli ops install talespring --namespace ff-dev
+```
+
+This command:
+- Adds the FireFoundry Helm repository (if not already added)
+- Installs the agent-bundle Helm chart with your `values.local.yaml` and `secrets.yaml`
+- Deploys to the specified Kubernetes namespace
+
+**Alternative: Manual Helm Install**
+
+If you prefer manual control:
 
 ```bash
 # Deploy from the apps/talespring directory
@@ -139,6 +167,8 @@ kubectl get pods -n ff-dev -w
 ```
 
 The pod should transition to `Running` status within 30-60 seconds.
+
+For more deployment options, see the [FF CLI Operations Guide](../../ff-cli/ops.md).
 
 ## Step 6: Verify Kong Route Registration
 
@@ -380,6 +410,7 @@ You've successfully:
 **Next Steps**:
 
 - **[Update Agent Bundles](./updating-agent-bundles.md)** - Make changes and redeploy
+- **[FF CLI Operations Guide](../../ff-cli/ops.md)** - Learn about build, install, and upgrade commands
 - Explore the talespring source code in `apps/talespring/src/` to understand Entity-Bot-Prompt patterns
 - Review entity definitions, bot implementations, and prompt composition
 - Try creating your own agent bundle: `ff-cli agent-bundle create my-service`
