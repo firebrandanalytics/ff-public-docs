@@ -16,24 +16,19 @@ When MinIO is enabled, the Context Service automatically stores large binary art
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Context Service                              │
-│                                                                  │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐   │
-│  │  gRPC API    │───▶│ Working      │───▶│ Blob Storage     │   │
-│  │  :50051      │    │ Memory Ops   │    │ Provider         │   │
-│  └──────────────┘    └──────────────┘    └────────┬─────────┘   │
-│                                                    │             │
-└────────────────────────────────────────────────────┼─────────────┘
-                                                     │
-                      ┌──────────────────────────────┼──────────────────────────────┐
-                      │                              │                              │
-                      ▼                              ▼                              ▼
-            ┌─────────────────┐           ┌─────────────────┐           ┌─────────────────┐
-            │   PostgreSQL    │           │     MinIO       │           │  Azure/GCS      │
-            │   (Metadata)    │           │   (S3 Blobs)    │           │  (Production)   │
-            └─────────────────┘           └─────────────────┘           └─────────────────┘
+```mermaid
+flowchart TB
+    subgraph cs["Context Service"]
+        grpc["gRPC API<br/>:50051"]
+        wmops["Working<br/>Memory Ops"]
+        blobprov["Blob Storage<br/>Provider"]
+
+        grpc --> wmops --> blobprov
+    end
+
+    blobprov --> postgres[("PostgreSQL<br/>(Metadata)")]
+    blobprov --> minio[("MinIO<br/>(S3 Blobs)")]
+    blobprov --> cloud[("Azure/GCS<br/>(Production)")]
 ```
 
 ## Configuration

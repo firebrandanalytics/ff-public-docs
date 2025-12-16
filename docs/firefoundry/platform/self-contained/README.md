@@ -75,25 +75,25 @@ See the [Quick Start Guide](./quick-start.md) for complete instructions includin
 
 ## Architecture Diagram
 
-```
-                    FireFoundry Core Namespace
-┌─────────────────────────────────────────────────────────────────┐
-│                                                                 │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌────────────────┐  │
-│  │   FF Broker     │  │ Context Service │  │  Code Sandbox  │  │
-│  │   (gRPC/HTTP)   │  │    (gRPC)       │  │    (HTTP)      │  │
-│  └────────┬────────┘  └────────┬────────┘  └───────┬────────┘  │
-│           │                    │                    │          │
-│           │         ┌─────────┴─────────┐          │          │
-│           │         │                   │          │          │
-│           ▼         ▼                   ▼          ▼          │
-│  ┌─────────────────────────┐   ┌─────────────────────────┐    │
-│  │      PostgreSQL         │   │         MinIO           │    │
-│  │  (Metadata, Entities,   │   │   (Blobs, Artifacts,    │    │
-│  │   Broker Registry)      │   │    Working Memory)      │    │
-│  └─────────────────────────┘   └─────────────────────────┘    │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph namespace["FireFoundry Core Namespace"]
+        subgraph services["AI Services"]
+            broker["FF Broker<br/>(gRPC/HTTP)"]
+            context["Context Service<br/>(gRPC)"]
+            sandbox["Code Sandbox<br/>(HTTP)"]
+        end
+
+        subgraph infra["Bundled Infrastructure"]
+            postgres[("PostgreSQL<br/>Metadata, Entities,<br/>Broker Registry")]
+            minio[("MinIO<br/>Blobs, Artifacts,<br/>Working Memory")]
+        end
+
+        broker --> postgres
+        context --> postgres
+        context --> minio
+        sandbox --> postgres
+    end
 ```
 
 ## Related Documentation
