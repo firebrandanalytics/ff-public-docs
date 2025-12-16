@@ -48,6 +48,7 @@ The `firefoundry-core` chart can deploy:
 - [Quick Start Guide](./quick-start.md) - Get running in 15 minutes
 - [Configuration Reference](./configuration.md) - All available options
 - [Context Service + MinIO Integration](./context-service-minio.md) - Working memory with bundled storage
+- [FF Console Integration](./console-integration.md) - Enable Console to observe this environment
 - [Database Setup](./database-setup.md) - PostgreSQL configuration and migrations
 - [Troubleshooting](./troubleshooting.md) - Common issues and solutions
 
