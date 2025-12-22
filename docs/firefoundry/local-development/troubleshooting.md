@@ -194,6 +194,141 @@ kubectl describe pod <pod-name> -n ff-dev | grep -A 5 "Requests\|Limits"
 kubectl scale deployment <deployment-name> --replicas=2 -n ff-dev
 ```
 
+## Agent Bundle Issues
+
+### LLM Broker Connection Failures
+
+#### Symptoms
+
+- Workflow hangs indefinitely at AI/LLM generation steps
+- gRPC timeout errors when calling bots
+- `Bot.run()` never returns
+
+#### Common Causes
+
+- Incorrect `LLM_BROKER_PORT` configuration
+- Broker service not running
+- Network policy blocking gRPC traffic
+
+#### Solutions
+
+```bash
+# Verify broker is running
+kubectl get pods -n ff-dev | grep broker
+kubectl logs -n ff-dev deploy/firefoundry-core-ff-broker
+
+# Check the broker port (should be 50051, NOT 50061)
+kubectl get svc -n ff-dev | grep broker
+# Expected: firefoundry-core-ff-broker   ClusterIP   10.x.x.x   50051/TCP
+
+# In your agent bundle's values.yaml or environment:
+LLM_BROKER_HOST: "firefoundry-core-ff-broker"
+LLM_BROKER_PORT: "50051"  # Common mistake: using 50061
+
+# Test broker connectivity from within the cluster
+kubectl run test-broker --image=busybox -it --rm -- \
+  nc -zv firefoundry-core-ff-broker.ff-dev.svc.cluster.local 50051
+```
+
+### Context Service / Working Memory Errors
+
+#### Symptoms
+
+- "Failed to get content" when retrieving files from working memory
+- PostgreSQL "invalid uuid" errors (code 22P02)
+- "Failed to store file in working memory"
+
+#### Common Causes
+
+- Invalid or undefined working memory ID being passed
+- Context service not accessible
+- Missing `CONTEXT_SERVICE_ADDRESS` configuration
+
+#### Solutions
+
+```bash
+# Check context service is running
+kubectl get pods -n ff-dev | grep context
+kubectl logs -n ff-dev deploy/firefoundry-core-context-service
+
+# Verify the working memory ID is valid (not "undefined" string)
+# In your code, add validation:
+if (!wmId || wmId === 'undefined') {
+  throw new Error('Invalid working memory ID');
+}
+
+# Check environment configuration
+CONTEXT_SERVICE_ADDRESS: "http://firefoundry-core-context-service:50051"
+CONTEXT_SERVICE_API_KEY: "<your-key>"
+
+# Test context service connectivity
+kubectl port-forward svc/firefoundry-core-context-service 50051:50051 -n ff-dev
+```
+
+### Entity Connection Errors
+
+#### Symptoms
+
+- `Cannot read properties of undefined (reading 'includes')` when calling `appendOrRetrieveCall()`
+- Child entities not being created
+
+#### Cause
+
+Missing `allowedConnections` configuration in the entity decorator.
+
+#### Solution
+
+Add child entity types to the `allowedConnections` in your `@RunnableEntityDecorator`:
+
+```typescript
+@RunnableEntityDecorator({
+  generalType: 'Workflow',
+  specificType: 'MyWorkflow',
+  allowedConnections: {
+    'Calls': ['ChildStepEntity', 'AnotherStepEntity'],  // List all child types
+  },
+})
+export class MyWorkflow extends RunnableEntityClass<...> {
+  // Now appendOrRetrieveCall(ChildStepEntity, ...) will work
+}
+```
+
+See [Entity Troubleshooting](../sdk/agent_sdk/core/entities.md#8-troubleshooting) for more details.
+
+### API Response Issues
+
+#### Symptoms
+
+- Frontend receiving `undefined` values when accessing API response fields
+- Fields exist in backend logs but not in frontend
+
+#### Cause
+
+The SDK wraps API responses in `{ success: true, result: {...} }`. If consuming the API directly (not through `RemoteAgentBundleClient`), you must unwrap this envelope.
+
+#### Solution
+
+Use the `RemoteAgentBundleClient` from `@firebrandanalytics/ff-sdk`:
+
+```typescript
+import { RemoteAgentBundleClient } from '@firebrandanalytics/ff-sdk';
+
+const client = new RemoteAgentBundleClient('http://localhost:3000');
+const result = await client.call_api_endpoint('my-endpoint', {
+  method: 'POST',
+  body: { data: 'test' }
+});
+// result is already unwrapped - no need to access .result
+```
+
+If you must use raw HTTP, unwrap manually:
+
+```typescript
+const response = await fetch(endpoint);
+const data = await response.json();
+const result = data.result;  // Don't forget to unwrap!
+```
+
 ## Getting Additional Help
 
 ### Debug Information Collection

@@ -127,10 +127,16 @@ Agent Bundle (HTTP Server)
 ### Class Definition
 
 ```typescript
-import { FFAgentBundle, app_provider } from '@firebrandanalytics/ff-agent-sdk';
-import { MyConstructors } from './constructors.js';
+import {
+  FFAgentBundle,
+  app_provider,
+  EntityTypeHelper,
+  BotTypeHelper,
+  PromptTypeHelper,
+} from '@firebrandanalytics/ff-agent-sdk';
+import { MyConstructors, MyETH } from './constructors.js';
 
-export class MyAgentBundle extends FFAgentBundle<any> {
+export class MyAgentBundle extends FFAgentBundle<MyETH> {
   constructor() {
     super(
       {
@@ -167,7 +173,12 @@ export class MyAgentBundle extends FFAgentBundle<any> {
 The constructors object maps entity type names (as strings) to their constructor classes:
 
 ```typescript
-import { FFConstructors } from '@firebrandanalytics/ff-agent-sdk';
+import {
+  FFConstructors,
+  EntityTypeHelper,
+  BotTypeHelper,
+  PromptTypeHelper,
+} from '@firebrandanalytics/ff-agent-sdk';
 import { ArticleEntity } from './entities/ArticleEntity.js';
 import { AnalysisWorkflow } from './entities/AnalysisWorkflow.js';
 import { CustomRunnable } from './entities/CustomRunnable.js';
@@ -178,12 +189,22 @@ export const MyConstructors = {
   AnalysisWorkflow: AnalysisWorkflow,
   CustomRunnable: CustomRunnable,
 } as const;
+
+/**
+ * Type helper for the agent bundle.
+ * This provides type-safe entity factory operations.
+ */
+export type MyETH = EntityTypeHelper<
+  BotTypeHelper<PromptTypeHelper<any, any>, any>,
+  typeof MyConstructors
+>;
 ```
 
 **Why This Matters:**
 - Enables the entity factory to deserialize entities from the database
 - Required for `entity_factory.get_entity(id)` to return properly typed instances
 - Supports polymorphism in the entity graph
+- The `EntityTypeHelper` type parameter enables type-safe entity creation and retrieval throughout your bundle
 
 #### Provider
 
@@ -229,13 +250,13 @@ The `init()` method is called once when the bundle starts. Use it to:
 - Validate configuration
 
 ```typescript
-export class MyAgentBundle extends FFAgentBundle<any> {
+export class MyAgentBundle extends FFAgentBundle<MyETH> {
   private rootEntityId?: string;
 
   override async init() {
     // ALWAYS call super.init() first
     await super.init();
-    
+
     logger.info('MyAgentBundle initializing...');
 
     // Create or retrieve bootstrap entities
@@ -250,25 +271,24 @@ export class MyAgentBundle extends FFAgentBundle<any> {
   private async ensure_root_entities() {
     // Check if root entity exists (idempotent)
     const existing = await this.entity_client.get_node_by_name('root-collection');
-    
+
     if (existing) {
       this.rootEntityId = existing.id;
       logger.info('Root entity already exists:', this.rootEntityId);
       return;
     }
 
-    // Create root entity
-    const rootDto = await this.entity_factory.create_entity_node({
+    // Create root entity - note: create_entity_node returns the entity instance
+    const rootEntity = await this.entity_factory.create_entity_node<'RootCollection'>({
       app_id: this.get_app_id(),
       name: 'root-collection',
       specific_type_name: 'RootCollection',
       general_type_name: 'Collection',
       status: 'Active',
-      data: {
-        created_at: new Date().toISOString(),
-      },
     });
 
+    // Access the ID through get_dto() since id is a protected property
+    const rootDto = await rootEntity.get_dto();
     this.rootEntityId = rootDto.id;
     logger.info('Created root entity:', this.rootEntityId);
   }
@@ -310,7 +330,7 @@ export class MyAgentBundle extends FFAgentBundle<any> {
 In addition to `init()`, you can override these methods:
 
 ```typescript
-export class MyAgentBundle extends FFAgentBundle<any> {
+export class MyAgentBundle extends FFAgentBundle<MyETH> {
   override async init() {
     // Called once on startup
     await super.init();
@@ -518,9 +538,13 @@ For long-running operations, return immediately and let clients poll for status:
 
 ```typescript
 @ApiEndpoint({ method: 'POST', route: 'start-analysis' })
-async startAnalysis(body: any = {}): Promise<any> {
-  // Create a workflow entity
-  const workflowDto = await this.entity_factory.create_entity_node({
+async startAnalysis(body: StartAnalysisRequest): Promise<StartAnalysisResponse> {
+  // Create a workflow entity - returns the entity instance, not a DTO
+  // Use both type parameters: entity type name and data type
+  const workflow = await this.entity_factory.create_entity_node<
+    'AnalysisWorkflow',
+    AnalysisWorkflowData
+  >({
     app_id: this.get_app_id(),
     name: `analysis-${Date.now()}`,
     specific_type_name: 'AnalysisWorkflow',
@@ -528,6 +552,9 @@ async startAnalysis(body: any = {}): Promise<any> {
     status: 'Running',
     data: body,
   });
+
+  // Access the ID through get_dto() since id is a protected property
+  const workflowDto = await workflow.get_dto();
 
   // Start processing in background
   this.process_workflow_async(workflowDto.id).catch(error => {
@@ -587,8 +614,10 @@ When external clients don't yet have an entity ID:
 
 ```typescript
 @ApiEndpoint({ method: 'POST', route: 'submit-report' })
-async submitReport(body: any = {}): Promise<any> {
-  const reportDto = await this.entity_factory.create_entity_node({
+async submitReport(body: SubmitReportRequest): Promise<SubmitReportResponse> {
+  // create_entity_node returns the entity instance, not a DTO
+  // Use both type parameters when the entity has custom data
+  const report = await this.entity_factory.create_entity_node<'Report', ReportData>({
     app_id: this.get_app_id(),
     name: `report-${Date.now()}`,
     specific_type_name: 'Report',
@@ -597,6 +626,8 @@ async submitReport(body: any = {}): Promise<any> {
     data: body,
   });
 
+  // Access id through get_dto() since it's a protected property
+  const reportDto = await report.get_dto();
   return {
     reportId: reportDto.id,
     message: 'Report submitted',
@@ -1028,7 +1059,16 @@ npm install @firebrandanalytics/ff-sdk
 
 ### Alternative: Direct HTTP (Debugging Only)
 
-For **Patterns 2 and 3** (local development without Kong), use direct HTTP:
+For **Patterns 2 and 3** (local development without Kong), you can use direct HTTP calls. However, there are important caveats:
+
+**Response Wrapper**: The SDK wraps all successful `@ApiEndpoint` responses in an envelope:
+```json
+{ "success": true, "result": { /* your data */ } }
+```
+
+If you use raw HTTP calls, you must unwrap this envelope. The `RemoteAgentBundleClient` handles this automatically, which is why it's strongly recommended.
+
+Direct HTTP example:
 
 ```typescript
 // Helper function for direct HTTP calls
@@ -2064,6 +2104,123 @@ startServer();
    - Throw errors for irrecoverable conditions
    - Log errors with context
    - Return structured error responses
+
+### Type-Safe Entity Operations
+
+1. **Entity Factory Type Parameter**
+
+   When extending `FFAgentBundle`, provide an `EntityTypeHelper` type parameter for type-safe entity factory operations:
+
+   ```typescript
+   // In constructors.ts
+   import {
+     FFConstructors,
+     EntityTypeHelper,
+     BotTypeHelper,
+     PromptTypeHelper,
+   } from '@firebrandanalytics/ff-agent-sdk';
+   import { MyEntity } from './entities/MyEntity.js';
+
+   export const MyConstructors = {
+     ...FFConstructors,
+     MyEntity: MyEntity,
+   } as const;
+
+   export type MyETH = EntityTypeHelper<
+     BotTypeHelper<PromptTypeHelper<any, any>, any>,
+     typeof MyConstructors
+   >;
+   ```
+
+   ```typescript
+   // In agent-bundle.ts
+   import { MyConstructors, MyETH } from './constructors.js';
+
+   export class MyAgentBundle extends FFAgentBundle<MyETH> {
+     // entity_factory is now properly typed
+   }
+   ```
+
+2. **Creating Entities with Data**
+
+   When creating entities that have custom data, use both type parameters - the entity type name and the data type:
+
+   ```typescript
+   // Define your data type
+   interface ArticleData {
+     title: string;
+     content: string;
+     author?: string;
+   }
+
+   // Create the entity with both type parameters
+   const article = await this.entity_factory.create_entity_node<'Article', ArticleData>({
+     app_id: this.get_app_id(),
+     name: `article-${Date.now()}`,
+     specific_type_name: 'Article',
+     general_type_name: 'Document',
+     status: 'Pending',
+     data: {
+       title: 'My Article',
+       content: 'Article content...',
+     },
+   });
+   ```
+
+   The first type parameter (`'Article'`) specifies the entity constructor type.
+   The second type parameter (`ArticleData`) provides type safety for the `data` field.
+
+3. **Accessing Entity Properties**
+
+   `create_entity_node` returns the entity instance, not a DTO. Access the entity ID through `get_dto()`:
+
+   ```typescript
+   // create_entity_node returns the entity instance
+   const article = await this.entity_factory.create_entity_node<'Article', ArticleData>({
+     app_id: this.get_app_id(),
+     name: `article-${Date.now()}`,
+     specific_type_name: 'Article',
+     general_type_name: 'Document',
+     status: 'Pending',
+     data: { title: 'Title', content: 'Content' },
+   });
+
+   // Access ID through get_dto() - id is a protected property
+   const articleDto = await article.get_dto();
+   logger.info(`Created article: ${articleDto.id}`);
+
+   // You can immediately call entity methods
+   const result = await article.run();
+   ```
+
+4. **Type-Safe Entity Retrieval**
+
+   Use `get_entity<T>` for async database lookups:
+
+   ```typescript
+   const article = await this.entity_factory.get_entity<'Article'>(articleId);
+   const dto = await article.get_dto();
+   ```
+
+   Use `get_entity_known_type<T>` when you know the type and want synchronous, lazy-loaded access:
+
+   ```typescript
+   const article = this.entity_factory.get_entity_known_type('Article', articleId);
+   // DTO will be loaded on first access
+   const dto = await article.get_dto();
+   ```
+
+5. **Handling Optional Status**
+
+   Entity status may be undefined. Use nullish coalescing when returning status:
+
+   ```typescript
+   const dto = await entity.get_dto();
+   return {
+     id: dto.id,
+     status: dto.status ?? 'Unknown',
+   };
+   ```
 
 ### API Design
 

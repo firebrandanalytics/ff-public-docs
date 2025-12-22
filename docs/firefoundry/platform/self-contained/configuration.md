@@ -102,14 +102,96 @@ context-service:
 
 ## FF Broker Configuration
 
-<!-- TODO: Document FF Broker settings -->
+The FF Broker is the LLM orchestration service that routes requests to configured AI providers.
 
 ```yaml
 ff-broker:
   enabled: true
   replicaCount: 1
-  # TODO: Add configuration options
+
+  # Image configuration
+  image:
+    repository: firebranddevet.azurecr.io/ff-llm-broker
+    tag: ""                    # Defaults to chart appVersion
+    pullPolicy: IfNotPresent
+
+  # Database connection
+  configMap:
+    data:
+      PGF_HOST: "firefoundry-core-postgresql"
+      PGF_PORT: "5432"
+      PGF_DATABASE: "firefoundry"
+      PGF_USER: "firebroker"
+      GRPC_PORT: "50051"
+      HTTP_PORT: "3000"
+      CONSOLE_LOG_LEVEL: "info"
+      # Context Service integration
+      CONTEXT_SERVICE_ADDRESS: "firefoundry-core-context-service:50051"
+
+  secret:
+    data:
+      PGF_PWD: ""              # Required: database password
+      CONTEXT_SERVICE_API_KEY: ""  # Required: context service API key
+      # LLM Provider credentials (configure as needed)
+      AZURE_OPENAI_KEY: ""
+
+  # Bootstrap job (self-contained deployments)
+  bootstrap:
+    enabled: true              # Enable for self-contained deployments
+    waitForDatabase: true      # Wait for bundled PostgreSQL to be ready
+    registryDatabase: "broker_registry"
+    seedRegistry: true         # Seed model catalog from FireFoundry
+    registrySeedUrl: ""        # Uses default FireFoundry registry backup
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
 ```
+
+### Bootstrap Job
+
+For self-contained deployments, the bootstrap job initializes the broker's database schemas and seeds the model catalog:
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `bootstrap.enabled` | Run database initialization job | `false` |
+| `bootstrap.waitForDatabase` | Wait for PostgreSQL before running | `false` |
+| `bootstrap.seedRegistry` | Seed model catalog from FireFoundry | `true` |
+| `bootstrap.registrySeedUrl` | URL to model catalog backup | FireFoundry hosted |
+
+When `seedRegistry` is enabled, the bootstrap job downloads and restores the model catalog, which includes:
+- Supported LLM providers (Azure OpenAI, Amazon Bedrock, Anthropic, etc.)
+- Available models and their capabilities
+- Model family and version information
+
+To skip registry seeding (e.g., for air-gapped environments with manual configuration):
+
+```yaml
+ff-broker:
+  bootstrap:
+    enabled: true
+    seedRegistry: false
+```
+
+### LLM Provider Credentials
+
+Configure credentials for your LLM providers in the secret:
+
+```yaml
+ff-broker:
+  secret:
+    data:
+      # Azure OpenAI
+      AZURE_OPENAI_KEY: "your-azure-openai-key"
+
+      # Additional providers configured via Provider Accounts in the database
+```
+
+Provider accounts (API endpoints, keys, and model mappings) are configured in the broker database after deployment. See the FF Console documentation for provider account management.
 
 ## Code Sandbox Configuration
 

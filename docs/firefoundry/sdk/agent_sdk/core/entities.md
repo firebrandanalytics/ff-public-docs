@@ -587,7 +587,79 @@ const user = factory.get_entity_known_type('User', userId);
 const entity = await factory.get_entity(entityId);
 ```
 
-### 7.3 DTO Management
+### 7.3 Type-Safe Entity Creation
+
+When creating entities with the entity factory, proper type parameters ensure type safety throughout your application.
+
+#### Creating Entities with Custom Data
+
+For entities that store custom data, use both type parameters in `create_entity_node`:
+
+```typescript
+// Define the data type for your entity
+interface OrderData {
+  customer_id: string;
+  items: Array<{ sku: string; quantity: number }>;
+  total: number;
+  status: 'pending' | 'processing' | 'completed';
+}
+
+// Use both type parameters: entity type name and data type
+const order = await factory.create_entity_node<'Order', OrderData>({
+  app_id: app_id,
+  name: `order-${Date.now()}`,
+  specific_type_name: 'Order',
+  general_type_name: 'Transaction',
+  status: 'Pending',
+  data: {
+    customer_id: 'cust-123',
+    items: [{ sku: 'ITEM-001', quantity: 2 }],
+    total: 99.99,
+    status: 'pending',
+  },
+});
+
+// order is typed as Order entity, not a DTO
+```
+
+The first type parameter specifies which constructor to use from the constructors registry.
+The second type parameter provides type checking for the `data` field.
+
+#### Accessing Entity ID
+
+`create_entity_node` returns the entity instance. Access the ID through `get_dto()`:
+
+```typescript
+// create_entity_node returns entity instance
+const workflow = await factory.create_entity_node<'Workflow', WorkflowData>({
+  app_id: app_id,
+  name: `workflow-${Date.now()}`,
+  specific_type_name: 'Workflow',
+  general_type_name: 'Runnable',
+  status: 'Pending',
+  data: { input: 'some data' },
+});
+
+// Access ID through get_dto() - id is protected
+const dto = await workflow.get_dto();
+logger.info(`Created workflow: ${dto.id}`);
+
+// Call entity methods directly on the instance
+const result = await workflow.run();
+```
+
+#### Type-Safe Entity Retrieval
+
+```typescript
+// Async retrieval with type lookup from database
+const article = await factory.get_entity<'Article'>(articleId);
+
+// Synchronous retrieval when you know the type (lazy-loads DTO)
+const user = factory.get_entity_known_type('User', userId);
+const userDto = await user.get_dto();  // DTO loaded here
+```
+
+### 7.4 DTO Management
 
 ```typescript
 // ✅ Correct: Use entity methods
@@ -599,7 +671,7 @@ const dto = await entity.get_dto();
 dto.data.property = 'value'; // This won't sync with database!
 ```
 
-### 7.4 Error Handling in Runnable Entities
+### 7.5 Error Handling in Runnable Entities
 
 ```typescript
 protected async *run_impl(): RunnableEntityResponseIterator<...> {
@@ -628,7 +700,7 @@ protected async *run_impl(): RunnableEntityResponseIterator<...> {
 }
 ```
 
-### 7.5 Connection Management
+### 7.6 Connection Management
 
 ```typescript
 // Use typed connections
@@ -671,6 +743,49 @@ if (!typeInfo.allowedConnections[edgeType].includes(targetType)) {
    - Verify CronJobManager is initialized
    - Check job definitions are valid
    - Ensure WorkQueueNode is running
+
+5. **"Cannot read properties of undefined (reading 'includes')" with appendOrRetrieveCall**
+
+   This error occurs when calling `appendOrRetrieveCall()` or `appendCall()` on a runnable entity that hasn't declared the target entity type in its `allowedConnections`.
+
+   **Cause**: The `@RunnableEntityDecorator` has an empty or missing `allowedConnections` configuration for the `'Calls'` edge type.
+
+   **Solution**: Add the child entity type to the `allowedConnections` in the decorator:
+
+   ```typescript
+   // WRONG - will throw "Cannot read properties of undefined"
+   @RunnableEntityDecorator({
+     generalType: 'Workflow',
+     specificType: 'MyWorkflow',
+     allowedConnections: {},  // Empty!
+   })
+   export class MyWorkflow extends RunnableEntityClass<...> {
+     protected async *run_impl() {
+       // This will fail:
+       const step = await this.appendOrRetrieveCall(ChildStep, 'step-1', {});
+     }
+   }
+
+   // CORRECT - declare allowed child types
+   @RunnableEntityDecorator({
+     generalType: 'Workflow',
+     specificType: 'MyWorkflow',
+     allowedConnections: {
+       'Calls': ['ChildStep', 'AnotherStep'],  // List all child entity types
+     },
+   })
+   export class MyWorkflow extends RunnableEntityClass<...> {
+     protected async *run_impl() {
+       // This now works:
+       const step = await this.appendOrRetrieveCall(ChildStep, 'step-1', {});
+     }
+   }
+   ```
+
+   **Key Points**:
+   - Every entity type you pass to `appendOrRetrieveCall()` or `appendCall()` must be listed in `allowedConnections['Calls']`
+   - This applies to `RunnableEntityClass`, `WaitableRunnableEntityClass`, and `RunnableEntityBotWrapperClass`
+   - The entity type name must match the `specificType` in the child's decorator
 
 ### 8.2 Debugging Tips
 
