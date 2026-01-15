@@ -25,14 +25,13 @@ Extended Services provide specialized capabilities that enhance agent functional
 - **Entity Service** - Entity graph management with vector-based semantic search
 - **Document Processing Service** - Document extraction, generation, and transformation
 
-### Tier 3: Supporting Services & Templates
+### Tier 3: Supporting Services
 
-Supporting Services include both early-stage services under active development and infrastructure tools for creating new services. These are not production-ready but represent important platform capabilities in various stages of maturity.
+Supporting Services include services under active development that extend platform capabilities. These are functional but may undergo API changes as features are refined.
 
 **Supporting Services:**
 - **Document Processing Python Worker** - Advanced ML-based document processing (Planning)
-- **Web Search Service** - Web search capabilities for agents (Template Stage)
-- **Service Template** - Scaffolding tool for creating new FireFoundry services
+- **Web Search Service** - Provider-agnostic web search with Bing integration (Beta)
 
 ## Service Overview Matrix
 
@@ -44,8 +43,7 @@ Supporting Services include both early-stage services under active development a
 | **Entity Service** | 0.3.0-beta.0 | Beta | Entity graph management with vector semantic search | Extended | REST |
 | **Document Processing** | 0.1.10 | Beta | Document extraction, OCR, generation, transformation | Extended | REST |
 | **Doc Proc Python Worker** | 0.1.0 | Planning | Advanced ML-based document processing backends | Supporting | gRPC |
-| **Web Search Service** | 0.1.0 | Template | Web search capabilities (not yet implemented) | Supporting | REST |
-| **Service Template** | 0.1.0 | Production | Scaffolding tool for new microservices | Supporting | N/A |
+| **Web Search Service** | 0.1.0 | Beta | Provider-agnostic web search with Bing integration | Supporting | REST |
 
 ## How Services Work Together
 
@@ -492,10 +490,9 @@ Detailed documentation for each service:
 - [Entity Service](./entity-service.md) - Entity graph with vector search
 - [Document Processing Service](./doc-proc-service.md) - Document operations
 
-### Tier 3: Supporting Services & Templates
+### Tier 3: Supporting Services
 - [Document Processing Python Worker](./doc-proc-pyworker.md) - ML-based processing
-- [Web Search Service](./web-search.md) - Web search capabilities (template)
-- [Service Template](./service-template.md) - Service scaffolding tool
+- [Web Search Service](./web-search.md) - Provider-agnostic web search with Bing
 
 ## Monitoring and Observability
 

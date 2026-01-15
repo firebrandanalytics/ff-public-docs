@@ -20,7 +20,7 @@ The FireFoundry platform consists of:
 
 ## Platform Services
 
-FireFoundry provides 8 specialized microservices organized by maturity:
+FireFoundry provides 7 specialized microservices organized by maturity:
 
 ### Tier 1 - Core Runtime (GA)
 - **[Broker Service](./services/ff-broker.md)** - AI model routing and orchestration
@@ -31,10 +31,9 @@ FireFoundry provides 8 specialized microservices organized by maturity:
 - **[Entity Service](./services/entity-service.md)** - Entity graph management with vector search
 - **[Document Processing Service](./services/doc-proc-service.md)** - Document extraction and transformation
 
-### Tier 3 - Supporting & Templates
+### Tier 3 - Supporting Services
 - **[Document Processing Python Worker](./services/doc-proc-pyworker.md)** - Advanced ML-based processing
-- **[Web Search Service](./services/web-search.md)** - Web search capabilities (planning stage)
-- **[Service Template](./services/service-template.md)** - Service scaffolding and patterns
+- **[Web Search Service](./services/web-search.md)** - Provider-agnostic web search with Bing integration
 
 **For detailed service documentation, architecture, communication patterns, and deployment guidance, see the [Platform Services Overview](./services/README.md).**
 

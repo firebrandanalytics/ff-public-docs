@@ -2,130 +2,397 @@
 
 ## Overview
 
-The Web Search Service is an in-development FireFoundry microservice designed to provide web search capabilities for AI agents. Currently in the template stage, this service establishes the foundational structure for integrating search functionality into the FireFoundry platform.
+The Web Search Service is a FireFoundry microservice that provides a provider-agnostic web search API for AI agents. It currently integrates with Microsoft Bing Web Search API v7, with an architecture designed to support additional providers (Tavily, Brave, Google) in future releases.
 
 ## Purpose and Role in Platform
 
-When complete, this service will enable FireFoundry agents to:
-- **Search the Web**: Execute queries and retrieve relevant results
+The Web Search Service enables FireFoundry agents to:
+- **Search the Web**: Execute queries and retrieve relevant results in real-time
 - **Access Current Information**: Supplement agent knowledge with up-to-date web data
 - **Augment Context**: Provide search results for RAG (Retrieval-Augmented Generation) patterns
-- **Research Capabilities**: Support multi-step research workflows with iterative searching
+- **Structured Queries**: Build complex searches with exact phrases, domain filtering, and exclusions
+- **Research Workflows**: Support multi-step research with pagination and related searches
 
-## Current Status
+## Key Features
 
-**Maturity Level**: Template Stage - Not Production Ready
+- **Unified Search API**: Provider-agnostic endpoints supporting both GET and POST methods
+- **Structured Queries**: JSON-based query format for complex searches (AND/OR terms, site filters, file types)
+- **Bing Integration**: Microsoft Bing Web Search API v7 as the initial provider
+- **Spelling Corrections**: Automatic query correction with original and corrected query in response
+- **Related Searches**: Suggestions for related queries to expand research
+- **Request Logging**: All searches logged to PostgreSQL for analytics and debugging
+- **Health Checks**: Kubernetes-ready liveness and readiness probes
 
-This service is currently in the early planning phase:
-- ✅ Repository created from FireFoundry service template
-- ✅ Basic Express 5 service structure in place
-- ✅ Standard health/readiness endpoints configured
-- ✅ Docker and CI/CD pipeline scaffolding
-- 📋 Search provider integration not yet implemented
-- 📋 API endpoints for search operations not defined
-- 📋 No production search capabilities available
+## API Reference
 
-## Planned Features
+### Search Endpoints
 
-### Search Capabilities (Planned)
-- **Web Search**: General web search using external search APIs
-- **Result Filtering**: Relevance scoring and content filtering
-- **Pagination**: Support for paginated result sets
-- **Domain Filtering**: Restrict searches to specific domains or exclude domains
-- **Safe Search**: Content filtering options
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/v1/search?q={query}` | Simple string query via URL parameter |
+| `POST` | `/v1/search` | Simple or structured query via JSON body |
 
-### Integration Points (Planned)
-- **Search Providers**: Integration with Google Search API, Bing Search API, or alternative providers
-- **Context Service**: Store search results in agent working memory
-- **Caching Layer**: Cache frequently-requested queries to reduce API costs
-- **Rate Limiting**: Manage search API quota consumption
+### Request Tracing
 
-### API Endpoints (Planned)
-- `POST /api/search` - Execute web search query
-- `GET /api/search/:id` - Retrieve cached search results
-- `POST /api/search/batch` - Execute multiple searches
+Include the `X-Request-ID` header to trace requests through logs:
+
+```bash
+curl -H "X-Request-ID: my-trace-id" "http://localhost:8080/v1/search?q=test"
+```
+
+### GET /v1/search
+
+```bash
+curl "http://websearch-service:8080/v1/search?q=kubernetes+best+practices&limit=10"
+```
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `q` | string | required | Search query (1-500 characters) |
+| `limit` | number | 10 | Results per page (1-50) |
+| `offset` | number | 0 | Pagination offset |
+| `safeSearch` | string | moderate | `off`, `moderate`, `strict` |
+| `market` | string | - | Locale (e.g., `en-US`, `de-DE`) |
+| `freshness` | string | - | `day`, `week`, `month` |
+
+### POST /v1/search
+
+Supports both simple string queries and structured queries.
+
+**Simple Query:**
+```bash
+curl -X POST http://websearch-service:8080/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "typescript best practices", "limit": 10}'
+```
+
+**Structured Query:**
+```bash
+curl -X POST http://websearch-service:8080/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "structuredQuery": {
+      "terms": ["kubernetes", "deployment"],
+      "exactPhrases": ["rolling update"],
+      "anyOf": ["AWS", "GCP", "Azure"],
+      "exclude": ["tutorial", "beginner"],
+      "sites": {
+        "include": ["kubernetes.io", "github.com"],
+        "exclude": ["medium.com"]
+      },
+      "fileTypes": ["pdf"]
+    },
+    "limit": 20
+  }'
+```
+
+**Structured Query Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `terms` | string[] | **Required.** Terms that must appear (AND'd together) |
+| `exactPhrases` | string[] | Exact phrases to match (wrapped in quotes) |
+| `anyOf` | string[] | Alternative terms (OR'd together) |
+| `exclude` | string[] | Terms to exclude from results |
+| `sites.include` | string[] | Only include results from these domains |
+| `sites.exclude` | string[] | Exclude results from these domains |
+| `fileTypes` | string[] | File types to filter (pdf, doc, xls, etc.) |
+| `inTitle` | string[] | Terms that must appear in page title* |
+| `inBody` | string[] | Terms that must appear in page body* |
+| `rawQuery` | string | Raw query suffix for provider-specific operators |
+
+*Note: `inTitle` and `inBody` are not supported by Bing and degrade to regular terms.
+
+### Response Format
+
+**Success (200):**
+```json
+{
+  "success": true,
+  "results": [
+    {
+      "id": "result-0",
+      "title": "TypeScript Best Practices",
+      "url": "https://example.com/typescript",
+      "displayUrl": "example.com/typescript",
+      "snippet": "Learn TypeScript best practices...",
+      "datePublished": "2026-01-10T00:00:00Z",
+      "siteName": "Example"
+    }
+  ],
+  "meta": {
+    "requestId": "550e8400-e29b-41d4-a716-446655440000",
+    "processingTimeMs": 150,
+    "timestamp": "2026-01-14T12:00:00.000Z",
+    "provider": "bing",
+    "totalResults": 1000000
+  },
+  "pagination": {
+    "offset": 0,
+    "limit": 10,
+    "total": 1000000,
+    "hasMore": true
+  },
+  "spellingCorrection": {
+    "originalQuery": "typescrpt",
+    "correctedQuery": "typescript",
+    "appliedCorrection": true
+  },
+  "relatedSearches": ["typescript tutorial", "typescript vs javascript"]
+}
+```
+
+**Error Response:**
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid request parameters",
+    "requestId": "550e8400-e29b-41d4-a716-446655440000",
+    "details": [
+      { "field": "query", "message": "Query cannot be empty" }
+    ]
+  }
+}
+```
+
+### Error Codes
+
+| Code | HTTP Status | Description |
+|------|-------------|-------------|
+| `VALIDATION_ERROR` | 400 | Invalid request parameters |
+| `BING_ERROR` | 502 | Bing API returned an error |
+| `FETCH_ERROR` | 502 | Network error calling Bing API |
+| `TIMEOUT` | 504 | Bing API request timed out |
+| `RATE_LIMITED` | 429 | Too many requests |
+| `INTERNAL_ERROR` | 500 | Unexpected server error |
+
+### Standard Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | Service info and available endpoints |
+| `GET /health` | Liveness probe (always returns healthy if running) |
+| `GET /ready` | Readiness probe (checks Bing API and database connectivity) |
+| `GET /status` | Service version, uptime, and environment |
 
 ## Architecture
 
-### Current Structure
-The service uses the standard FireFoundry microservice template:
-- **Express 5**: HTTP server with Router-based routing
-- **Service Class**: Application lifecycle management
-- **RouteManager**: Centralized route definitions (placeholder routes only)
-- **Provider Pattern**: Business logic layer (not yet implemented for search)
-- **TypeScript**: Full type safety with strict mode
-- **Health Endpoints**: Kubernetes-ready probes
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    ff-services-websearch                     │
+│                                                              │
+│  ┌─────────────┐    ┌─────────────────┐    ┌─────────────┐  │
+│  │RouteManager │───▶│ SearchProvider  │───▶│BingSearch   │  │
+│  │ /v1/search  │    │  (orchestrator) │    │Provider     │  │
+│  └─────────────┘    └────────┬────────┘    └─────────────┘  │
+│                              │                               │
+│                    ┌─────────▼─────────┐                    │
+│                    │SearchLogRepository│                    │
+│                    │ (fire-and-forget) │                    │
+│                    └─────────┬─────────┘                    │
+│                              │                               │
+└──────────────────────────────┼───────────────────────────────┘
+                               │
+                    ┌──────────▼──────────┐
+                    │     PostgreSQL      │
+                    │ websearch.search_logs│
+                    └─────────────────────┘
+```
 
-### Planned Components
-- **SearchProvider**: Core business logic for search operations
-- **Search Client Abstraction**: Pluggable search provider backends
-- **Result Parser**: Normalize results from different search APIs
-- **Cache Manager**: Redis or PostgreSQL-based result caching
-- **Rate Limiter**: API quota management
+**Key Design Decisions:**
 
-## Dependencies
+- **Provider Abstraction**: `SearchProviderInterface` enables testing and future provider additions
+- **Fire-and-Forget Logging**: Database writes don't block search responses
+- **Discriminated Union Responses**: `success: true|false` for type-safe client handling
+- **Shared Infrastructure**: Uses `@firebrandanalytics/shared-utils` for PostgreSQL and logging
 
-### Current Dependencies
-- **Express 5**: Web framework
-- **@firebrandanalytics/shared-utils**: Logging and common utilities
-- **dotenv**: Environment configuration
-- **winston**: Structured logging
-- **zod**: Configuration validation
+### Provider Capabilities Matrix
 
-### Planned Dependencies
-- Search API client libraries (Google, Bing, or alternatives)
-- Redis client for result caching
-- PostgreSQL client for persistent storage
-- Rate limiting middleware
+Different search providers support different query features:
+
+| Feature | Bing | Google* | Brave* |
+|---------|------|---------|--------|
+| exactPhrases | Yes | Yes | Yes |
+| sites (include/exclude) | Yes | Yes | Yes |
+| fileTypes | Yes | Yes | Yes |
+| anyOf (OR) | Yes | Yes | Yes |
+| exclude | Yes | Yes | Yes |
+| inTitle | No | Yes | Yes |
+| inBody | No | Yes | Yes |
+
+*Future provider support planned
 
 ## Configuration
 
-### Current Configuration
-```bash
-NODE_ENV=development
-PORT=8080
-LOG_LEVEL=info
-SERVICE_NAME=websearch
+### Required Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `BING_API_KEY` | Bing Web Search API subscription key |
+| `PG_DATABASE` | Database name for logging |
+
+Database connection (`PG_HOST`, `PG_PASSWORD`, etc.) is handled by `@firebrandanalytics/shared-utils` PostgresProvider.
+
+### Optional Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BING_API_ENDPOINT` | `https://api.bing.microsoft.com/v7.0/search` | Bing API endpoint |
+| `BING_TIMEOUT_MS` | 5000 | Request timeout in milliseconds |
+| `SEARCH_DEFAULT_LIMIT` | 10 | Default results per page |
+| `SEARCH_DEFAULT_SAFE_SEARCH` | moderate | Default safe search level |
+| `PORT` | 8080 | Server port |
+| `NODE_ENV` | development | Environment (development/production/test) |
+| `LOG_LEVEL` | info | Logging level (debug/info/warn/error) |
+
+### Getting a Bing API Key
+
+1. Go to [Azure Portal](https://portal.azure.com)
+2. Create a resource → Search for "Bing Search v7"
+3. Create with pricing tier (F0 is free tier: 3 calls/second, 1K calls/month)
+4. Copy the API key from Keys and Endpoint
+
+## Database
+
+### Schema
+
+The service uses a dedicated schema for request logging:
+
+```sql
+-- Schema and table created by migration
+websearch.search_logs
 ```
 
-### Planned Configuration
+**Captured data:**
+- Request ID, query, parameters
+- Provider used, response status
+- Result count, total results
+- Response time, error details
+- Timestamps
+
+### Migration
+
 ```bash
-# Search provider configuration
-SEARCH_PROVIDER=google  # google, bing, or custom
-SEARCH_API_KEY=your-api-key
-SEARCH_API_ENDPOINT=https://api.example.com
-
-# Caching
-REDIS_URL=redis://localhost:6379
-CACHE_TTL_SECONDS=3600
-
-# Rate limiting
-MAX_SEARCHES_PER_MINUTE=10
+psql -f migrations/001_create_search_logs.sql
 ```
 
-## Deployment Notes
+Creates:
+- `websearch` schema
+- `websearch.search_logs` table
+- Grants for `fireread` (SELECT) and `fireinsert` (SELECT, INSERT)
 
-This service is not yet ready for production deployment. Current deployment capabilities:
-- ✅ Docker build process configured
-- ✅ GitHub Actions CI/CD pipeline
-- ✅ Azure Container Registry integration
-- ❌ Search functionality not implemented
-- ❌ No production-ready search provider integration
+## Dependencies
+
+### Runtime Dependencies
+- **Express 5**: Web framework
+- **@firebrandanalytics/shared-utils**: Logging, PostgresProvider
+- **pg**: PostgreSQL client
+- **zod**: Request validation
+- **winston**: Structured logging
+
+### External Dependencies
+- **Bing Web Search API v7**: Search provider (requires API key)
+- **PostgreSQL**: Request logging and analytics
+
+## Deployment
+
+### Docker
+
+```bash
+# Build image locally
+./scripts/build.sh
+
+# Run with environment file
+docker run -p 8080:8080 --env-file .env ff-services-websearch:local
+```
+
+### Kubernetes
+
+The service exposes standard probe endpoints:
+- **Liveness**: `GET /health`
+- **Readiness**: `GET /ready` (fails if Bing API or database unavailable)
+
+### CI/CD
+
+GitHub Actions workflow builds on push to:
+- `main` - Production (semantic version + `latest` tag)
+- `dev` - Development (version-dev.sha + `dev` tag)
+- `feat/**`, `fix/**` - Branch builds
 
 ## Version and Maturity
 
 - **Current Version**: 0.1.0
-- **Status**: Template Stage - Foundation Only
+- **Status**: Beta - Functional with Bing provider
 - **Node.js Version**: 20+ required
 - **License**: MIT
 
 ### Development Roadmap
-- 📋 Phase 1: Search provider client implementation
-- 📋 Phase 2: API endpoint development and result formatting
-- 📋 Phase 3: Caching and performance optimization
-- 📋 Phase 4: Rate limiting and quota management
-- 📋 Phase 5: Integration testing with FireFoundry agents
-- 📋 Phase 6: Production deployment
+
+- ✅ Phase 1: Bing provider implementation (complete)
+- ✅ Phase 1: Structured query support (complete)
+- ✅ Phase 1: Request logging (complete)
+- 📋 Phase 2: Additional providers (Tavily, Brave, Serper)
+- 📋 Phase 2: Provider fallback with circuit breakers
+- 📋 Phase 2: In-memory LRU caching
+- 📋 Phase 3: Redis caching layer
+- 📋 Phase 3: Multi-provider aggregation
+- 📋 Phase 3: Analytics endpoints
+
+## Usage with Agent Bundles
+
+### From an Agent Bundle
+
+```typescript
+// Example: Using web search in an agent workflow
+async function searchAndSummarize(query: string): Promise<string> {
+  const response = await fetch('http://websearch-service:8080/v1/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query,
+      limit: 5
+    })
+  });
+
+  const data = await response.json();
+
+  if (!data.success) {
+    throw new Error(`Search failed: ${data.error.message}`);
+  }
+
+  // Process results for agent context
+  const context = data.results.map(r => `${r.title}: ${r.snippet}`).join('\n\n');
+
+  return context;
+}
+```
+
+### Structured Query Example
+
+```typescript
+// Research a specific topic with domain restrictions
+const response = await fetch('http://websearch-service:8080/v1/search', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    structuredQuery: {
+      terms: ['machine learning', 'deployment'],
+      exactPhrases: ['model serving'],
+      sites: {
+        include: ['arxiv.org', 'github.com', 'huggingface.co'],
+        exclude: ['medium.com', 'towardsdatascience.com']
+      },
+      fileTypes: ['pdf']
+    },
+    limit: 20,
+    freshness: 'month'
+  })
+});
+```
 
 ## Repository
 
@@ -133,17 +400,6 @@ This service is not yet ready for production deployment. Current deployment capa
 
 ## Related Documentation
 
-- **[Context Service](./context-service.md)**: Working memory for storing search results
-- **[Platform Services Overview](../README.md)**: FireFoundry microservices architecture
-- **[Service Template](./service-template.md)**: Template used to scaffold this service
-
-## Notes for Developers
-
-This service is currently a placeholder for future web search capabilities. If you're looking to implement web search functionality:
-
-1. **Choose a Search Provider**: Evaluate Google Custom Search API, Bing Web Search API, or alternatives
-2. **Implement SearchProvider**: Create business logic in `src/providers/SearchProvider.ts`
-3. **Define API Endpoints**: Add routes in `src/routes/RouteManager.ts`
-4. **Add Caching**: Implement result caching to reduce API costs
-5. **Handle Rate Limits**: Implement quota management for search APIs
-6. **Test Integration**: Verify integration with FireFoundry agents and Context Service
+- **[Context Service](./context-service.md)**: Store search results in working memory
+- **[Platform Services Overview](./README.md)**: FireFoundry microservices architecture
+- **[FF Broker](./ff-broker.md)**: AI model routing for processing search results
