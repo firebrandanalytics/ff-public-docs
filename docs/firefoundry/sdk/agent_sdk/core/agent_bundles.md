@@ -366,15 +366,27 @@ async myEndpoint(body: any = {}): Promise<any> {
 
 ```typescript
 @ApiEndpoint({
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH',
-  route: string,  // The URL path (without leading slash)
+  method: 'GET' | 'POST',           // HTTP method (default: 'GET')
+  route: string,                     // URL path (default: method name)
+
+  // Response type options
+  responseType: 'json' | 'binary' | 'iterator',  // (default: 'json')
+  contentType: string,               // MIME type for binary (default: 'application/octet-stream')
+  filename: string,                  // Triggers file download with this name
+
+  // File upload option
+  acceptsBlobs: boolean,             // Enable multipart file uploads (default: false)
 })
 ```
 
-**Examples:**
-- `{ method: 'POST', route: 'analyze' }` → `POST /analyze`
-- `{ method: 'GET', route: 'status' }` → `GET /status`
-- `{ method: 'GET', route: 'articles/recent' }` → `GET /articles/recent`
+**Basic Examples:**
+- `{ method: 'POST', route: 'analyze' }` → `POST /api/analyze`
+- `{ method: 'GET', route: 'status' }` → `GET /api/status`
+
+**Advanced Examples:**
+- `{ responseType: 'binary', contentType: 'application/pdf', filename: 'report.pdf' }` → File download
+- `{ responseType: 'iterator' }` → Streaming response
+- `{ method: 'POST', acceptsBlobs: true }` → File upload endpoint
 
 ### Method Signatures
 
@@ -502,9 +514,9 @@ async createArticle(body: any = {}, context?: any): Promise<any> {
 }
 ```
 
-#### Streaming Responses
+#### Paginated Responses
 
-For large responses, consider pagination rather than streaming:
+For large responses, consider pagination:
 
 ```typescript
 @ApiEndpoint({ method: 'GET', route: 'list-articles' })
@@ -587,6 +599,273 @@ private async process_workflow_async(workflowId: string) {
   await workflow.run({});
 }
 ```
+
+#### Binary Responses (File Downloads)
+
+Return binary data (files, images, PDFs) using `responseType: 'binary'`:
+
+```typescript
+@ApiEndpoint({
+  method: 'GET',
+  route: 'download-report',
+  responseType: 'binary',
+  contentType: 'application/pdf',
+  filename: 'report.pdf'
+})
+async downloadReport(query: any = {}): Promise<Buffer> {
+  const { reportId } = query;
+
+  // Generate or retrieve PDF
+  const pdfBuffer = await this.generatePdfReport(reportId);
+
+  return pdfBuffer;  // Must return Buffer
+}
+```
+
+**Configuration Options for Binary Responses:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `responseType` | Set to `'binary'` for binary output | `'json'` |
+| `contentType` | MIME type for the response | `'application/octet-stream'` |
+| `filename` | Adds `Content-Disposition: attachment; filename="..."` header | (none) |
+
+**Common Content Types:**
+
+```typescript
+// PDF documents
+@ApiEndpoint({ responseType: 'binary', contentType: 'application/pdf', filename: 'document.pdf' })
+
+// Images
+@ApiEndpoint({ responseType: 'binary', contentType: 'image/png', filename: 'chart.png' })
+@ApiEndpoint({ responseType: 'binary', contentType: 'image/jpeg', filename: 'photo.jpg' })
+
+// Excel files
+@ApiEndpoint({ responseType: 'binary', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename: 'data.xlsx' })
+
+// CSV files
+@ApiEndpoint({ responseType: 'binary', contentType: 'text/csv', filename: 'export.csv' })
+
+// ZIP archives
+@ApiEndpoint({ responseType: 'binary', contentType: 'application/zip', filename: 'archive.zip' })
+```
+
+**Dynamic Filename Example:**
+
+```typescript
+@ApiEndpoint({
+  method: 'GET',
+  route: 'export-data',
+  responseType: 'binary',
+  contentType: 'text/csv'
+  // Note: filename not set here - set dynamically in response
+})
+async exportData(query: any = {}, context?: any): Promise<Buffer> {
+  const { format = 'csv' } = query;
+  const timestamp = new Date().toISOString().split('T')[0];
+
+  // Generate CSV
+  const csvContent = await this.generateExport();
+
+  // For dynamic filenames, set header manually via context
+  // (Implementation depends on transport layer)
+  return Buffer.from(csvContent, 'utf-8');
+}
+```
+
+#### Iterator Responses (Real-Time Streaming)
+
+Return real-time progress updates using `responseType: 'iterator'`:
+
+```typescript
+@ApiEndpoint({
+  method: 'POST',
+  route: 'stream-analysis',
+  responseType: 'iterator'
+})
+async *streamAnalysis(body: { topic: string }): AsyncIterableIterator<AnalysisUpdate> {
+  // Yield progress updates as work happens
+  yield { status: 'started', message: 'Beginning analysis', progress: 0 };
+
+  // Step 1
+  const step1Result = await this.analyzeStep1(body.topic);
+  yield { status: 'progress', message: 'Initial analysis complete', progress: 0.33, data: step1Result };
+
+  // Step 2
+  const step2Result = await this.analyzeStep2(step1Result);
+  yield { status: 'progress', message: 'Deep analysis complete', progress: 0.66, data: step2Result };
+
+  // Step 3 - Final
+  const finalResult = await this.synthesize(step1Result, step2Result);
+  yield { status: 'completed', message: 'Analysis complete', progress: 1.0, data: finalResult };
+
+  // Return value is also yielded as final item
+  return { final: true, result: finalResult };
+}
+```
+
+**Iterator Response Format:**
+
+Each yielded value is sent to the client as a JSON object. The client receives a stream of newline-delimited JSON:
+
+```json
+{"status":"started","message":"Beginning analysis","progress":0}
+{"status":"progress","message":"Initial analysis complete","progress":0.33,"data":{...}}
+{"status":"progress","message":"Deep analysis complete","progress":0.66,"data":{...}}
+{"status":"completed","message":"Analysis complete","progress":1.0,"data":{...}}
+```
+
+**Use Cases for Iterator Responses:**
+
+- **Long-running AI operations** - Stream progress while LLM is working
+- **Batch processing** - Update progress as items are processed
+- **Search with incremental results** - Return results as they're found
+- **Real-time data feeds** - Stream updates as events occur
+
+**Client Consumption (JavaScript/TypeScript):**
+
+```typescript
+// Using fetch with ReadableStream
+const response = await fetch('/api/stream-analysis', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ topic: 'market trends' })
+});
+
+const reader = response.body?.getReader();
+const decoder = new TextDecoder();
+
+while (reader) {
+  const { done, value } = await reader.read();
+  if (done) break;
+
+  const lines = decoder.decode(value).split('\n').filter(Boolean);
+  for (const line of lines) {
+    const update = JSON.parse(line);
+    console.log('Progress:', update.progress, update.message);
+
+    // Update UI with progress
+    progressBar.value = update.progress;
+    statusText.textContent = update.message;
+  }
+}
+```
+
+#### File Uploads via API Endpoints
+
+Accept binary file uploads using `acceptsBlobs: true`:
+
+```typescript
+@ApiEndpoint({
+  method: 'POST',
+  route: 'process-pdf',
+  acceptsBlobs: true
+})
+async processPdf(
+  pdfFile: Buffer,           // Automatically injected from upload
+  metadata: { title: string } // Additional JSON data
+): Promise<ProcessingResult> {
+  // pdfFile is the uploaded binary content
+  console.log(`Processing PDF: ${metadata.title}, size: ${pdfFile.length} bytes`);
+
+  // Process the file
+  const result = await this.extractTextFromPdf(pdfFile);
+
+  return {
+    success: true,
+    title: metadata.title,
+    pageCount: result.pageCount,
+    extractedText: result.text
+  };
+}
+```
+
+**How It Works:**
+
+1. Client sends multipart form data with files and JSON args
+2. Server automatically parses uploaded files
+3. `{ $blob: N }` placeholders in args are replaced with actual Buffer contents
+4. Your method receives buffers directly
+
+**Client Usage:**
+
+```typescript
+// Using FormData in browser
+const formData = new FormData();
+formData.append('files', pdfFile);  // File object
+formData.append('args', JSON.stringify([
+  { $blob: 0 },                      // Placeholder for first file
+  { title: 'My Document' }           // Additional metadata
+]));
+
+const response = await fetch('/api/process-pdf', {
+  method: 'POST',
+  body: formData
+});
+```
+
+**Using FF SDK Client:**
+
+```typescript
+import { RemoteAgentBundleClient } from '@firebrandanalytics/ff-sdk';
+
+const client = new RemoteAgentBundleClient('http://localhost:3000');
+
+// Upload file via API endpoint
+const result = await client.call_api_endpoint_with_blobs(
+  'process-pdf',
+  [
+    { $blob: 0 },           // First file
+    { title: 'My PDF' }     // Metadata
+  ],
+  [pdfBuffer]               // Array of Buffers
+);
+```
+
+**Multiple File Uploads:**
+
+```typescript
+@ApiEndpoint({
+  method: 'POST',
+  route: 'process-batch',
+  acceptsBlobs: true
+})
+async processBatch(
+  file1: Buffer,
+  file2: Buffer,
+  metadata: { names: string[] }
+): Promise<BatchResult> {
+  // Process multiple files
+  const results = await Promise.all([
+    this.processFile(file1, metadata.names[0]),
+    this.processFile(file2, metadata.names[1])
+  ]);
+
+  return { results };
+}
+
+// Client call
+const result = await client.call_api_endpoint_with_blobs(
+  'process-batch',
+  [
+    { $blob: 0 },                    // First file
+    { $blob: 1 },                    // Second file
+    { names: ['doc1.pdf', 'doc2.pdf'] }
+  ],
+  [buffer1, buffer2]
+);
+```
+
+**Comparison: @ApiEndpoint vs Entity Methods for File Uploads:**
+
+| Aspect | `@ApiEndpoint` with `acceptsBlobs` | Entity `invoke_with_blobs` |
+|--------|-----------------------------------|----------------------------|
+| Use Case | Stateless file processing | File storage with entity tracking |
+| State | No automatic state | Files tracked in entity data |
+| Storage | You manage storage | Working Memory integration |
+| Best For | Transform & return, one-shot processing | Document management, file libraries |
+
+See **[File Upload Patterns](../feature_guides/file-upload-patterns.md)** for comprehensive file handling with entity-based storage.
 
 ---
 

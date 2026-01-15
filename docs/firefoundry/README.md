@@ -4,7 +4,7 @@
 
 ## Executive Summary
 
-FireFoundry is an **Agent-as-a-Service** platform for enterprises that need to build, deploy, and operate sophisticated GenAI applications. It combines **opinionated runtime services** (Broker, Context Service, Code Sandbox), **developer tooling** (AgentSDK, ff-cli, testing), and a **Management Console** into a single, batteries‑included stack. Teams ship faster because persistence, observability, deployment, and streaming are built‑in—not bolted on. Developers write agents; operations teams get standard Kubernetes‑native controls; consumers integrate via the **FF SDK** and stable **REST**/**WebSockets** interfaces (with **MCP** and **A2A** planned). Internally, platform services communicate over **gRPC**.
+FireFoundry is an **Agent-as-a-Service** platform for enterprises that need to build, deploy, and operate sophisticated GenAI applications. It combines **opinionated runtime services** (Broker, Context Service, Code Sandbox, Entity Service, Document Processing), **developer tooling** (AgentSDK, ff-cli, testing), and a **Management Console** into a single, batteries‑included stack. Teams ship faster because persistence, observability, deployment, and streaming are built‑in—not bolted on. Developers write agents; operations teams get standard Kubernetes‑native controls; consumers integrate via the **FF SDK** and stable **REST**/**WebSockets** interfaces (with **MCP** and **A2A** planned). Internally, platform services communicate over **gRPC**.
 
 ---
 
@@ -22,7 +22,7 @@ FireFoundry consists of seven major technical components:
 
 * **Infrastructure as Code**: Terraform modules provision Kubernetes clusters and cloud dependencies for automated setup and configuration management.
 * **ff-cli**: Command‑line tool for creating, packaging, deploying, and managing agent bundles; on a path toward full platform lifecycle management.
-* **Kubernetes Platform**: Microservices runtime hosting specialized AI services—**Broker** (model routing), **Context Service** (working memory/persistence API), **Code Sandbox** (secure code execution)—plus supporting infrastructure.
+* **Kubernetes Platform**: Microservices runtime hosting specialized AI services—**Broker** (model routing), **Context Service** (working memory/persistence), **Code Sandbox** (secure code execution), **Entity Service** (graph management/vector search), **Document Processing** (extraction/generation)—plus supporting infrastructure including Kong Gateway and PostgreSQL.
 * **AgentSDK**: Development framework for building agent bundles with zero‑code persistence via an entity graph and structured AI behavior.
 * **FF SDK**: Client library for external systems consuming deployed agents and platform services over **REST** and **WebSockets**. (**gRPC is internal‑only.** **MCP** and **A2A** are planned.)
 * **Testing Framework (LLM‑as‑Validator)**: GenAI‑aware testing using AI validators to evaluate semantic correctness, with integrated test management and analysis.
@@ -35,7 +35,9 @@ FireFoundry consists of seven major technical components:
 | Internal service‑to‑service | Broker, Context, Sandbox, bundles | **gRPC**         | GA      |
 | External client‑to‑platform | API calls to bundles/platform     | **REST**         | GA      |
 | External streaming          | Progress & event streaming        | **WebSockets**   | GA      |
-| Extensibility               | Tooling/interop                   | **MCP**, **A2A** | Planned |
+| Extensibility               | External tooling/interop          | **MCP**, **A2A** | Planned |
+
+*Note: Context Service uses MCP internally for AI agent interfaces (GA), but MCP as an external-facing extensibility protocol is planned.*
 
 ### 1.3 Why This Approach?
 
@@ -72,15 +74,20 @@ Agent bundles are the core deployment unit—containerized collections of agents
 
 ### 3.1 Kubernetes Runtime Platform
 
-**Core Services**
+**Core Runtime Services**
 
-* **Broker Service**: Intelligent router for AI model interactions (selection, failover, streaming).
+* **Broker Service**: Intelligent router for AI model interactions with multi-provider support, cost-based selection, automatic failover, and streaming.
 * **Context Service**: Working memory and context API. **All metadata/state persists in PostgreSQL**; **binary artifacts associated with working memory** are stored in **blob storage**.
 * **Code Sandbox**: Secure execution of AI‑generated code. **One sandbox per environment** (each environment maps to a Kubernetes **namespace**). Supports **TypeScript** today; **Python** planned. **Secrets are handled via KeyVault** and **not directly exposed** to AI‑generated code; the sandbox establishes connections and provides pre‑authorized handles when appropriate. **Egress whitelisting** is planned. Resource limits rely on Kubernetes. The sandbox does **not** guarantee idempotency; most use is **read‑only**, and **consumers must handle retries/failures**.
-* **Kong Gateway**: API management, security policy enforcement, and external exposure of agent/bundle capabilities.
+
+**Extended Services**
+
+* **Entity Service**: Entity graph management with pgvector-based semantic search and vector similarity matching for knowledge retrieval.
+* **Document Processing Service**: Unified document processing (extraction, generation, transformation) with Azure Document Intelligence integration.
 
 **Platform Infrastructure**
 
+* **Kong Gateway**: API management, security policy enforcement, and external exposure of agent/bundle capabilities.
 * **PostgreSQL** is the primary store for the **entity graph** and platform metadata (initiative underway to host inside the cluster). Additional infrastructure includes blob storage, application‑aware monitoring, and auto‑scaling via Kubernetes HPA.
 
 **Persistence Model**
@@ -112,6 +119,25 @@ Agent bundles are the core deployment unit—containerized collections of agents
 ### 3.6 Management Console
 
 * Central interface for platform administration: environment management, bundle lifecycle control, observability, and testing. Includes **Continue in Playground** for one‑click reproduction of Broker interactions and **Mock Cache** management for deterministic runs.
+
+### 3.7 Platform Services (Comprehensive Microservices)
+
+FireFoundry provides a collection of specialized microservices that work together to enable sophisticated AI applications. Services are organized by maturity level:
+
+**Tier 1 - Core Runtime (GA - Production Ready)**
+* **[Broker Service](./platform/services/ff-broker.md)** (v5.2.7): Intelligent AI model routing with multi-provider support, cost-based selection, and automatic failover.
+* **[Context Service](./platform/services/context-service.md)** (v2.0.0): Working memory and blob storage with multi-cloud support (Azure, Google Cloud) and MCP integration.
+* **[Code Sandbox](./platform/services/code-sandbox.md)** (v2.0.0): Secure code execution environment with ODBC connectivity, Chart.js visualization, and DataFrame processing.
+
+**Tier 2 - Extended Services (Beta)**
+* **[Entity Service](./platform/services/entity-service.md)** (v0.3.0-beta.0): Entity graph management with pgvector-based semantic search and vector similarity matching.
+* **[Document Processing Service](./platform/services/doc-proc-service.md)** (v0.1.10): Unified document processing (extraction, generation, transformation) with Azure Document Intelligence integration.
+
+**Tier 3 - Emerging Services (Planning/Early Development)**
+* **[Document Processing Python Worker](./platform/services/doc-proc-pyworker.md)** (Planning): Advanced ML-based document processing with local OCR and complex table extraction.
+* **[Web Search Service](./platform/services/web-search.md)** (Planning): Web search capabilities for agent workflows.
+
+**See [Platform Services Overview](./platform/services/README.md)** for detailed architecture, service communication patterns, data flows, configuration, deployment, monitoring, and troubleshooting guidance.
 
 ---
 

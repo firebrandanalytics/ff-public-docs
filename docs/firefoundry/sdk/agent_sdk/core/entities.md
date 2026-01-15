@@ -26,15 +26,14 @@ At its core, the entity framework revolves around several fundamental concepts:
 
 ### 1.2 Entity Framework Architecture
 
-The entity framework follows a hierarchical structure:
+The entity framework uses a **mixin-based composition pattern** that provides flexibility and reusability:
 
 ```
 DTOWrapper
     ├── EntityNode
     │   ├── EntityTreeNode
-    │   ├── RunnableEntityClass
-    │   │   ├── RunnableEntityBotWrapperClass
-    │   │   └── WaitableRunnableEntityClass
+    │   ├── RunnableEntity (pre-composed: EntityNode + RunnableEntityMixin)
+    │   ├── WaitableRunnableEntity (pre-composed: RunnableEntity + WaitableRunnableEntityMixin)
     │   ├── SchedulerNode
     │   ├── JobCallNode
     │   ├── WorkQueueNode
@@ -48,7 +47,15 @@ DTOWrapper
         ├── EntityEdgeScheduledCall
         ├── EntityEdgeQueuedWork
         └── EntityEdgeTriggersRun
+
+Mixins Available:
+    ├── RunnableEntityMixin (makes EntityNode executable)
+    ├── BotRunnableEntityMixin (adds bot integration to runnable entities)
+    ├── WaitableRunnableEntityMixin (adds pausing/resuming capability)
+    └── (Custom mixins can be composed using AddMixins/ComposeMixins)
 ```
+
+**Note**: The `RunnableEntity` and `WaitableRunnableEntity` shown above are pre-composed base classes combining `EntityNode` with the appropriate mixins. You can also create custom compositions using the `AddMixins()` and `ComposeMixins()` utilities.
 
 ### 1.3 The Entity-Bot Relationship Pattern
 
@@ -232,28 +239,45 @@ The framework provides several decorators for entity metadata:
 
 ## 3. Runnable Entities and Workflow Management
 
-### 3.1 RunnableEntityClass
+### 3.1 RunnableEntity and RunnableEntityMixin
 
-The base class for all executable entities:
+Executable entities are created by composing `EntityNode` with `RunnableEntityMixin`. The SDK provides a pre-composed `RunnableEntity` base class for convenience:
 
 ```typescript
-export default class RunnableEntityClass<ENH extends RunnableEntityTypeHelper<any,any,any,any,any>> 
-    extends RunnableEntityBase<ENH> {
-    
+// Using the pre-composed RunnableEntity base class
+import { RunnableEntity } from '@firebrandanalytics/ff-agent-sdk/entity';
+
+export class MyWorkflow extends RunnableEntity<ENH> {
+    // Your entity implementation
+}
+
+// Or create a custom composition
+import { EntityNode, AddMixins } from '@firebrandanalytics/ff-agent-sdk/entity';
+import { RunnableEntityMixin } from '@firebrandanalytics/ff-agent-sdk/entity';
+
+export class CustomRunnable extends AddMixins(EntityNode, RunnableEntityMixin) {
+    // Custom runnable entity
+}
+```
+
+**Runnable Entity Interface**:
+
+```typescript
+interface RunnableEntity<ENH extends RunnableEntityTypeHelper<any,any,any,any,any>> {
     // Main execution methods
     async run(): Promise<ENH['output']>
     async start(): Promise<RunnableEntityResponseIterator<...>>
-    
+
     // Background execution
     runBackground(): void
-    
+
     // Status management
     async get_status(): Promise<EntityNodeStatus>
     protected async update_node_status(status: EntityNodeStatus): Promise<void>
-    
+
     // Core implementation method (override in subclasses)
     protected async *run_impl(): RunnableEntityResponseIterator<...>
-    
+
     // Helper methods for workflow composition
     protected async appendCall<TTargetType>(...)
     protected async appendOrRetrieveCall<TTargetType>(...)
@@ -261,50 +285,107 @@ export default class RunnableEntityClass<ENH extends RunnableEntityTypeHelper<an
 }
 ```
 
-Status progression for runnable entities:
+**Status progression for runnable entities**:
 - `Pending` → `InProgress` → `Completed` (successful execution)
 - `Pending` → `InProgress` → `Failed` (execution error)
 - `Pending` → `InProgress` → `Waiting` → `InProgress` → ... (waitable entities)
 
-### 3.2 WaitableRunnableEntityClass
+**Mixin-Based Composition**:
+When you need additional capabilities, compose mixins together:
+```typescript
+import { ComposeMixins, MixinBot } from '@firebrandanalytics/ff-agent-sdk/bot';
+import { BotRunnableEntityMixin, WaitableRunnableEntityMixin } from '@firebrandanalytics/ff-agent-sdk/entity';
 
-Extends runnable entities with the ability to wait for external input:
+// Create a runnable entity that can also wait for input
+export class InteractiveWorkflow extends AddMixins(
+    EntityNode,
+    RunnableEntityMixin,
+    WaitableRunnableEntityMixin
+) {
+    // Combines both runnable and waitable capabilities
+}
+```
+
+### 3.2 WaitableRunnableEntity and WaitableRunnableEntityMixin
+
+Extends runnable entities with the ability to pause and wait for external input (human-in-the-loop workflows):
 
 ```typescript
-export default class WaitableRunnableEntityClass<ENH extends RunnableEntityTypeHelper<any,any,any,any,{message: string; data: any}>> 
-    extends RunnableEntityClass<ENH> {
-    
+// Using the pre-composed WaitableRunnableEntity base class
+import { WaitableRunnableEntity } from '@firebrandanalytics/ff-agent-sdk/entity';
+
+export class ApprovalWorkflow extends WaitableRunnableEntity<ENH> {
+    protected async *run_impl() {
+        // Execution logic with ability to wait
+        yield await this.createWaitingEnvelope('AWAITING_APPROVAL', { data: 'pending' });
+        // ... resumes here after human input
+    }
+}
+
+// Or use the mixin for custom composition
+import { AddMixins, WaitableRunnableEntityMixin } from '@firebrandanalytics/ff-agent-sdk/entity';
+
+export class CustomWaitable extends AddMixins(
+    EntityNode,
+    RunnableEntityMixin,
+    WaitableRunnableEntityMixin
+) {
+    // Custom waitable entity
+}
+```
+
+**Waitable Entity Interface**:
+
+```typescript
+interface WaitableRunnableEntity<ENH extends RunnableEntityTypeHelper<any,any,any,any,{message: string; data: any}>> {
     // Process external response
     async processResponse(message: string, data: any): Promise<ENH['output']>
-    
+
     // Send message to waiting entity
     public sendMessage(message: string, data: any): void
-    
+
     // Override to handle messages
     protected async *message_handler(message: string, data: any): RunnableEntityResponseGenerator<...>
-    
+
     // Create waiting envelope for yielding
     protected async createWaitingEnvelope(message?: string, data?: any): Promise<RunnableEntityProgressWaitingEnvelope>
 }
 ```
 
-### 3.3 RunnableEntityBotWrapperClass
+### 3.3 Bot-Integrated Runnable Entities with BotRunnableEntityMixin
 
-Integrates bots with runnable entities:
+Integrates bots with runnable entities using the `BotRunnableEntityMixin`:
 
 ```typescript
-export default class RunnableEntityBotWrapperClass<ENH extends RunnableEntityTypeHelper<any,any,any>> 
-    extends RunnableEntityClass<ENH> {
-    
+// Using mixin composition for bot-integrated runnables
+import { AddMixins, BotRunnableEntityMixin, RunnableEntityMixin } from '@firebrandanalytics/ff-agent-sdk/entity';
+import { EntityNode } from '@firebrandanalytics/ff-agent-sdk/entity';
+
+export class BotPoweredWorkflow extends AddMixins(
+    EntityNode,
+    RunnableEntityMixin,
+    BotRunnableEntityMixin
+) {
     declare _bot: Bot<ENH['enh']['eth']['bth']>;
-    
+
     // Override to provide bot context
-    protected async get_bot_request_args(): Promise<BotRequestArgs<ENH['enh']['eth']['bth']>>
-    
-    // Automatically wraps bot execution
-    protected override async *run_impl(): RunnableEntityResponseIterator<...>
+    protected async get_bot_request_args(): Promise<BotRequestArgs<ENH['enh']['eth']['bth']>> {
+        return {
+            // Provide context for bot execution
+        };
+    }
+
+    // Implement workflow logic
+    protected async *run_impl(): RunnableEntityResponseIterator<...> {
+        // Bot execution is automatically wrapped by the mixin
+    }
 }
 ```
+
+The `BotRunnableEntityMixin` provides:
+- Automatic bot invocation context within runnable entities
+- Access to the entity graph during bot execution
+- Seamless integration of AI behavior with entity persistence
 
 ### 3.4 Progress Tracking with AsyncLocalStorage
 
@@ -759,7 +840,7 @@ if (!typeInfo.allowedConnections[edgeType].includes(targetType)) {
      specificType: 'MyWorkflow',
      allowedConnections: {},  // Empty!
    })
-   export class MyWorkflow extends RunnableEntityClass<...> {
+   export class MyWorkflow extends RunnableEntity<...> {
      protected async *run_impl() {
        // This will fail:
        const step = await this.appendOrRetrieveCall(ChildStep, 'step-1', {});
@@ -774,7 +855,7 @@ if (!typeInfo.allowedConnections[edgeType].includes(targetType)) {
        'Calls': ['ChildStep', 'AnotherStep'],  // List all child entity types
      },
    })
-   export class MyWorkflow extends RunnableEntityClass<...> {
+   export class MyWorkflow extends RunnableEntity<...> {
      protected async *run_impl() {
        // This now works:
        const step = await this.appendOrRetrieveCall(ChildStep, 'step-1', {});
@@ -784,7 +865,7 @@ if (!typeInfo.allowedConnections[edgeType].includes(targetType)) {
 
    **Key Points**:
    - Every entity type you pass to `appendOrRetrieveCall()` or `appendCall()` must be listed in `allowedConnections['Calls']`
-   - This applies to `RunnableEntityClass`, `WaitableRunnableEntityClass`, and `RunnableEntityBotWrapperClass`
+   - This applies to any runnable entity (whether created from `RunnableEntity`, `WaitableRunnableEntity`, or custom mixin compositions)
    - The entity type name must match the `specificType` in the child's decorator
 
 ### 8.2 Debugging Tips
