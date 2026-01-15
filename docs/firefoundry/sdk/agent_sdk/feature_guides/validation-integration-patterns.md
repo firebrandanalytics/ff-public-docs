@@ -154,50 +154,419 @@ The mixin automatically:
 
 ---
 
-## Pattern 4: AI-Powered Validation with Bots
+## Pattern 4: Registering AI Validation Handlers
 
-Combine AI decorators from the validation library with bot processing:
+The validation library provides two decorator types for AI-powered processing:
+- **`@AITransform`** - Transforms values using an LLM (returns the transformed value)
+- **`@AIValidate`** - Validates values using an LLM (returns true/false/error)
+
+Both require a registered handler to execute the AI calls.
+
+### Handler Types
+
+```typescript
+import { AIHandler, AIValidationHandler, AIHandlerParams } from '@firebrandanalytics/shared-utils';
+
+// AIHandler: For @AITransform - returns transformed value
+type AIHandler = (
+  params: AIHandlerParams,
+  prompt: string | object
+) => Promise<any>;
+
+// AIValidationHandler: For @AIValidate - returns true if valid, or error message
+type AIValidationHandler = (
+  params: AIHandlerParams,
+  prompt: string | object
+) => Promise<boolean | string | Error>;
+```
+
+### AIHandlerParams Interface
+
+The handler receives detailed context about the validation:
+
+```typescript
+interface AIHandlerParams {
+  value: any;              // Current value of the property
+  instance: object;        // The entire object being validated
+  context: any;            // Validation context passed to factory.create()
+  propertyKey: string;     // Property name being validated
+  className: string;       // Class name for debugging
+  previousError?: Error;   // Error from previous attempt (if retry)
+  attemptNumber: number;   // Current attempt (1-indexed)
+  maxRetries: number;      // Max retries configured in decorator
+  metadata: any;           // Arbitrary metadata from decorator options
+  schema?: any;            // Auto-generated Zod schema (if available)
+}
+```
+
+### Registering Handlers Globally
+
+Register handlers when creating the `ValidationFactory`:
+
+```typescript
+import { ValidationFactory } from '@firebrandanalytics/shared-utils';
+
+const factory = new ValidationFactory({
+  // Handler for @AITransform decorators
+  aiHandler: async (params, prompt) => {
+    console.log(`Transforming ${params.propertyKey} (attempt ${params.attemptNumber})`);
+
+    // Call your LLM
+    const response = await myLLM.complete({
+      prompt: typeof prompt === 'string' ? prompt : prompt.toString(),
+      temperature: 0.1
+    });
+
+    return response.text;
+  },
+
+  // Handler for @AIValidate decorators
+  aiValidationHandler: async (params, prompt) => {
+    const response = await myLLM.complete({
+      prompt: typeof prompt === 'string' ? prompt : prompt.toString(),
+      temperature: 0
+    });
+
+    // Return true if valid, or error message if not
+    if (response.text.toLowerCase().includes('valid')) {
+      return true;
+    }
+    return `Validation failed: ${response.text}`;
+  }
+});
+```
+
+### Registering Handlers Per-Request
+
+Override handlers for specific validation calls:
+
+```typescript
+// Global factory with default handlers
+const factory = new ValidationFactory({
+  aiHandler: defaultHandler,
+  aiValidationHandler: defaultValidationHandler
+});
+
+// Override for a specific call
+const result = await factory.create(MyClass, data, {
+  context: { userId: '123' },
+
+  // Use a different handler for this call
+  aiHandler: async (params, prompt) => {
+    // Custom logic for this specific validation
+    return await specializedLLM.complete(prompt);
+  }
+});
+```
+
+---
+
+## Pattern 5: AI Validation via Broker Request
+
+Send AI validations through the FF Broker for centralized model routing:
 
 ```typescript
 import { ValidationFactory, AITransform, AIValidate } from '@firebrandanalytics/shared-utils';
+import { BrokerClient } from '@firebrandanalytics/ff-agent-sdk/client';
 
-// Define class with AI-powered transformations
-class EnhancedOutput {
+// Create broker client
+const brokerClient = new BrokerClient({
+  endpoint: 'http://ff-broker:50061'
+});
+
+// Define class with AI decorators
+class ContentAnalysis {
   @Copy()
+  rawText: string;
+
+  @AITransform(
+    (params) => `Summarize this text in 2-3 sentences:\n\n${params.value}`,
+    { metadata: { model: 'gpt-4o', temperature: 0.3 } }
+  )
   summary: string;
 
-  @AITransform('Improve the writing quality and clarity of this text')
-  improved_summary: string;
-
-  @AIValidate('Verify this contains no factual errors')
-  fact_checked: boolean;
+  @AIValidate(
+    (params) => `Is this summary accurate and factual? Answer YES or NO with explanation:\n\nOriginal: ${params.instance.rawText}\n\nSummary: ${params.value}`,
+    { metadata: { model: 'gpt-4o-mini' } }
+  )
+  summaryValidated: boolean;
 }
 
-class EnhancingEntity extends AddMixins(RunnableEntity, BotRunnableEntityMixin) {
+// Create factory with broker-based handlers
+const factory = new ValidationFactory({
+  aiHandler: async (params, prompt) => {
+    // Use metadata to select model
+    const model = params.metadata?.model ?? 'gpt-4o-mini';
+    const temperature = params.metadata?.temperature ?? 0.1;
+
+    const response = await brokerClient.complete({
+      model_pool_name: model,
+      messages: [
+        { role: 'user', content: typeof prompt === 'string' ? prompt : JSON.stringify(prompt) }
+      ],
+      temperature,
+      max_tokens: 500
+    });
+
+    return response.choices[0].message.content;
+  },
+
+  aiValidationHandler: async (params, prompt) => {
+    const model = params.metadata?.model ?? 'gpt-4o-mini';
+
+    const response = await brokerClient.complete({
+      model_pool_name: model,
+      messages: [
+        { role: 'user', content: typeof prompt === 'string' ? prompt : JSON.stringify(prompt) }
+      ],
+      temperature: 0,
+      max_tokens: 100
+    });
+
+    const answer = response.choices[0].message.content.trim().toUpperCase();
+    if (answer.startsWith('YES')) {
+      return true;
+    }
+    return `Validation failed: ${response.choices[0].message.content}`;
+  }
+});
+
+// Use in an entity
+class AnalysisEntity extends RunnableEntity {
   protected async *run_impl() {
-    // Get initial bot output
-    const botResponse = yield* this.run_bot();
+    const dto = await this.get_dto();
 
-    // Enhance with AI validation decorators
-    const factory = new ValidationFactory({
-      aiHandler: async (prompt, value) => {
-        // Use your LLM to process AI decorators
-        return await this.callLLM(prompt, value);
-      }
+    const analyzed = await factory.create(ContentAnalysis, {
+      rawText: dto.data.text
     });
 
-    const enhanced = await factory.create(EnhancedOutput, {
-      summary: botResponse.summary
-    });
-
-    return enhanced;
+    return analyzed;
   }
 }
 ```
 
 ---
 
-## Pattern 5: Conditional Validation in Workflows
+## Pattern 6: AI Validation via Bot
+
+Use a dedicated bot for AI validation processing:
+
+```typescript
+import { ValidationFactory, AITransform } from '@firebrandanalytics/shared-utils';
+import { Bot, BotRequest } from '@firebrandanalytics/ff-agent-sdk/bot';
+
+// Create a simple transformation bot
+class TransformationBot extends Bot<TransformBTH> {
+  constructor() {
+    super({
+      name: 'TransformationBot',
+      base_prompt_group: new PromptGroup([
+        {
+          name: 'transform',
+          prompt: new TransformPrompt()
+        }
+      ]),
+      model_pool_name: 'azure_completion_4o'
+    });
+  }
+}
+
+const transformBot = new TransformationBot();
+
+// Create factory that uses the bot for AI operations
+const factory = new ValidationFactory({
+  aiHandler: async (params, prompt) => {
+    const request = new BotRequest({
+      id: `transform-${params.propertyKey}-${Date.now()}`,
+      args: {
+        instruction: typeof prompt === 'string' ? prompt : JSON.stringify(prompt),
+        value: params.value
+      },
+      input: {}
+    });
+
+    const response = await transformBot.run(request);
+    return response.output.result;
+  }
+});
+```
+
+---
+
+## Pattern 7: DataValidationBotMixin with AI Handlers
+
+The `DataValidationBotMixin` integrates validation directly into bot execution:
+
+```typescript
+import {
+  ComposeMixins,
+  MixinBot,
+  StructuredOutputBotMixin,
+  DataValidationBotMixin
+} from '@firebrandanalytics/ff-agent-sdk/bot';
+import {
+  ValidationFactory,
+  CoerceTrim,
+  AITransform,
+  ValidateRequired
+} from '@firebrandanalytics/shared-utils';
+
+// Define validated output class with AI decorators
+class OrderOutput {
+  @CoerceTrim()
+  @ValidateRequired()
+  customer_name: string;
+
+  @AITransform(
+    (params) => `Normalize this product name to our catalog format: ${params.value}`,
+    { maxRetries: 2 }
+  )
+  product_name: string;
+
+  @ValidateRange(1, 1000)
+  quantity: number;
+}
+
+// Create a factory with AI handlers
+const validationFactory = new ValidationFactory({
+  aiHandler: async (params, prompt) => {
+    // This handler will be called when @AITransform is processed
+    const response = await brokerClient.complete({
+      model_pool_name: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt as string }],
+      temperature: 0.1
+    });
+    return response.choices[0].message.content;
+  }
+});
+
+// Bot with integrated validation
+class OrderBot extends ComposeMixins(
+  MixinBot,
+  StructuredOutputBotMixin,
+  DataValidationBotMixin
+) {
+  constructor() {
+    super(
+      // MixinBot config
+      [{
+        name: 'OrderBot',
+        base_prompt_group: orderPromptGroup,
+        model_pool_name: 'azure_completion_4o'
+      }],
+      // StructuredOutputBotMixin config
+      [{
+        schema: OrderSchema,
+        struct_data_language: 'json'
+      }],
+      // DataValidationBotMixin config
+      [{
+        validatedClass: OrderOutput,
+        validationFactory,  // Factory with AI handlers
+        validationOptions: {
+          engine: 'convergent',
+          maxIterations: 10
+        }
+      }]
+    );
+  }
+}
+```
+
+### How It Works
+
+1. **LLM produces output** → Zod schema validates structure
+2. **DataValidationBotMixin** → Transforms output using `ValidationFactory`
+3. **@AITransform decorators** → Call the registered `aiHandler`
+4. **Validation errors** → Bot retries with error feedback
+5. **Success** → Returns validated class instance
+
+---
+
+## Pattern 8: Dynamic Prompts with Context
+
+Use lambda prompts that access validation context and other properties:
+
+```typescript
+import { AITransform, Copy } from '@firebrandanalytics/shared-utils';
+
+interface TranslationContext {
+  targetLanguage: string;
+  glossary: Record<string, string>;
+}
+
+class TranslatedContent {
+  @Copy()
+  originalText: string;
+
+  @AITransform(
+    (params) => {
+      const ctx = params.context as TranslationContext;
+      const glossaryHint = Object.entries(ctx.glossary)
+        .map(([term, translation]) => `${term} → ${translation}`)
+        .join('\n');
+
+      return `Translate to ${ctx.targetLanguage}. Use this glossary:\n${glossaryHint}\n\nText: ${params.value}`;
+    },
+    {
+      dependsOn: ['originalText'],  // Re-run if originalText changes
+      metadata: { model: 'gpt-4o' }
+    }
+  )
+  translatedText: string;
+}
+
+// Usage with context
+const factory = new ValidationFactory({ aiHandler: myHandler });
+
+const result = await factory.create(TranslatedContent,
+  { originalText: 'Hello world', translatedText: 'Hello world' },
+  {
+    context: {
+      targetLanguage: 'Spanish',
+      glossary: { 'Hello': 'Hola', 'world': 'mundo' }
+    }
+  }
+);
+```
+
+---
+
+## Pattern 9: Retry Logic with Previous Error
+
+AI handlers receive previous error context for intelligent retries:
+
+```typescript
+const factory = new ValidationFactory({
+  aiHandler: async (params, prompt) => {
+    let enhancedPrompt = prompt as string;
+
+    // If this is a retry, include the previous error
+    if (params.previousError && params.attemptNumber > 1) {
+      enhancedPrompt = `${prompt}\n\nPrevious attempt failed with: ${params.previousError.message}\n\nPlease fix the issue and try again.`;
+    }
+
+    console.log(`Attempt ${params.attemptNumber}/${params.maxRetries} for ${params.propertyKey}`);
+
+    const response = await llm.complete(enhancedPrompt);
+    return response;
+  }
+});
+
+// Class with retry configuration
+class RobustOutput {
+  @AITransform(
+    'Format as valid JSON: {{value}}',
+    { maxRetries: 3 }  // Will retry up to 3 times
+  )
+  @ValidateJSON()  // Must pass JSON validation after transform
+  data: object;
+}
+```
+
+---
+
+## Pattern 10: Conditional Validation in Workflows
 
 Use validation conditionally based on entity state:
 
@@ -239,7 +608,7 @@ class WorkflowEntity extends RunnableEntity<WorkflowRETH> {
 
 ---
 
-## Pattern 6: Batch Validation in Parallel Workflows
+## Pattern 11: Batch Validation in Parallel Workflows
 
 Validate multiple items efficiently:
 
@@ -368,9 +737,13 @@ The validation library integrates with Agent SDK through:
 1. **Post-processing bot outputs** - Validate and transform LLM responses
 2. **Pre-processing inputs** - Normalize data before entity processing
 3. **DataValidationBotMixin** - Built-in validation with retry
-4. **AI decorators** - Combine with bot LLM calls
-5. **Conditional validation** - Based on entity state
-6. **Batch validation** - Parallel processing
+4. **AI validation handlers** - Register handlers for `@AITransform` and `@AIValidate` decorators
+5. **Broker integration** - Route AI validations through FF Broker for model routing
+6. **Bot-based AI handlers** - Use dedicated bots for AI validation processing
+7. **Dynamic prompts** - Access full validation context in prompts
+8. **Retry with error context** - Intelligent retries using previous error information
+9. **Conditional validation** - Based on entity state
+10. **Batch validation** - Parallel processing
 
 For complete decorator reference and advanced patterns, see:
 - **[Validation Library - Getting Started](../../utils/validation-library-getting-started.md)**
