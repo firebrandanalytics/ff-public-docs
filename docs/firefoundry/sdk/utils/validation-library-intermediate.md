@@ -301,3 +301,27 @@ You've now moved beyond simple validation into the realm of data architecture. Y
 *   **Scale** your validation rules across your entire application with a predictable cascade.
 
 With these intermediate patterns, you are well-equipped to handle the complex and messy data of modern applications. For even more advanced use cases, consult the full API reference documentation.
+
+---
+
+## 4. Conditional Logic with If/Else/EndIf
+
+You can apply rules conditionally based on runtime values using an `If/Else/EndIf` block. Decorators placed between branch markers (`@If`, `@ElseIf`, `@Else`) are only applied if that branch is taken.
+
+**Important:** Conditional decorators execute in reverse order (`@EndIf` first, `@If` last). The block starts with `@EndIf` and ends with `@If`.
+
+```typescript
+class Order {
+  @ValidateRequired()
+  orderType: 'ONLINE' | 'IN_STORE';
+
+  // This property is only required if orderType is 'ONLINE'
+  @EndIf()
+  @ValidateRequired()
+  @If({
+    topics: ['orderType'], // Depend on the value of 'orderType'
+    predicate: (orderType) => orderType === 'ONLINE'
+  })
+  shippingAddress: string;
+}
+```
