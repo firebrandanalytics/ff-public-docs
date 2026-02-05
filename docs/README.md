@@ -51,9 +51,9 @@ The FireIQ Suite provides enterprise tools for preparing datasets and enabling n
 
 If you're building custom GenAI applications and need a complete platform:
 
-1. [FireFoundry Prerequisites](./firefoundry/getting-started/prerequisites.md)
-2. [Installation Guide](./firefoundry/getting-started/README.md)
-3. [Agent Development](./firefoundry/local-development/agent-development.md)
+1. **[Getting Started Guide](./ff_local_dev/getting-started.md)** - Complete setup from zero to working environment
+2. [Agent Development](./firefoundry/local-development/agent-development.md)
+3. [AgentSDK Documentation](./firefoundry/sdk/agent_sdk/README.md)
 
 ### For FireIQ
 
@@ -68,10 +68,13 @@ If you want to enable conversational access to your data:
 
 ```
 docs/
+├── ff_local_dev/         # Local development quick start (START HERE)
+│   └── getting-started.md  # Zero to working environment
+│
 ├── firefoundry/          # FireFoundry platform documentation
-│   ├── getting-started/  # Installation and quick start
+│   ├── getting-started/  # Prerequisites and concepts
 │   ├── platform/         # Architecture and operations
-│   ├── local-development/ # Local development setup
+│   ├── local-development/ # Development workflows
 │   └── sdk/              # SDK documentation
 │       ├── agent_sdk/    # Agent development SDK
 │       ├── ff_sdk/       # Consumer integration SDK
