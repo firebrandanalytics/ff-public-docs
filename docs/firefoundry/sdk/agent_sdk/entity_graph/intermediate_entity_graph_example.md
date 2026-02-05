@@ -218,17 +218,19 @@ This is the most interesting entity - it represents the computational process of
 
 ```typescript
 import {
-  AddInterface,
+  AddMixins,
   BotRequestArgs,
   EntityNode,
   EntityNodeTypeHelper,
   EntityFactory,
-  RunnableEntityBotWrapperDecorator,
+  RunnableEntityDecorator,
+  RunnableEntityMixin,
+  BotRunnableEntityMixin,
   RunnableEntityTypeHelper,
-  Context,
-  IRunnableEntity
-} from '@firebrandanalytics/ff-agent-sdk';
+  UUID
+} from '@firebrandanalytics/ff-agent-sdk/entity';
 import { MatchingBot } from '../bots/MatchingBot.js';
+import { JSONValue, EntityInstanceNodeDTO } from '@firebrandanalytics/shared-types';
 
 // Define DTO structure
 export interface MatchingScoreDTOData {
@@ -252,28 +254,29 @@ type MATCHING_RETH = RunnableEntityTypeHelper<
     any,
     MatchingScoreDTO,
     "MatchingScore",
-    {}, // edges_from  
+    {}, // edges_from
     { 'Evaluates': ['JobDescription', 'Resume'] } // edges_to
   >,
   MatchingResult,
   {}
 >;
 
-@RunnableEntityBotWrapperDecorator(
+// Use mixin composition: EntityNode + RunnableEntityMixin + BotRunnableEntityMixin
+@RunnableEntityDecorator(
   {
     generalType: "MatchingScore",
-    specificType: "MatchingScore", 
+    specificType: "MatchingScore",
     allowedConnections: {
       'Evaluates': ['JobDescription', 'Resume'] // This entity evaluates both JD and Resume
     }
-  },
-  new MatchingBot()
+  }
 )
 export class MatchingScore
-  extends AddInterface<
-    typeof EntityNode<MATCHING_RETH["enh"]>,
-    IRunnableEntity<MATCHING_RETH["enh"]["eth"]["bth"], MatchingResult>
-  >(EntityNode<MATCHING_RETH["enh"]>)
+  extends AddMixins(
+    EntityNode,
+    RunnableEntityMixin,
+    BotRunnableEntityMixin
+  )
 {
   constructor(factory: EntityFactory<any>, idOrDto: UUID | MatchingScoreDTO) {
     super(factory, idOrDto);
@@ -378,14 +381,16 @@ type MatchingResult = z.infer<typeof MatchingResultSchema>;
 
 ```typescript
 import {
-  StructuredDataBot,
-  StructuredDataBotConfig,
+  ComposeMixins,
+  MixinBot,
   BotTypeHelper,
   PromptTypeHelper,
   BotTryRequest,
   PromptGroup
-} from '@firebrandanalytics/ff-agent-sdk';
+} from '@firebrandanalytics/ff-agent-sdk/bot';
+import { StructuredOutputBotMixin } from '@firebrandanalytics/ff-agent-sdk/bot';
 import { MatchingPrompt } from '../prompts/MatchingPrompt.js';
+import { z } from 'zod';
 
 // Define types for the matching input
 type MATCHING_PROMPT_INPUT = {
@@ -405,28 +410,36 @@ type MATCHING_PROMPT_ARGS = {
 type MATCHING_PTH = PromptTypeHelper<MATCHING_PROMPT_INPUT, MATCHING_PROMPT_ARGS>;
 type MATCHING_BTH = BotTypeHelper<MATCHING_PTH, MatchingResult>;
 
-export class MatchingBot extends StructuredDataBot<
-  typeof MatchingResultSchema,
-  MATCHING_BTH,
-  MATCHING_PTH
-> {
+// Define the matching result schema with Zod
+export const MatchingResultSchema = z.object({
+  match_score: z.number().min(0).max(100),
+  explanation: z.string(),
+  key_strengths: z.array(z.string()),
+  key_gaps: z.array(z.string())
+});
+
+export type MatchingResult = z.infer<typeof MatchingResultSchema>;
+
+// Use mixin composition: MixinBot + StructuredOutputBotMixin
+export class MatchingBot extends ComposeMixins(
+  MixinBot,
+  StructuredOutputBotMixin
+) {
   constructor() {
-    const prompt_group = new PromptGroup([
-      { 
-        name: "matching_prompt", 
+    const prompt_group = new PromptGroup<MATCHING_PTH>([
+      {
+        name: "matching_prompt",
         prompt: new MatchingPrompt({ company: "Recruiting Corp" })
       },
     ]);
 
-    const config: StructuredDataBotConfig<typeof MatchingResultSchema, MATCHING_PTH> = {
+    super({
       name: "MatchingBot",
       schema: MatchingResultSchema,
       schema_description: "Analyzes job-to-resume fit with scoring and detailed breakdown",
       base_prompt_group: prompt_group,
       model_pool_name: "firebrand_completion_default"
-    };
-    
-    super(config);
+    });
   }
 
   override get_semantic_label_impl(_request: BotTryRequest<MATCHING_BTH>): string {

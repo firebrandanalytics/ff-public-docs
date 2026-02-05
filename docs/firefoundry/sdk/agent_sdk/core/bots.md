@@ -68,24 +68,39 @@ protected async *main(request: BotRequest<BTH>): AsyncGenerator<...> {
 }
 ```
 
-### 1.2 Bot Types and Hierarchies
+### 1.2 Bot Architecture with Mixin Composition
 
-The FireFoundry SDK provides several bot types designed for different purposes:
+The FireFoundry SDK uses a **mixin-based composition architecture** that allows flexible capability combination:
 
-- **Bot**: The base class for all bots
-- **StructuredDataBot**: Specializes in extracting structured data from LLM responses
-- **BotCustomErrorHandling**: Adds sophisticated error handling capabilities
+**Core Bot Classes**:
+- **Bot**: The base class for all bots, providing core request-response functionality
+- **MixinBot**: Pre-composed bot that combines `Bot` with `ComposableBase` for mixin support
+
+**Available Bot Mixins**:
+- **StructuredOutputBotMixin**: Adds structured data extraction from LLM responses
+- **DataValidationBotMixin**: Validates bot outputs against schemas
+- **WorkingMemoryBotMixin**: Seamless read/write of working memory context
+- **FeedbackBotMixin**: Collects and processes feedback on bot outputs
+- **CustomBotMixin**: Create your own custom mixins using `BotMixin<BTH>` base class
+
+**Other Bot Utilities**:
+- **BotCustomErrorHandling**: Adds sophisticated error handling capabilities for specialized scenarios
 - **DirectExecutionBotTry**: Supports bypassing the LLM to execute code directly
-- **BotChat**: Simplified bot for chat interactions
 
-These bot types form a hierarchy that allows you to choose the right level of functionality for your needs:
+**Example Mixin Composition**:
 
-```
-Bot
-├── StructuredDataBot
-├── BotChat
-├── BotCustomErrorHandling
-└── (Custom bot implementations)
+```typescript
+import { ComposeMixins, MixinBot } from '@firebrandanalytics/ff-agent-sdk/bot';
+import { StructuredOutputBotMixin, WorkingMemoryBotMixin } from '@firebrandanalytics/ff-agent-sdk/bot';
+
+// Compose a bot with structured output and working memory support
+export class AdvancedBot<BTH extends BotTypeHelper<...>> extends ComposeMixins(
+    MixinBot,
+    StructuredOutputBotMixin,
+    WorkingMemoryBotMixin
+) {
+    // Implementation using combined capabilities
+}
 ```
 
 ### 1.3 The Request-Response Flow with Tool Calls
@@ -478,17 +493,15 @@ protected async handle_tool_calls(
 
 ## 4. Specialized Bot Types
 
-The FireFoundry SDK includes specialized bot types for common patterns and needs.
+The FireFoundry SDK includes several bot mixins for common patterns and needs.
 
-### 4.1 StructuredDataBot
+### 4.1 Structured Output Extraction with StructuredOutputBotMixin
 
-`StructuredDataBot` is designed for extracting structured data from LLM responses with schema validation:
+Use the `StructuredOutputBotMixin` to extract structured data from LLM responses with automatic schema validation:
 
 ```typescript
-import { 
-    StructuredDataBot, 
-    StructuredDataBotConfig 
-} from "@firebrandanalytics/ff_sdk";
+import { ComposeMixins, MixinBot } from '@firebrandanalytics/ff-agent-sdk/bot';
+import { StructuredOutputBotMixin } from '@firebrandanalytics/ff-agent-sdk/bot';
 import { z } from "zod";
 
 // Define your output schema with Zod
@@ -504,52 +517,51 @@ export const MyOutputSchema = z.object({
 // Define the type helper
 export type MY_BTH = BotTypeHelper<MY_PTH, z.infer<typeof MyOutputSchema>>;
 
-export default class MyStructuredBot extends StructuredDataBot<
-    typeof MyOutputSchema, 
-    MY_BTH,
-    MY_PTH
-> {
+export default class MyStructuredBot extends ComposeMixins(
+    MixinBot,
+    StructuredOutputBotMixin
+) {
     constructor() {
-        const config: StructuredDataBotConfig<typeof MyOutputSchema, MY_PTH> = {
+        super({
             name: "MyStructuredBot",
             schema: MyOutputSchema,
             schema_description: "Output with result and metadata",
             base_prompt_group: my_prompt_group,
             model_pool_name: "azure_completion_4o",
-        };
-        super(config);
+        });
     }
 
     override get_semantic_label_impl(request: BotTryRequest<MY_BTH>): string {
         return 'MyStructuredBotSemanticLabel';
     }
-    
-    // Optional: Add custom validation or processing
-    protected override process_validated_data(data: z.infer<typeof MyOutputSchema>) {
-        // Additional processing if needed
-        return data;
+
+    // Override to add custom validation or processing
+    protected override async *postprocess_generator(
+        broker_content: BrokerTextContent,
+        request?: BotTryRequest<MY_BTH>
+    ): BotPostprocessGenerator<MY_BTH> {
+        // StructuredOutputBotMixin handles schema validation
+        // Your implementation can add additional processing
+        return yield* super.postprocess_generator(broker_content, request);
     }
 }
 ```
 
-The `StructuredDataBot` handles JSON extraction and schema validation automatically, so you don't need to implement `postprocess_generator` unless you need custom processing.
+The `StructuredOutputBotMixin` handles JSON extraction and schema validation automatically. It parses the LLM response, validates it against your schema, and returns typed data.
 
-### 4.2 BotChat
+### 4.2 Data Validation with DataValidationBotMixin
 
-`BotChat` provides a simplified interface for chat-based interactions:
+Add schema validation to any bot using the `DataValidationBotMixin`:
 
 ```typescript
-import { BotChat } from "@firebrandanalytics/ff_sdk";
+import { ComposeMixins, MixinBot } from '@firebrandanalytics/ff-agent-sdk/bot';
+import { DataValidationBotMixin } from '@firebrandanalytics/ff-agent-sdk/bot';
 
-export class MyChatBot extends BotChat<MY_PAT> {
-    constructor() {
-        super({
-            name: "MyChatBot",
-            base_prompt_group: chat_system_prompt,
-            static_args: { company: "FinanceIQ" },
-            llm_options: { temperature: 0.7 }
-        });
-    }
+export class ValidatingBot extends ComposeMixins(
+    MixinBot,
+    DataValidationBotMixin
+) {
+    // Validation is automatically applied to outputs
 }
 ```
 
@@ -1242,10 +1254,16 @@ Let's examine several real-world examples from the FinanceIQ application to unde
 
 ### 7.1 FactSheetBot
 
-The FactSheetBot generates user-friendly explanations of AI query processing. It demonstrates how to structure a bot that produces formatted explanations.
+The FactSheetBot generates user-friendly explanations of AI query processing. It demonstrates how to structure a bot that produces formatted explanations using structured output composition.
 
 ```typescript
-export default class FactSheetBot extends StructuredDataBot<typeof FactSheetOutputSchema, FACT_SHEET_BTH, FACT_SHEET_PROMPT_TYPE> {
+import { ComposeMixins, MixinBot } from '@firebrandanalytics/ff-agent-sdk/bot';
+import { StructuredOutputBotMixin } from '@firebrandanalytics/ff-agent-sdk/bot';
+
+export default class FactSheetBot extends ComposeMixins(
+  MixinBot,
+  StructuredOutputBotMixin
+) {
   constructor() {
     // Create the WMPromptGroup configuration
     const klookup_files: Record<string, string> = {
@@ -1320,7 +1338,7 @@ export default class FactSheetBot extends StructuredDataBot<typeof FactSheetOutp
 ```
 
 Key patterns from this example:
-- Uses `StructuredDataBot` for schema validation
+- Uses mixin composition (`MixinBot` + `StructuredOutputBotMixin`) for schema validation
 - Creates a custom `WMPromptGroup` with file-specific descriptions
 - Includes memory tidbits for additional context
 - Uses a focused user instruction

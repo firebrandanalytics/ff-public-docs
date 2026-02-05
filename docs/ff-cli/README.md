@@ -1,13 +1,42 @@
 # ff-cli Documentation
 
-The `ff-cli` tool provides command-line interfaces for managing FireFoundry projects, including Docker image builds, Kubernetes deployments, and configuration profiles.
+The `ff-cli` tool provides command-line interfaces for managing FireFoundry projects, including project scaffolding, Docker image builds, Kubernetes deployments, and configuration profiles.
 
 ## Documentation
 
+### Platform Setup & Management
+- **[Cluster Management](cluster-management.md)** - Initialize Kubernetes clusters, install control plane, check cluster status
+- **[Environment Management](environment-management.md)** - Create and manage isolated development/production environments (namespaces with services)
+
+### Project Development
+- **[Project and Agent Bundle Scaffolding](project-and-bundle-scaffolding.md)** - Create new projects and agent bundles with templates and examples
 - **[Profile Management](profiles.md)** - Manage Docker registry authentication profiles for different environments
-- **[Operations Commands](ops.md)** - Build, install, and upgrade agent bundles using Docker and Helm
+
+### Deployment & Operations
+- **[Operations Commands](ops.md)** - Build, install, upgrade, and manage agent bundle deployments using Docker and Helm
 
 ## Quick Start
+
+### Creating Projects
+
+Create new FireFoundry monorepos with agent bundles:
+
+```bash
+# Create a new project
+ff-cli project create my-ai-project
+
+# Create project with example agent bundle
+ff-cli project create my-project --with-example haiku-service
+
+# Add agent bundle to existing project
+cd my-project/
+ff-cli agent-bundle create analytics-service
+
+# List available examples
+ff-cli examples list
+```
+
+See [project-and-bundle-scaffolding.md](project-and-bundle-scaffolding.md) for complete scaffolding documentation.
 
 ### Profiles
 
@@ -39,7 +68,36 @@ ff-cli ops install my-bundle
 ff-cli ops upgrade my-bundle
 ```
 
+## Complete Workflow
+
+From project creation to deployment:
+
+```bash
+# 1. Create project with example
+ff-cli project create my-ai-app --with-example haiku-service
+
+# 2. Enter project and install dependencies
+cd my-ai-app
+pnpm install
+
+# 3. Add another agent bundle
+ff-cli agent-bundle create custom-service
+
+# 4. Build Docker image
+ff-cli profile select gcp-dev
+ff-cli ops build haiku-service --tag 1.0.0
+
+# 5. Deploy to Kubernetes
+ff-cli ops install haiku-service
+```
+
 ## Integration
 
-Profiles and operations work together seamlessly. When you run `ff-cli ops build`, it will automatically use your current profile for registry authentication. See [profiles.md](profiles.md) and [ops.md](ops.md) for detailed usage.
+All ff-cli commands work together seamlessly:
+
+- **Scaffolding** creates properly structured projects and bundles
+- **Profiles** manage registry authentication for builds
+- **Operations** build and deploy the scaffolded bundles
+
+See individual documentation pages for detailed usage.
 

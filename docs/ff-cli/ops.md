@@ -226,6 +226,59 @@ Options:
   --local-chart               Use local chart (./apps/<name>/helm/) instead of remote
 ```
 
+## Uninstall Command
+
+Remove an agent bundle deployment from Kubernetes.
+
+### Basic Usage
+
+```bash
+# Uninstall from default namespace (ff-dev)
+ff-cli ops uninstall my-bundle
+
+# Uninstall from specific namespace
+ff-cli ops uninstall my-bundle --namespace production
+
+# Force uninstall without confirmation
+ff-cli ops uninstall my-bundle --yes
+```
+
+### Command Options
+
+```bash
+ff-cli ops uninstall <name> [OPTIONS]
+
+Options:
+  --namespace, -n <ns>   Kubernetes namespace (default: ff-dev)
+  --yes                  Skip confirmation prompts (force uninstall)
+```
+
+### What Gets Removed
+
+The uninstall command removes:
+
+- Helm release (deployment and all related Kubernetes resources)
+- Service and ConfigMap
+- Secrets
+- Pod Disruption Budgets (if configured)
+
+**Note**: Persistent data (databases, stored files) are NOT removed by default. Use Helm's `--delete-pvc` option if you want to also remove persistent volumes.
+
+### Examples
+
+**Uninstall with confirmation:**
+
+```bash
+ff-cli ops uninstall my-bundle --namespace production
+# Output: Are you sure you want to uninstall 'my-bundle' from 'production'? [y/N]
+```
+
+**Force uninstall (skip confirmation):**
+
+```bash
+ff-cli ops uninstall my-bundle --namespace production --yes
+```
+
 ## Doctor Command
 
 Check prerequisites for operations commands.
