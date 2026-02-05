@@ -18,12 +18,17 @@ Follow the **[Getting Started Guide](./getting-started.md)** for a complete walk
 - Docker Desktop
 - Minikube
 - kubectl, helm
+- ff-cli (FireFoundry CLI)
 - FireFoundry license (`~/.ff/license.jwt`)
 - 8GB RAM, 4 CPU cores, 40GB disk
+- [k9s](https://k9scli.io/) (recommended for human users)
 
 ## Key Commands
 
 ```bash
+# Check prerequisites
+ff-cli ops doctor
+
 # Initialize cluster with license
 ff-cli cluster init --license ~/.ff/license.jwt
 
@@ -35,6 +40,9 @@ ff-cli env create -t minimal-self-contained -n ff-dev -y
 
 # Add LLM API key
 ff-cli env broker-secret add ff-dev --key OPENAI_API_KEY --value "sk-..." -y
+
+# Reset control plane (start fresh)
+ff-cli cluster uninstall --full -y
 ```
 
 ## Guides

@@ -35,6 +35,19 @@ sudo install kubectl /usr/local/bin/kubectl
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 ```
 
+### Recommended: k9s
+
+[k9s](https://k9scli.io/) is a terminal-based UI for monitoring Kubernetes clusters. It provides a much better experience than raw kubectl commands for watching pods, viewing logs, and debugging issues.
+
+**macOS:**
+```bash
+brew install derailed/k9s/k9s
+```
+
+**Linux/Windows:** See [k9s installation docs](https://k9scli.io/topics/install/)
+
+Throughout this guide, we provide `kubectl` commands for automation and AI agents. Human users may prefer running `k9s` in a separate terminal to monitor progress visually.
+
 ### System Requirements
 
 - **RAM**: 8GB minimum available for minikube
@@ -45,10 +58,18 @@ curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
 You need a FireFoundry license file (`license.jwt`) to proceed. This is provided by Firebrand when you sign up for FireFoundry access.
 
-Place your license file at:
+**Recommended location:**
 ```
 ~/.ff/license.jwt
 ```
+
+The CLI automatically searches for your license in this order:
+1. `--license` flag (explicit path)
+2. `license_file` in your active profile (`~/.ff/profiles`)
+3. `license.jwt` in the current working directory
+4. `~/.ff/license.jwt` (recommended default)
+
+If you place your license at `~/.ff/license.jwt`, you can omit the `--license` flag from most commands.
 
 ---
 
@@ -88,50 +109,32 @@ kubectl get nodes
 
 Expected: One node with status `Ready`.
 
----
+### FireFoundry CLI
 
-## Step 3: Install the FireFoundry CLI
+This guide assumes you have `ff-cli` installed. Verify with:
 
-Download the CLI from the releases page:
-
-**macOS (Apple Silicon):**
-```bash
-curl -L -o ff-cli https://github.com/firebrandanalytics/ff-cli-releases/releases/latest/download/ff-cli-darwin-arm64
-chmod +x ff-cli
-sudo mv ff-cli /usr/local/bin/
-```
-
-**macOS (Intel):**
-```bash
-curl -L -o ff-cli https://github.com/firebrandanalytics/ff-cli-releases/releases/latest/download/ff-cli-darwin-amd64
-chmod +x ff-cli
-sudo mv ff-cli /usr/local/bin/
-```
-
-**Linux:**
-```bash
-curl -L -o ff-cli https://github.com/firebrandanalytics/ff-cli-releases/releases/latest/download/ff-cli-linux-amd64
-chmod +x ff-cli
-sudo mv ff-cli /usr/local/bin/
-```
-
-**Windows:**
-Download `ff-cli-windows-amd64.exe` from [releases](https://github.com/firebrandanalytics/ff-cli-releases/releases/latest) and add to your PATH.
-
-**Verify installation:**
 ```bash
 ff-cli --version
 ```
 
+**Check prerequisites:**
+```bash
+ff-cli ops doctor
+```
+
+This validates that all required tools (Docker, kubectl, helm, minikube) are installed and accessible. Fix any reported issues before proceeding.
+
 ---
 
-## Step 4: Initialize the Cluster
+## Step 3: Initialize the Cluster
 
 Initialize your cluster with FireFoundry CRDs and registry credentials:
 
 ```bash
 ff-cli cluster init --license ~/.ff/license.jwt
 ```
+
+(If your license is at `~/.ff/license.jwt`, the `--license` flag is optional.)
 
 This command:
 - Creates the `ff-control-plane` namespace
@@ -148,7 +151,7 @@ Cluster initialized successfully
 
 ---
 
-## Step 5: Install the Control Plane
+## Step 4: Install the Control Plane
 
 Install the FireFoundry control plane using self-serve mode:
 
@@ -162,6 +165,10 @@ This command:
 - Uses NodePort services (accessible without cloud load balancer)
 
 **Wait for pods to start (2-3 minutes):**
+
+Human users: run `k9s` and switch to the `ff-control-plane` namespace (`:ns ff-control-plane`).
+
+For automation/AI agents:
 ```bash
 kubectl get pods -n ff-control-plane -w
 ```
@@ -179,7 +186,7 @@ Press `Ctrl+C` to stop watching once all pods are running.
 
 ---
 
-## Step 6: Set Up Port Forwarding
+## Step 5: Set Up Port Forwarding
 
 The Helm API needs to be accessible for environment management. Start port forwarding in a separate terminal (or background it):
 
@@ -196,7 +203,7 @@ Expected: `{"items":[],"total":0}` (empty list since no environments exist yet).
 
 ---
 
-## Step 7: Configure CLI Profile
+## Step 6: Configure CLI Profile
 
 Create a profile that tells the CLI where to find the Helm API:
 
@@ -221,7 +228,7 @@ source ~/.zshrc
 
 ---
 
-## Step 8: Create Your First Environment
+## Step 7: Create Your First Environment
 
 Create a FireFoundry environment with all core services:
 
@@ -238,6 +245,10 @@ This deploys:
 - **MinIO** - Object storage for working memory
 
 **Wait for the environment to be ready:**
+
+Human users: in k9s, switch to the `ff-dev` namespace (`:ns ff-dev`) and watch pods come up.
+
+For automation/AI agents:
 ```bash
 kubectl wait helmrelease/firefoundry-core -n ff-dev --for=condition=Ready --timeout=600s
 ```
@@ -251,7 +262,7 @@ Expected: 11+ pods in Running or Completed state.
 
 ---
 
-## Step 9: Configure Broker Secrets
+## Step 8: Configure Broker Secrets
 
 The FF Broker needs API keys for LLM providers. Add your OpenAI or Azure OpenAI key:
 
@@ -274,7 +285,7 @@ The broker pod will automatically restart to pick up the new configuration (this
 
 ---
 
-## Step 10: Verify Your Environment
+## Step 9: Verify Your Environment
 
 Check that all services are healthy:
 
@@ -317,7 +328,9 @@ Your FireFoundry environment is now running. You can:
 
 | Command | Purpose |
 |---------|---------|
+| `ff-cli ops doctor` | Verify prerequisites are installed |
 | `ff-cli cluster status` | Check control plane health |
+| `ff-cli cluster uninstall --full` | Completely reset control plane |
 | `ff-cli env list` | List all environments |
 | `ff-cli env create -t <template> -n <name>` | Create new environment |
 | `ff-cli env delete <name>` | Delete an environment |
@@ -412,3 +425,18 @@ minikube stop
 # Delete minikube cluster entirely (optional)
 minikube delete
 ```
+
+### Starting Fresh with the Control Plane
+
+If you need to completely reset the FireFoundry control plane (e.g., after a failed installation or to test a clean setup), use:
+
+```bash
+ff-cli cluster uninstall --full -y
+```
+
+This removes all FireFoundry resources including:
+- The `ff-control-plane` namespace and all its contents
+- Flux CRDs and controllers
+- Registry credentials
+
+After running this, you can start over from Step 3 (Initialize the Cluster).
