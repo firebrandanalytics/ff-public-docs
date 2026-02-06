@@ -192,7 +192,7 @@ kubectl port-forward -n ff-control-plane svc/firefoundry-control-kong-proxy 8000
 curl -s http://localhost:8000/management/helm/v1/helmreleases
 ```
 
-Expected: `{"items":[],"total":0}` (empty list since no environments exist yet).
+Expected: `{"message":"No API key found in request"}` - this confirms Kong is routing to the Helm API correctly. The API requires authentication, which `ff-cli` handles automatically using a key generated during control plane installation.
 
 ---
 
@@ -237,13 +237,15 @@ This deploys:
 - **PostgreSQL** - Environment database
 - **MinIO** - Object storage for working memory
 
+**Note:** First-time deployments pull container images from Azure Container Registry. These images are 300-500MB each across 9+ services, so the initial deployment may take 15-25 minutes depending on your network speed. Subsequent deployments reuse cached images and are much faster.
+
 **Wait for the environment to be ready:**
 
 Human users: in k9s, switch to the `ff-dev` namespace (`:ns ff-dev`) and watch pods come up.
 
 For automation/AI agents:
 ```bash
-kubectl wait helmrelease/firefoundry-core -n ff-dev --for=condition=Ready --timeout=600s
+kubectl wait helmrelease/firefoundry-core -n ff-dev --for=condition=Ready --timeout=1200s
 ```
 
 **Verify all pods are running:**
@@ -310,7 +312,7 @@ The `minimal-self-contained` template provides sensible defaults, but you may ne
    ```json
    {
      "environmentName": "my-custom-env",
-     "chartVersion": "0.18.18",
+     "chartVersion": "0.19.0",
      "enabledServices": ["ff-broker", "context-service", "code-sandbox", "entity-service"],
      "postgresql": {
        "enabled": true,
@@ -469,7 +471,7 @@ To remove everything and start fresh:
 # Delete environments
 ff-cli env delete ff-dev -y
 
-# Uninstall control plane
+# Uninstall control plane (keeps CRDs and namespace for quick reinstall)
 ff-cli cluster uninstall -y
 
 # Stop minikube
@@ -481,15 +483,17 @@ minikube delete
 
 ### Starting Fresh with the Control Plane
 
-If you need to completely reset the FireFoundry control plane (e.g., after a failed installation or to test a clean setup), use:
+If you need to completely reset the FireFoundry control plane (e.g., after a failed installation or to test a clean setup), use the `--full` flag:
 
 ```bash
 ff-cli cluster uninstall --full -y
 ```
 
-This removes all FireFoundry resources including:
-- The `ff-control-plane` namespace and all its contents
-- Flux CRDs and controllers
-- Registry credentials
+The difference between `uninstall` and `uninstall --full`:
 
-After running this, you can start over from Step 3 (Initialize the Cluster).
+| Command | What it removes |
+|---------|----------------|
+| `ff-cli cluster uninstall` | Helm release only (keeps namespace, CRDs, and registry secret for quick reinstall) |
+| `ff-cli cluster uninstall --full` | Everything: namespace, Flux CRDs, External Secrets CRDs, and registry credentials |
+
+After `--full`, start over from Step 3 (Initialize the Cluster). After a regular uninstall, you can skip directly to Step 4 (Install the Control Plane).
