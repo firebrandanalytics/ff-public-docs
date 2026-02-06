@@ -26,9 +26,6 @@ Follow the **[Getting Started Guide](./getting-started.md)** for a complete walk
 ## Key Commands
 
 ```bash
-# Check prerequisites
-ff-cli ops doctor
-
 # Initialize cluster with license
 ff-cli cluster init --license ~/.ff/license.jwt
 
@@ -50,6 +47,7 @@ ff-cli cluster uninstall --full -y
 | Guide | Description |
 |-------|-------------|
 | [Getting Started](./getting-started.md) | Complete setup from zero to working environment |
+| [Chart Reference](./chart-reference.md) | Comprehensive firefoundry-core Helm chart configuration |
 
 ## Architecture
 

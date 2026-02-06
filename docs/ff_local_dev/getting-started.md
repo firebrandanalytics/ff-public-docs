@@ -117,13 +117,6 @@ This guide assumes you have `ff-cli` installed. Verify with:
 ff-cli --version
 ```
 
-**Check prerequisites:**
-```bash
-ff-cli ops doctor
-```
-
-This validates that all required tools (Docker, kubectl, helm, minikube) are installed and accessible. Fix any reported issues before proceeding.
-
 ---
 
 ## Step 3: Initialize the Cluster
@@ -302,6 +295,67 @@ kubectl get pods -n ff-dev -l app.kubernetes.io/name=ff-broker
 
 ---
 
+## Customizing Your Environment
+
+The `minimal-self-contained` template provides sensible defaults, but you may need to customize your environment.
+
+### Using Custom Configuration
+
+1. **Copy an existing template:**
+   ```bash
+   cp ~/.ff/environments/templates/minimal-self-contained.json ~/my-env-config.json
+   ```
+
+2. **Edit the configuration** to adjust services, storage sizes, or API keys:
+   ```json
+   {
+     "environmentName": "my-custom-env",
+     "chartVersion": "0.18.18",
+     "enabledServices": ["ff-broker", "context-service", "code-sandbox", "entity-service"],
+     "postgresql": {
+       "enabled": true,
+       "storageSize": "16Gi"
+     },
+     "minio": {
+       "enabled": true,
+       "storageSize": "20Gi"
+     },
+     "brokerSecrets": [
+       {"name": "OPENAI_API_KEY", "value": "sk-..."}
+     ]
+   }
+   ```
+
+3. **Create the environment with your config:**
+   ```bash
+   ff-cli env create -f ~/my-env-config.json -n my-custom-env -y
+   ```
+
+### Available Templates
+
+List templates in `~/.ff/environments/templates/`:
+- `minimal-self-contained.json` - All services with bundled PostgreSQL and MinIO
+- `bundled-pg.json` - Core services with bundled PostgreSQL
+- Additional templates for specific deployment scenarios
+
+### Advanced: Direct Helm Install
+
+For full control over Helm values, you can bypass ff-cli and install directly:
+
+```bash
+helm repo add firebrandanalytics https://firebrandanalytics.github.io/ff_infra
+helm repo update
+
+helm install firefoundry-core firebrandanalytics/firefoundry-core \
+  -f my-values.yaml \
+  -f my-secrets.yaml \
+  --namespace ff-dev --create-namespace
+```
+
+This approach gives you access to all chart options but requires managing Helm values files directly. See the **[Chart Reference](./chart-reference.md)** for all available configuration options.
+
+---
+
 ## Next Steps
 
 Your FireFoundry environment is now running. You can:
@@ -328,7 +382,6 @@ Your FireFoundry environment is now running. You can:
 
 | Command | Purpose |
 |---------|---------|
-| `ff-cli ops doctor` | Verify prerequisites are installed |
 | `ff-cli cluster status` | Check control plane health |
 | `ff-cli cluster uninstall --full` | Completely reset control plane |
 | `ff-cli env list` | List all environments |
