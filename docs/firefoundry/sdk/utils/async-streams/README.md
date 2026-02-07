@@ -89,6 +89,7 @@ for await (const envelope of runner.runTasks(false)) {
 | [Push-Pull Bridge](./use-cases/push-pull-bridge.md) | Bridging push producers with pull consumers via PushPullBufferObj |
 | [Multi-Resource Scheduling](./use-cases/multi-resource-scheduling.md) | Capacity-gated scheduling with heterogeneous GPU/CPU resource budgets |
 | [Adaptive Capacity](./use-cases/adaptive-capacity.md) | Dynamic concurrency scaling via the reserve/release pattern |
+| [Priority Request Routing (QoS)](./use-cases/priority-request-routing.md) | Tiered user priority with aging-based starvation prevention for LLM broker requests |
 
 ### Runnable Examples
 
@@ -101,6 +102,7 @@ npx tsx burst-buffered-sink.ts
 npx tsx push-pull-bridge.ts
 npx tsx multi-resource-scheduling.ts
 npx tsx adaptive-capacity.ts
+npx tsx priority-request-routing.ts
 ```
 
 ### Platform Integration

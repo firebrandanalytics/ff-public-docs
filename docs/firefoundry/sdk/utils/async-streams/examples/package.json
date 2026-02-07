@@ -9,7 +9,8 @@
     "burst-buffered-sink": "tsx burst-buffered-sink.ts",
     "push-pull-bridge": "tsx push-pull-bridge.ts",
     "multi-resource-scheduling": "tsx multi-resource-scheduling.ts",
-    "adaptive-capacity": "tsx adaptive-capacity.ts"
+    "adaptive-capacity": "tsx adaptive-capacity.ts",
+    "priority-request-routing": "tsx priority-request-routing.ts"
   },
   "dependencies": {
     "@firebrandanalytics/shared-utils": "^4.1.0-beta.0"
