@@ -408,7 +408,7 @@ These methods merge additional sources into an existing chain. They **replace th
 mergeRace(...others: PullObj<any>[]): PullChain<any>
 ```
 
-Merges additional sources using race semantics (fastest-available-first).
+Merges additional sources using race-robin semantics (`PullRaceRobinObj`): within each round, sources race (fastest yielded first), but every source gets exactly one turn per round before the next round starts.
 
 ### `mergeRoundRobin(...others)`
 

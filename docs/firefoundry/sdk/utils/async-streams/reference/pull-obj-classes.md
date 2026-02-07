@@ -922,7 +922,7 @@ for await (const { source, result } of race) {
 
 ### PullRaceRobinObj
 
-Extends `PullObjManyTo1Link<any>`. A hybrid of race and round-robin: within each round, sources race, but the winner is then rotated to the back. This prevents a fast source from dominating the output.
+Extends `PullObjManyTo1Link<any>`. Combines race semantics with round-based fairness. Within each round, all sources race and results are yielded fastest-first. However, **every source must produce exactly one result per round** before the next round begins. This prevents a fast source from starving slow sources -- a fast source cannot get a second turn until all sources have completed their current round.
 
 **Constructor:**
 
@@ -1074,7 +1074,7 @@ for await (const { key, value } of race) {
 
 ### PullLabeledRaceRobinObj\<L\>
 
-Extends `PullObjLabeledManyTo1Link<L, any, LabeledValue<L, any>>`. Combines race and round-robin with labeled sources. The race winner is rotated to prevent domination by a single fast source.
+Extends `PullObjLabeledManyTo1Link<L, any, LabeledValue<L, any>>`. Labeled variant of `PullRaceRobinObj`. Within each round, all labeled sources race and results are yielded fastest-first. Every source must produce exactly one result per round before the next round begins, preventing fast sources from starving slow ones.
 
 **Constructor:**
 

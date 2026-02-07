@@ -517,7 +517,7 @@ several many-to-1 combiners, each with different ordering and fairness semantics
 | `PullConcatObj` | Drain source 1 completely, then source 2, etc. | Sources have a natural order (primary + fallback) |
 | `PullRoundRobinObj` | Take one item from each source in rotation | Fair interleaving when sources produce at similar rates |
 | `PullRaceObj` | Yield from whichever source produces next (attributed) | Heterogeneous latency; you want the fastest result and need to know which source produced it |
-| `PullRaceRobinObj` | Race semantics without attribution | Same as race, but you don't need the source label |
+| `PullRaceRobinObj` | Race with round-based fairness | Low latency (fastest first within a round) but every source gets exactly one turn per round -- prevents fast sources from starving slow ones |
 | `PullRaceCutoffObj` | Race N sources against a cutoff signal | Timed operations; cancel remaining sources when a deadline fires |
 
 All combiners accept an optional `{ eager: true }` flag, which wraps each source in

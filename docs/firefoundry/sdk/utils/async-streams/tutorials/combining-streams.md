@@ -180,9 +180,10 @@ The six standalone combiner classes are:
 - **`PullRoundRobinObj`** -- fair rotation. Takes one from each source in turn.
 - **`PullRaceObj`** -- fastest first. Yields an `AttributedResult` that
   includes a reference to the source that produced the value.
-- **`PullRaceRobinObj`** -- race variant with round-robin fallback. Races all
-  sources but falls back to round-robin ordering when multiple sources resolve
-  simultaneously.
+- **`PullRaceRobinObj`** -- race with round-based fairness. Within each round,
+  sources race (fastest yielded first), but every source must produce exactly
+  one result per round before the next round begins. Prevents fast sources
+  from starving slow ones.
 - **`PullRaceCutoffObj`** -- race with timeout cutoff. Like `PullRaceObj` but
   discards sources that do not produce within a configurable deadline.
 
@@ -225,7 +226,7 @@ Available labeled classes:
 - **`PullLabeledZipObj`** -- positional pairing with labels.
 - **`PullLabeledRoundRobinObj`** -- fair rotation with labels.
 - **`PullLabeledRaceObj`** -- fastest-first with labels.
-- **`PullLabeledRaceRobinObj`** -- race with round-robin fallback, labeled.
+- **`PullLabeledRaceRobinObj`** -- race with round-based fairness, labeled.
 
 Labeled combiners are especially useful for logging, debugging, and routing
 logic where downstream operators need to branch based on the data's origin.
