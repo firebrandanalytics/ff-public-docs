@@ -506,6 +506,45 @@ for await (const result of pipeline) {
 }
 ```
 
+### Merging: Many sources into one consumer
+
+Pull pipelines naturally handle 1-to-1 chains, but many real systems need to combine
+**multiple independent sources** into a single downstream consumer. The library provides
+several many-to-1 combiners, each with different ordering and fairness semantics:
+
+| Combiner | Strategy | When to use |
+|----------|----------|-------------|
+| `PullConcatObj` | Drain source 1 completely, then source 2, etc. | Sources have a natural order (primary + fallback) |
+| `PullRoundRobinObj` | Take one item from each source in rotation | Fair interleaving when sources produce at similar rates |
+| `PullRaceObj` | Yield from whichever source produces next (attributed) | Heterogeneous latency; you want the fastest result and need to know which source produced it |
+| `PullRaceRobinObj` | Race semantics without attribution | Same as race, but you don't need the source label |
+| `PullRaceCutoffObj` | Race N sources against a cutoff signal | Timed operations; cancel remaining sources when a deadline fires |
+
+All combiners accept an optional `{ eager: true }` flag, which wraps each source in
+`PullEagerObj` so that all sources are pre-fetching concurrently. Without eager mode,
+`PullRoundRobinObj` still pulls sources sequentially on each rotation; with eager mode,
+the next source's result is likely already buffered.
+
+`PullChain` exposes these as both static factories and mid-chain methods:
+
+```typescript
+// Static: start a chain from multiple sources
+const merged = PullChain.roundRobin(dbSource, apiSource, cacheSource);
+
+// Mid-chain: merge additional sources into an existing chain
+const pipeline = PullChain.from(primarySource)
+  .map(normalize)
+  .mergeRace(fallbackSource, backupSource)  // fold in extra sources
+  .window(50);
+```
+
+The mid-chain methods (`.mergeRace()`, `.mergeRoundRobin()`, `.mergeConcat()`) replace
+the chain's tail with the combiner, so upstream transformations still apply to the
+original source while the merged sources contribute raw items.
+
+Backpressure flows naturally: if the consumer slows down, it stops calling `next()` on
+the combiner, which stops pulling from all upstream sources.
+
 ---
 
 ## 5. Push Pipelines: Explicit Flow Control
@@ -548,16 +587,42 @@ for (const entry of incomingLogs) {
 await chain.return();
 ```
 
-### PushForkObj: Broadcast with slow-branch blocking
+### Fan-out: Fork vs Distribution
 
-`PushForkObj` broadcasts each item to all branch sinks **sequentially** -- each branch's
-`next()` is awaited before moving to the next. A slow branch blocks all branches. To
-prevent this, combine with `PushSerialObj` on each branch, or restructure so branches
-buffer independently.
+Push pipelines support two fundamentally different fan-out patterns:
 
-This is a common pattern for event-driven architectures where a single stream of events
-must be processed by multiple independent consumers -- logging, analytics, real-time
-alerting, archival storage -- each with different processing speeds and failure modes.
+- **Fork (broadcast):** Every item goes to **all** branches. Use when multiple
+  independent consumers each need every event -- logging, analytics, alerting,
+  archival all processing the same stream.
+- **Distribution (routing):** Each item goes to **exactly one** branch. Use when
+  you want to partition work across workers for parallelism or route items to
+  specialized handlers.
+
+This distinction matters because it determines whether your total downstream work
+scales with the number of branches (fork: yes, distribution: no).
+
+### PushForkObj: Broadcast to all branches
+
+`PushForkObj` sends each item to **every** branch sink. Branches are processed
+**sequentially** -- each branch's `next()` is `await`ed before moving to the next.
+
+**Why sequential?** This is a deliberate design choice, not a limitation:
+1. **Reference safety.** The fork sends the **same object reference** to all branches.
+   If branches ran concurrently via `Promise.all`, two branches could mutate the
+   same object simultaneously. Sequential dispatch means each branch sees the object
+   in a predictable state.
+2. **Sink lifecycle management.** When a branch signals `done`, the fork removes it
+   from the active list (splice during iteration). This requires sequential processing.
+3. **Deterministic backpressure.** The fork's total latency is the **sum** of all branch
+   latencies, giving the producer an honest signal about total downstream cost.
+
+**Fork vs adding more steps to the chain.** A normal chain is a sequence where each
+step receives the **output** of the previous step. A fork is different: each branch
+receives the **same input** independently. Branch 2 does not see the output of branch 1;
+it sees the original item. However, because branches execute sequentially on the same
+object reference, if branch 1 **mutates** the input object, branch 2 will see the
+mutation. The library does not freeze items -- it is the developer's responsibility to
+treat forked items as read-only, or to `Object.freeze()` them if enforcement is needed.
 
 ### Example: Fork with independent branch pipelines
 
@@ -596,13 +661,65 @@ for await (const order of orderStream) {
 await chain.return();
 ```
 
-Note that the `.filter()` before `.fork()` runs once, and only qualifying items fan out
-to all three branches. Each branch has its own pipeline stages -- serialization,
-windowing, mapping -- independent of the others. If `warehouseSink` is slow (120ms per
-batch of 500), it blocks the fork for that item, delaying the dashboard and fraud
-branches. If that latency is unacceptable, consider using a `PushPullBufferObj` bridge
-on the slow branch so the fork returns immediately and the slow branch drains
-asynchronously.
+The `.filter()` before `.fork()` runs once, and only qualifying items fan out to all
+three branches. Each branch has its own pipeline stages -- serialization, windowing,
+mapping -- independent of the others. If `warehouseSink` is slow (120ms per batch of
+500), it blocks the fork for that item, delaying the dashboard and fraud branches. If
+that latency is unacceptable, consider using a `PushPullBufferObj` bridge on the slow
+branch so the fork returns immediately and the slow branch drains asynchronously.
+
+### Distribution: Route each item to one branch
+
+Where fork is "every item to every branch," distribution is "each item to exactly one
+branch." The library provides three routing strategies:
+
+| Class | Strategy | When to use |
+|-------|----------|-------------|
+| `PushRoundRobinObj` | Rotate through branches in order (0, 1, 2, 0, 1, 2, ...) | Load balancing across identical workers |
+| `PushDistributeObj` | Route by index via `selector(item) → number` | Content-based routing (e.g., shard by hash) |
+| `PushLabeledDistributeObj` | Route by label via `labelGetter(item) → L` | Named routing (e.g., route by `item.region`) |
+
+Unlike fork, distribution does **not** have the reference-mutation concern -- each item
+goes to exactly one branch, so there is no shared-reference hazard.
+
+```typescript
+// Round-robin across 3 worker branches for parallel processing
+const chain = PushChainBuilder.start<Task>()
+  .roundRobinTo(
+    branch => branch.map(t => processTask(t)).into(resultSink1),
+    branch => branch.map(t => processTask(t)).into(resultSink2),
+    branch => branch.map(t => processTask(t)).into(resultSink3),
+  );
+
+// Content-based routing: shard orders by region
+const chain = PushChainBuilder.start<Order>()
+  .distribute(
+    order => regionToIndex(order.region),  // selector returns branch index
+    branch => branch.into(usEastSink),     // index 0
+    branch => branch.into(euWestSink),     // index 1
+    branch => branch.into(apacSink),       // index 2
+  );
+```
+
+### Push fan-out and pull fan-in: dual operations
+
+Push fan-out (fork, distribute) and pull fan-in (concat, round-robin, race) are **dual
+operations**. A fork broadcasts one item to many sinks; a merge combines many sources
+into one consumer. A push round-robin distributes items across workers; a pull
+round-robin interleaves items from multiple producers.
+
+If you need both in the same system -- e.g., fan out to parallel workers, then
+re-combine results -- bridge between push and pull using `PushPullBufferObj`:
+
+```
+Producer --push--> PushForkObj ──┬── Worker A ──> PushPullBufferObj ──┐
+                                 ├── Worker B ──> PushPullBufferObj ──┤
+                                 └── Worker C ──> PushPullBufferObj ──┘
+                                                                      │
+                          PullChain.roundRobin(bufA, bufB, bufC) <────┘
+                                         │
+                                    Consumer (pull)
+```
 
 See the [Push Chain Reference](./reference/push-chain.md) and
 [Push Obj Classes Reference](./reference/push-obj-classes.md).
