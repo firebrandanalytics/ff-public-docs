@@ -531,13 +531,6 @@ These accumulate items before flushing downstream, reducing per-item overhead.
 `PushWindowObj` flushes at a fixed count; `PushBufferObj` flushes when a predicate
 returns true.
 
-### PushForkObj: Broadcast with slow-branch blocking
-
-`PushForkObj` broadcasts each item to all branch sinks **sequentially** -- each branch's
-`next()` is awaited before moving to the next. A slow branch blocks all branches. To
-prevent this, combine with `PushSerialObj` on each branch, or restructure so branches
-buffer independently.
-
 ### Example: Push pipeline with serial + filter + window
 
 ```typescript
@@ -554,6 +547,62 @@ for (const entry of incomingLogs) {
 }
 await chain.return();
 ```
+
+### PushForkObj: Broadcast with slow-branch blocking
+
+`PushForkObj` broadcasts each item to all branch sinks **sequentially** -- each branch's
+`next()` is awaited before moving to the next. A slow branch blocks all branches. To
+prevent this, combine with `PushSerialObj` on each branch, or restructure so branches
+buffer independently.
+
+This is a common pattern for event-driven architectures where a single stream of events
+must be processed by multiple independent consumers -- logging, analytics, real-time
+alerting, archival storage -- each with different processing speeds and failure modes.
+
+### Example: Fork with independent branch pipelines
+
+```typescript
+import { PushChainBuilder, SinkCallbacksObj } from '@firebrandanalytics/shared-utils';
+
+// Every incoming order is processed by three independent branches:
+//  1. Real-time dashboard (fast, can drop old data)
+//  2. Fraud detection (slower, needs every order)
+//  3. Archive to data warehouse (slow batch writes)
+
+const chain = PushChainBuilder.start<Order>()
+  .filter(o => o.total > 0)           // Drop $0 orders before forking
+  .fork(
+    // Branch 1: real-time dashboard — keep only last 5 seconds of data
+    branch => branch
+      .map(o => ({ id: o.id, total: o.total, ts: Date.now() }))
+      .into(dashboardSink),
+
+    // Branch 2: fraud scoring — serialize so the ML model sees one at a time
+    branch => branch
+      .serial()
+      .map(o => scoreFraudRisk(o))
+      .filter(scored => scored.risk > 0.8)
+      .into(alertSink),
+
+    // Branch 3: archive — batch into groups of 500 for bulk insert
+    branch => branch
+      .window(500)
+      .into(warehouseSink),
+  );
+
+for await (const order of orderStream) {
+  await chain.next(order);
+}
+await chain.return();
+```
+
+Note that the `.filter()` before `.fork()` runs once, and only qualifying items fan out
+to all three branches. Each branch has its own pipeline stages -- serialization,
+windowing, mapping -- independent of the others. If `warehouseSink` is slow (120ms per
+batch of 500), it blocks the fork for that item, delaying the dashboard and fraud
+branches. If that latency is unacceptable, consider using a `PushPullBufferObj` bridge
+on the slow branch so the fork returns immediately and the slow branch drains
+asynchronously.
 
 See the [Push Chain Reference](./reference/push-chain.md) and
 [Push Obj Classes Reference](./reference/push-obj-classes.md).
