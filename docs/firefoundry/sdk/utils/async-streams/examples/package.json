@@ -10,7 +10,8 @@
     "push-pull-bridge": "tsx push-pull-bridge.ts",
     "multi-resource-scheduling": "tsx multi-resource-scheduling.ts",
     "adaptive-capacity": "tsx adaptive-capacity.ts",
-    "priority-request-routing": "tsx priority-request-routing.ts"
+    "priority-request-routing": "tsx priority-request-routing.ts",
+    "latency-bounded-batching": "tsx latency-bounded-batching.ts"
   },
   "dependencies": {
     "@firebrandanalytics/shared-utils": "^4.1.0-beta.0"

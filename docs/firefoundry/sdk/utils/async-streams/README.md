@@ -90,6 +90,7 @@ for await (const envelope of runner.runTasks(false)) {
 | [Multi-Resource Scheduling](./use-cases/multi-resource-scheduling.md) | Capacity-gated scheduling with heterogeneous GPU/CPU resource budgets |
 | [Adaptive Capacity](./use-cases/adaptive-capacity.md) | Dynamic concurrency scaling via the reserve/release pattern |
 | [Priority Request Routing (QoS)](./use-cases/priority-request-routing.md) | Tiered user priority with aging-based starvation prevention for LLM broker requests |
+| [Latency-Bounded Batching](./use-cases/latency-bounded-batching.md) | Batch by count OR timeout (Kafka batch.size + linger.ms pattern) for pull and push pipelines |
 
 ### Runnable Examples
 
@@ -103,6 +104,7 @@ npx tsx push-pull-bridge.ts
 npx tsx multi-resource-scheduling.ts
 npx tsx adaptive-capacity.ts
 npx tsx priority-request-routing.ts
+npx tsx latency-bounded-batching.ts
 ```
 
 ### Platform Integration

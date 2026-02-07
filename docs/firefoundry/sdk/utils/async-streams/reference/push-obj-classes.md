@@ -8,7 +8,7 @@ For conceptual background, see the [Conceptual Guide](../concepts.md). For the f
 import {
     PushObj, SinkCallbacksObj, SinkCollectObj,
     PushObj1To1, PushSerialObj, PushMapObj, PushFilterObj,
-    PushReduceObj, PushBufferReduceObj, PushBufferObj, PushWindowObj,
+    PushReduceObj, PushBufferReduceObj, PushBufferObj, PushWindowObj, PushWindowTimeoutObj,
     PushFlattenObj, PushFlatMapObj,
     PushPreCallbacksObj, PushPostCallbacksObj,
     PushPreSignalObj, PushPostSignalObj,
@@ -32,6 +32,7 @@ import {
   - [PushBufferReduceObj](#pushbufferreduceobj)
   - [PushBufferObj](#pushbufferobj)
   - [PushWindowObj](#pushwindowobj)
+  - [PushWindowTimeoutObj](#pushwindowtimeoutobj)
   - [PushFlattenObj](#pushflattenobj)
   - [PushFlatMapObj](#pushflatmapobj)
   - [PushPreCallbacksObj](#pushprecallbacksobj)
@@ -510,6 +511,52 @@ await window.next('c');  // buffered
 await window.next('d');  // flush ['c', 'd']
 await window.return();
 console.log(collector.buffer); // [['a', 'b'], ['c', 'd']]
+```
+
+---
+
+### PushWindowTimeoutObj
+
+**`class PushWindowTimeoutObj<T> extends PushObj1To1<T, Array<T>>`**
+
+Batches items by count **OR** time, whichever comes first. Flushes immediately when the buffer reaches `window_size`. Uses `setTimeout` to flush partial batches after `timeout_ms` of inactivity. The timer resets on each item push, so the timeout measures time since the last item, not time since the batch started. `return()` clears the timer and flushes any remaining items.
+
+#### Constructor
+
+```typescript
+constructor(
+    sink: AsyncGenerator<void, void, Array<T>>,
+    window_size: number,
+    timeout_ms: number,
+)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `sink` | `AsyncGenerator<void, void, Array<T>>` | Downstream sink receiving batched arrays |
+| `window_size` | `number` | Maximum batch size — flush immediately when reached |
+| `timeout_ms` | `number` | Maximum inactivity time — flush partial batch after this many ms |
+
+#### Properties
+
+| Property | Type | Mutable | Description |
+|----------|------|---------|-------------|
+| `buffer` | `Array<T>` | Yes | Current accumulation buffer |
+| `window_size` | `number` | Yes | Maximum batch size |
+| `timeout_ms` | `number` | Yes | Timeout in milliseconds |
+
+#### Example
+
+```typescript
+const collector = new SinkCollectObj<number[]>();
+const wt = new PushWindowTimeoutObj(collector, 3, 200);
+
+await wt.next(1);  // buffered, timer starts
+await wt.next(2);  // buffered, timer resets
+await wt.next(3);  // flush [1, 2, 3] immediately (window full)
+await wt.next(4);  // buffered, timer starts
+// ... 200ms passes ...
+// timer fires → flush [4]
 ```
 
 ---

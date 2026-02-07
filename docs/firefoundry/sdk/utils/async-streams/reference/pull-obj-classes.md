@@ -6,7 +6,7 @@ Complete API reference for all pull-based Obj classes in the async streams libra
 import {
     PullObj, SourceObj, SourceCacheObj, SourceBufferObj,
     PullObj1To1Link, PullMapObj, PullFlatMapObj, PullFilterObj,
-    PullDedupeObj, PullReduceObj, PullWindowObj, PullBufferObj,
+    PullDedupeObj, PullReduceObj, PullWindowObj, PullWindowTimeoutObj, PullBufferObj,
     PullBufferReduceObj, PullInOrderObj, PullFlattenObj, PullEagerObj,
     PullCallbackObj, PullTimeoutObj, PullAwaitReset,
     PullObjManyTo1Link, PullObjLabeledManyTo1Link,
@@ -463,6 +463,40 @@ for await (const batch of windowed) {
 }
 // The trailing partial [5] is the generator's return value, not yielded
 ```
+
+---
+
+### PullWindowTimeoutObj\<IN\>
+
+Extends `PullObj1To1Link<IN, Array<IN>>`. Batches items by count **OR** time, whichever comes first. When the batch reaches `window_size`, it is yielded immediately. If `timeout_ms` elapses before the batch fills, the partial batch is yielded. This is the Kafka "batch.size + linger.ms" pattern. Unlike `PullWindowObj`, partial batches on source exhaustion are **yielded** (not returned), so `collect()` captures all items.
+
+**Constructor:**
+
+```typescript
+constructor(source: PullObj<IN>, window_size: number, timeout_ms: number)
+```
+
+**Public Properties:**
+
+| Property | Type | Mutable | Description |
+|----------|------|---------|-------------|
+| `source` | `PullObj<IN>` | Yes | Inherited. The upstream source. |
+| `window_size` | `number` | Yes | Maximum batch size. Changes take effect on the next batch. |
+| `timeout_ms` | `number` | Yes | Maximum time (ms) to wait for a full batch. Changes take effect on the next batch. |
+
+```typescript
+const source = new DelayedSource([1, 2, 3], 200); // 200ms between items
+const wt = new PullWindowTimeoutObj(source, 10, 150); // window=10, timeout=150ms
+
+for await (const batch of wt) {
+    console.log(batch); // small batches — timeout fires between items
+}
+// All 3 items are captured, no data loss
+```
+
+**Design notes:**
+- Uses `Promise.race` between the source and a timeout promise. When timeout wins, the pending source promise is carried forward to the next batch (no overlapping `source.next()` calls).
+- Partial batches on source exhaustion are yielded (visible to `for await`), unlike `PullWindowObj` which returns them.
 
 ---
 

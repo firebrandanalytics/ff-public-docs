@@ -233,6 +233,20 @@ const result = await PullChain.from(new SourceBufferObj([1, 2, 3, 4, 5]))
 // [[1, 2], [3, 4]]  -- the trailing [5] is the generator return value, not yielded
 ```
 
+### `windowTimeout`
+
+```typescript
+windowTimeout(size: number, timeoutMs: number): PullChain<T[]>
+```
+
+Groups items into arrays, flushing on count **OR** timeout (whichever comes first). When `size` items accumulate, the batch is yielded immediately. If `timeoutMs` elapses before the batch fills, the partial batch is yielded. Unlike `window`, partial batches on source exhaustion are yielded (visible to `collect()`), so no data is lost.
+
+```typescript
+const result = await PullChain.from(source)
+    .windowTimeout(100, 200) // batch ≤ 100 items, flush at least every 200ms
+    .collect();
+```
+
 ### `buffer`
 
 ```typescript

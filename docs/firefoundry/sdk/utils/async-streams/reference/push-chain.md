@@ -127,6 +127,16 @@ PushChainBuilder.start<number>()
     .into(batchSink);
 ```
 
+#### windowTimeout
+
+Groups items into arrays, flushing on count **OR** timeout (whichever comes first). Uses `PushWindowTimeoutObj` under the hood.
+
+```typescript
+PushChainBuilder.start<Event>()
+    .windowTimeout(100, 500)  // batch ≤ 100 items, flush at least every 500ms
+    .into(batchSink);
+```
+
 #### buffer
 
 Collects values into an internal array. After each value is added, `condition` is called with the current buffer. If it returns `true`, the buffer is flushed downstream and reset.
