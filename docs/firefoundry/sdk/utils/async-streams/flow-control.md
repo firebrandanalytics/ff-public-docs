@@ -103,6 +103,30 @@ The critical insight: by the time latency is visibly degraded, queue depth is al
 large. Monitoring queue depth directly gives minutes or hours of warning before
 latency-based alerts fire.
 
+**The cost trap: under-provisioning does not save money.** A common organizational
+instinct is to keep consumer resources lean to control compute spend. The irony is that
+the producer-faster regime *increases* total cost:
+
+- **Retry amplification inflates volume.** When requests time out, clients retry. Each
+  retry is a new request that consumes ingress bandwidth, queue space, and partial
+  processing before timing out again. A system designed for 1,000 req/s that can only
+  sustain 800 req/s may see effective load climb to 1,500 req/s once retries compound --
+  nearly double the original demand.
+- **Wasted partial work.** Items that sit in a growing queue accumulate processing effort
+  at each pipeline stage before ultimately being dropped or timing out. That CPU time is
+  pure waste -- it produced no useful output.
+- **Degraded throughput under congestion.** GC pauses, lock contention, and memory
+  allocation overhead reduce mu further as load increases. The system processes *fewer*
+  useful items per second at high load than at moderate load.
+- **User-facing costs.** Slow or failed responses drive users to retry manually, contact
+  support, or churn entirely. The revenue impact of degraded service typically dwarfs the
+  compute savings from under-provisioning.
+
+The counterintuitive lesson: **spending less on consumers often costs more in total.**
+The right response to a producer-faster regime is not to accept the backlog, but to
+either increase mu (add capacity), decrease lambda (throttle or shed load), or both.
+Monitor cost-per-completed-item, not cost-per-provisioned-resource.
+
 ### 2c. Consumer-Faster Regime (lambda < mu)
 
 The consumer is idle most of the time. Consequences are more subtle:
@@ -128,8 +152,32 @@ depth
   0
 ```
 
+**The cost reality: you are paying for capacity you are not using.** Unlike the
+producer-faster regime (which has hidden costs that make it more expensive than it
+appears), the consumer-faster regime has a visible and straightforward cost problem:
+you are provisioning resources that sit idle.
+
+- **Direct waste.** If your consumer can handle 10,000 items/second but only receives
+  2,000, you are paying for 5x the compute you need. For cloud-hosted LLM inference,
+  GPU instances, or reserved database capacity, this idle spend adds up quickly.
+- **Opportunity cost.** Resources locked into an over-provisioned consumer pipeline
+  cannot serve other workloads. In a shared cluster, this reduces the capacity available
+  to other teams or services.
+- **False sense of headroom.** Low utilization can mask architectural problems. A system
+  that "never has queue depth issues" because it has 5x consumer capacity may hide the
+  fact that its processing logic is inefficient or that its source is broken and
+  producing less than expected.
+
+That said, *some* over-provisioning is healthy. You want mu to comfortably exceed
+peak lambda (not average lambda) so that bursts drain quickly without queue buildup.
+The sweet spot is typically **mu = 1.2-1.5x peak lambda** -- enough headroom for
+bursts, not so much that you are burning money on idle resources.
+
 The fix is not to speed up the producer. Right-size the consumer's concurrency budget
-or consolidate consumers to reduce idle overhead.
+or consolidate consumers to reduce idle overhead. Use the
+[adaptive capacity pattern](./use-cases/adaptive-capacity.md) to scale consumer
+resources dynamically based on observed load, keeping utilization in a healthy band
+(60-80%) without risking the producer-faster failure cascade.
 
 ---
 
