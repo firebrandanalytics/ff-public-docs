@@ -293,4 +293,6 @@ Use it when you need to decouple a producer from a consumer, or create dynamic w
 - **New to the library?** Start with the [Pull Pipeline Basics Tutorial](./tutorials/pull-pipeline-basics.md).
 - **Need task scheduling?** Jump to [Scheduling Fundamentals](./tutorials/scheduling-fundamentals.md).
 - **Looking for API details?** See the [Reference Documentation](./reference/).
+- **Understanding flow control?** See [Flow Control](./flow-control.md) for production vs consumption rates, backpressure strategies, and a primitive selection guide.
+- **Problem-focused walkthroughs?** See the [Use Cases](./use-cases/) directory.
 - **Using FireFoundry?** See [Agent Integration](./firefoundry/agent-integration.md).

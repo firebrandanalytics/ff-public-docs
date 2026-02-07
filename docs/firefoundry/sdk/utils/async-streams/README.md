@@ -56,6 +56,7 @@ for await (const envelope of runner.runTasks(false)) {
 | Document | Description |
 |----------|-------------|
 | [Conceptual Guide](./concepts.md) | Core design philosophy, pull vs push models, Obj pattern, scheduling concepts |
+| [Flow Control](./flow-control.md) | Production vs consumption rates, backpressure strategies, dynamic scaling, primitive selection guide |
 
 ### API Reference
 
@@ -78,6 +79,29 @@ for await (const envelope of runner.runTasks(false)) {
 | [Scheduling Fundamentals](./tutorials/scheduling-fundamentals.md) | Dependency graphs, priority queues, resource-aware task execution |
 | [ETL Pipeline](./tutorials/etl-pipeline.md) | Multi-stage pipeline with per-stage resource costs |
 | [Retry and Error Handling](./tutorials/retry-and-error-handling.md) | Retry/backoff, abort cascades, graceful shutdown patterns |
+
+### Use Cases
+
+| Document | Description |
+|----------|-------------|
+| [Demand-Paced Ingestion](./use-cases/demand-paced-ingestion.md) | Pull-based backpressure for variable-rate sources with eager prefetch and batched consumption |
+| [Burst-Buffered Sink](./use-cases/burst-buffered-sink.md) | Push-based flow control with serialization, sampling, and batched writes |
+| [Push-Pull Bridge](./use-cases/push-pull-bridge.md) | Bridging push producers with pull consumers via PushPullBufferObj |
+| [Multi-Resource Scheduling](./use-cases/multi-resource-scheduling.md) | Capacity-gated scheduling with heterogeneous GPU/CPU resource budgets |
+| [Adaptive Capacity](./use-cases/adaptive-capacity.md) | Dynamic concurrency scaling via the reserve/release pattern |
+
+### Runnable Examples
+
+Self-contained TypeScript programs demonstrating each use case. See the [`examples/`](./examples/) directory.
+
+```bash
+cd examples && npm install
+npx tsx demand-paced-ingestion.ts
+npx tsx burst-buffered-sink.ts
+npx tsx push-pull-bridge.ts
+npx tsx multi-resource-scheduling.ts
+npx tsx adaptive-capacity.ts
+```
 
 ### Platform Integration
 
