@@ -136,7 +136,7 @@ Discover shared utility libraries and patterns used throughout FireFoundry:
 - **[Validation Library - Complete Reference](../utils/validation-library-reference.md)** - Full API reference for all validators, coercers, and decorators
 
 ### Async & Streaming
-- **[Async Streams Library](../utils/async_streams.md)** - Conceptual guide to the async streams system for orchestrating complex workflows
+- **[Async Streams Library](../utils/async-streams/README.md)** - Composable async streaming, fluent pipeline chains, and task scheduling with dependency graphs and multi-resource capacity
 - **[Mixins & Composition](../utils/mixins.md)** - Type-safe mixin utilities (`AddMixins`, `ComposeMixins`) for flexible inheritance and composition
 
 ### General Utilities
