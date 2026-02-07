@@ -407,14 +407,82 @@ Consumer        PullMapObj        SourceBufferObj
 A slow consumer simply calls `next()` less frequently, and the entire pipeline slows to
 match. No configuration required.
 
-### Caveats
+### The hidden cost of pure pull: sequential stalls
 
-**`PullEagerObj`: Pre-fetching trades memory for latency.** It calls `source.next()`
-before the downstream consumer has asked, maintaining `buffer_size` in-flight promises.
-When the consumer calls `next()`, the oldest pre-fetched result returns immediately and
-a new `source.next()` is initiated. This reduces latency variance by overlapping upstream
-and downstream processing. The cost is up to `buffer_size` items buffered in memory.
-Choose `buffer_size` based on expected service-time variance.
+The pull model's simplicity comes with a trade-off that is easy to overlook. Because
+each `next()` call waits for the upstream source to produce before proceeding, **the
+consumer sits idle while the source is working, and the source sits idle while the
+consumer is working.** They take turns.
+
+Consider a video transcoding pipeline:
+
+```
+Source: download 2 GB file (8 seconds)  -->  Consumer: transcode (30 seconds)
+```
+
+With pure pull:
+
+```
+time  0s        8s                         38s       46s                        76s
+      |--download--|--------transcode--------|--download--|--------transcode--------|
+      Source works   Source idle               Source works   Source idle
+                     Consumer works                          Consumer works
+```
+
+Two files take 76 seconds. The download step and the transcode step never overlap --
+the network sits completely idle for the 30 seconds of transcoding, and the GPU sits
+completely idle for the 8 seconds of downloading. You are paying for both resources
+full-time but using each one less than half the time.
+
+What you want is **pipelining**: start downloading file 2 while file 1 is still
+transcoding.
+
+```
+time  0s        8s       16s                38s      46s
+      |--download-1--|                        |
+                     |--download-2--|          |
+                |--------transcode-1--------| |
+                                             |--------transcode-2--------|
+```
+
+Two files now take ~68 seconds instead of 76, and with more files the pipeline
+approaches the throughput of the slower stage (30s/file) rather than the sum of both
+stages (38s/file). The improvement scales with the number of items: 10 files drop
+from 380s (sequential) to ~278s (pipelined).
+
+### `PullEagerObj`: Pre-fetching for pipeline overlap
+
+`PullEagerObj` solves this by calling `source.next()` **before** the downstream consumer
+has asked, maintaining `buffer_size` in-flight promises. When the consumer calls `next()`,
+the oldest pre-fetched result is already resolved (or close to it) and returns
+immediately. A new `source.next()` is initiated to refill the buffer.
+
+```
+Without eager:
+  Consumer: |--wait for source--|--process--|--wait for source--|--process--|
+  Source:   |------produce------|---idle----|------produce------|---idle----|
+
+With eager(1):
+  Consumer: |--wait--|--process--|--process--|--process--|
+  Source:   |--produce--|--produce--|--produce--|--idle--|
+                     ^^^
+                     overlap: source is already working on next item
+                     while consumer processes current item
+```
+
+The cost is up to `buffer_size` items held in memory. For large items (video files,
+ML model weights, large API responses), keep `buffer_size` small (1-2). For small items
+with high source latency (database queries, network API calls), a larger buffer (3-5)
+absorbs more variance.
+
+**When to use it:**
+- Source and consumer have **comparable** processing times (both are significant).
+  If one dominates (source is 100x faster), eager adds memory overhead with negligible
+  throughput gain.
+- Items are **independent** -- processing item N does not depend on the result of
+  item N-1.
+- The source is **safe to call ahead** -- it will not produce side effects you cannot
+  buffer (e.g., acknowledging messages before processing).
 
 **`PullTimeoutObj`: Overlapping `next()` calls on timeout.** When a timeout fires, the
 source's pending `next()` is **not cancelled** -- it continues in the background. If the
