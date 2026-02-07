@@ -260,3 +260,123 @@ PullObj<T>                          (base — implements AsyncIterable<T>)
 **Close propagation:** Calling `close()` or `closeInterrupt()` on any Obj class propagates to all upstream sources. This ensures graceful shutdown of entire pipelines — closing the consumer end tears down the full chain.
 
 **Generator reinit:** When a `pull_impl()` generator completes (returns), the base `PullObj` class can reinitialize it via `handle_result()`. This enables long-lived Obj instances that restart their internal logic cycle, picking up any configuration changes made between cycles.
+
+## 11. Fluent Pipeline Chains
+
+While Obj classes are powerful building blocks, constructing multi-step pipelines by manually chaining them can become verbose. The library provides `PullChain` and `PushChainBuilder`/`PushChain` classes that wrap Obj instances in a fluent, type-safe API.
+
+### PullChain: Fluent Pull Pipelines
+
+`PullChain<T>` extends `PullObj<T>`, so a chain **is** a PullObj — usable anywhere a source is expected, including as input to another chain.
+
+```typescript
+import { PullChain, SourceBufferObj } from '@firebrandanalytics/shared-utils';
+
+const source = new SourceBufferObj([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+
+const result = await PullChain.from(source)
+    .filter(x => x % 2 === 0)        // PullChain<number>   → 2, 4, 6, 8, 10
+    .map(x => x * 3)                  // PullChain<number>   → 6, 12, 18, 24, 30
+    .filter(x => x > 10)              // PullChain<number>   → 12, 18, 24, 30
+    .reduce((n, a) => (a ?? 0) + n, 0) // PullChain<number>  → 12, 30, 54, 84
+    .collect();                        // Promise<number[]>   → [12, 30, 54, 84]
+```
+
+**Key design points:**
+
+1.  **Consumed-chain safety.** When a fluent method creates a new chain, the old chain is marked as consumed. Calling `next()` on a consumed chain throws, preventing the shared-iterator bug where two references pull from the same source.
+
+2.  **Done-flag sync.** `PullChain.next()` delegates to its internal tail and syncs `_done` when the tail signals completion. The `done` getter reflects the true state of the pipeline.
+
+3.  **Close propagation.** Calling `close()` or `closeInterrupt()` on a chain propagates through to the source, tearing down the entire pipeline.
+
+**Available fluent methods:** `map`, `flatMap`, `filter`, `dedupe`, `reduce`, `window`, `buffer`, `bufferReduce`, `flatten`, `eager`, `callback`, `timeout`, `inOrder`.
+
+**Terminal methods:** `collect()`, `first()`, `forEach()`, or use `for await...of` directly.
+
+**Escape hatch:** `.pipe(factory)` lets you integrate any `PullObj` subclass that doesn't have a named fluent method.
+
+### Many-to-1 Factories and Mid-Chain Merge
+
+Static factories create chains from multiple sources:
+
+```typescript
+// Combine sources
+const combined = PullChain.concat(source1, source2);
+const interleaved = PullChain.roundRobin(source1, source2, source3);
+const raced = PullChain.race(source1, source2);
+const zipped = PullChain.zip(source1, source2);
+```
+
+Mid-chain merge methods combine the current chain's output with additional sources:
+
+```typescript
+const pipeline = PullChain.from(localSource)
+    .map(x => transform(x))
+    .mergeRoundRobin(remoteSource1, remoteSource2)  // interleave with other streams
+    .filter(x => x.isValid)
+    .collect();
+```
+
+### PushChainBuilder: Fluent Push Pipelines
+
+Push objects require a sink at construction time. `PushChainBuilder` uses a two-phase pattern: collect operations during the builder phase, then construct the chain backwards from the terminal sink.
+
+```typescript
+import { PushChainBuilder, SinkCollectObj } from '@firebrandanalytics/shared-utils';
+
+const buffer: string[] = [];
+const chain = PushChainBuilder.start<Event>()
+    .filter(e => e.isValid)           // PushChainBuilder<Event, Event>
+    .map(e => e.data)                 // PushChainBuilder<Event, string>
+    .into(new SinkCollectObj(buffer)); // PushChain<Event>
+
+// Push values into the chain
+await chain.next(event1);
+await chain.next(event2);
+await chain.return();
+```
+
+**Branching terminals** solve the direction problem for one-to-many patterns:
+
+```typescript
+const chain = PushChainBuilder.start<string>()
+    .filter(s => s.length > 0)
+    .fork(
+        branch => branch.map(s => s.toUpperCase()).into(upperSink),
+        branch => branch.map(s => s.toLowerCase()).into(lowerSink),
+    );
+
+// Also: .distribute(selector, ...branches), .roundRobinTo(...branches)
+```
+
+**Convenience terminals:** `.toCallbacks(fn1, fn2)`, `.toArray()`.
+
+### Dynamic Pipeline Mutation
+
+Both chain types support dynamic insertion, removal, and replacement of links at runtime.
+
+**Pull chains** return a new chain (consuming the old one):
+```typescript
+const chain = PullChain.from(source).map(x => x * 2);
+const mutated = chain.insertAfter(1, s => new PullFilterObj(s, x => x > 5));
+// chain is now consumed — only mutated can be used
+```
+
+**Push chains** mutate in place (JavaScript's single-threaded nature makes property reassignment atomic):
+```typescript
+const { chain } = PushChainBuilder.start<number>().map(x => x * 2).toArray();
+const newFilter = new PushFilterObj(chain.links[1], x => x > 5);
+chain.insertAfter(0, newFilter);
+```
+
+### Chains Are Composable
+
+Since `PullChain` extends `PullObj` and `PushChain` extends `PushObj`, chains can be nested:
+
+```typescript
+const inner = PullChain.from(source).filter(x => x > 0);
+const outer = PullChain.from(inner).map(x => x * 10);
+```
+
+This recursive composition means you can build complex pipeline topologies from simple, reusable chain segments.
