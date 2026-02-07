@@ -832,14 +832,55 @@ A `ResourceCapacitySource` can have a parent. `canAcquire()` checks both local a
 availability. `acquireImmediate()` decrements both. `release()` increments both and
 signals both `WaitObject` instances.
 
+To understand why this matters, consider three approaches to sharing a 16-GPU cluster
+between two teams:
+
+**Approach 1: Single shared pool (no per-team limits)**
+
 ```
-Cluster:   { gpu: 16, cpu: 64 }
-  +-- Team A: { gpu: 8, cpu: 32 }   (child of Cluster)
-  +-- Team B: { gpu: 8, cpu: 32 }   (child of Cluster)
+Cluster: { gpu: 16 }
 ```
 
-Team A can use at most 8 GPUs *and* the cluster must have availability. If Team A
-requests 9, its local limit blocks even if the cluster has spare capacity.
+Both teams draw from the same 16 GPUs. Team A can consume all 16 and starve Team B
+entirely. No fairness guarantee.
+
+**Approach 2: Fixed partitions (two independent pools)**
+
+```
+Team A: { gpu: 8 }
+Team B: { gpu: 8 }
+```
+
+Fair -- neither team can starve the other. But rigid -- if Team A is idle on a weekend,
+those 8 GPUs sit unused even though Team B has a backlog. You paid for 16 GPUs but can
+only use 8.
+
+**Approach 3: Hierarchical capacity (best of both worlds)**
+
+```
+Cluster:   { gpu: 16 }
+  +-- Team A: { gpu: 12 }   (child of Cluster)
+  +-- Team B: { gpu: 12 }   (child of Cluster)
+```
+
+Each child's limit (12) is **greater than its fair share** (8) but **less than the
+parent total** (16). This creates the desired behavior:
+
+- **Burst capacity.** If Team B is idle, Team A can use up to 12 GPUs (not stuck at 8).
+  The child limit caps the burst so Team A cannot consume all 16.
+- **Starvation prevention.** Even if Team A is using 12 GPUs, Team B is guaranteed at
+  least 4 (16 - 12). The parent constraint enforces the global ceiling while the child
+  constraints ensure no team can crowd the other out completely.
+- **Elastic sharing.** When both teams are active, they share the 16 GPUs naturally.
+  When one team is quiet, the other can opportunistically consume the slack -- idle
+  resources generate cost but no value, so hierarchical limits capture utilization
+  that fixed partitions waste.
+
+The key design insight: **child limits must sum to more than the parent** for the
+hierarchy to add value. If the children's limits sum to exactly the parent's total
+(8 + 8 = 16), the parent constraint is redundant and you have fixed partitions. If
+one child's limit equals the parent total (16), that child can starve the other and
+you have a single shared pool. The sweet spot is between these extremes.
 
 ### WaitObject signaling
 
