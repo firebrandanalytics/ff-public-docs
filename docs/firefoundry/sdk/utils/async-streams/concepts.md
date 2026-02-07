@@ -185,7 +185,7 @@ capacity.canAcquire({ cpu: 4, gpu: 2 }); // false — only 1 GPU left
 capacity.release({ cpu: 4, gpu: 1 });
 ```
 
-Supports **hierarchical parent/child chains** for quota enforcement (e.g., team capacity within department capacity within org capacity).
+Supports **hierarchical parent/child chains** for quota enforcement (e.g., team capacity within department capacity within org capacity). Limits can be adjusted at runtime via `setLimits()` for dynamic rebalancing, and `HierarchicalBalancer` provides a prebuilt control loop that automatically shrinks idle children and grows busy ones.
 
 ### Priority with Aging
 

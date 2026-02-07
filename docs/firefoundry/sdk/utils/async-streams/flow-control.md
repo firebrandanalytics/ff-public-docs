@@ -882,74 +882,159 @@ hierarchy to add value. If the children's limits sum to exactly the parent's tot
 one child's limit equals the parent total (16), that child can starve the other and
 you have a single shared pool. The sweet spot is between these extremes.
 
+Note that even with hierarchical capacity (12+12 under 16), 4 GPUs sit idle when one
+team uses 0 and the other is capped at 12. This is where **dynamic rebalancing**
+closes the gap — see Section 8.
+
+### Complementary approach: Priority scheduling
+
+Hierarchical capacity solves multi-tenant **resource isolation**. A different but
+complementary problem is **request prioritization** within a tenant. `PrioritySourceObj`
+provides priority-ordered scheduling with aging-based starvation prevention: high-priority
+tasks run first, but low-priority tasks accumulate an age boost over time so they are
+never starved indefinitely. These compose naturally — use hierarchical capacity for
+inter-tenant isolation and priority scheduling for intra-tenant ordering.
+
 ### WaitObject signaling
 
-`release()` calls `this._waitObj.resolve(true)`. The `ScheduledTaskPoolRunner`'s wait
-phase wakes up and re-checks `canAcquire()` for the next pending task, creating a clean
-feedback loop: complete -> release -> signal -> retry -> start.
+`release()` and `setLimits()` both call `this._waitObj.resolve(true)`. The
+`ScheduledTaskPoolRunner`'s wait phase wakes up and re-checks `canAcquire()` for the
+next pending task, creating a clean feedback loop: complete -> release -> signal ->
+retry -> start.
 
 ---
 
 ## 8. Dynamic Scaling and Adaptive Concurrency
 
 Static capacity limits work for predictable workloads. Variable workloads benefit from
-a **control loop** that adjusts effective capacity based on observed conditions.
+**dynamic rebalancing** — adjusting effective capacity based on observed conditions.
 
-### The control loop pattern
+### The primitive: `setLimits()`
 
-1. **Monitor** a target metric: queue depth, completion throughput, or tail latency.
-2. **Compare** against high and low thresholds.
-3. **Act:** Above `high_threshold` -> increase capacity (scale up). Below
-   `low_threshold` -> decrease capacity (scale down).
-4. **Guard:** Hysteresis bands, cooldown timers, min/max bounds prevent oscillation.
+`ResourceCapacitySource.setLimits(newLimits)` adjusts capacity limits at runtime:
 
-### Implementation with ResourceCapacitySource
-
-The library does not include a built-in autoscaler, but `ResourceCapacitySource` supports
-a clean **reserve/release pattern**: pre-acquire a portion of the budget as "reserved".
-When load increases, release reserved capacity (making it available to the scheduler).
-When load decreases, re-acquire into the reserve.
+- **Increasing** a limit grows available capacity by the delta immediately.
+- **Decreasing** a limit shrinks available capacity (clamped to 0). Already-acquired
+  resources are not revoked — in-flight tasks continue and release naturally against
+  the new, lower ceiling.
+- Signals `waitObj` so blocked callers re-check.
 
 ```typescript
-import { ResourceCapacitySource } from '@firebrandanalytics/shared-utils';
+const teamA = new ResourceCapacitySource({ gpu: 12 }, cluster);
 
-// Total: 16 workers. Start with 8 active, 8 reserved.
-const capacity = new ResourceCapacitySource({ workers: 16 });
-capacity.acquireImmediate({ workers: 8 }); // Reserve 8 slots
+// Weekend: Team B is idle — give Team A more room
+teamA.setLimits({ gpu: 15 });
+// teamA.limits = { gpu: 15 }, available increased by 3
 
-async function autoscale(queueDepthFn: () => number) {
-  const HIGH = 100, LOW = 10, COOLDOWN_MS = 5000;
-  let lastScale = 0, reserved = 8;
+// Monday: Team B wakes up — contract Team A back
+teamA.setLimits({ gpu: 12 });
+// In-flight tasks continue; available shrinks but won't go below 0
+```
 
+The `utilization` getter returns per-resource usage ratios (0.0 to 1.0), useful for
+monitoring and control loop decisions:
+
+```typescript
+teamA.acquireImmediate({ gpu: 10 });
+console.log(teamA.utilization); // { gpu: 0.833 }
+```
+
+### Built-in strategy: `HierarchicalBalancer`
+
+For the common case of siblings sharing a parent, `HierarchicalBalancer` provides a
+prebuilt control loop that tracks utilization **over time** and incrementally rebalances:
+
+1. **Sample** each child's utilization every `checkIntervalMs`.
+2. **Track** how long each child has been continuously idle or busy.
+3. **Shrink** children that have been idle (below `idleThreshold`) for longer than
+   `idleTimeThresholdMs` — decrease their limit by `increment`, down to `min`.
+4. **Grow** children that have been busy (above `busyThreshold`) for longer than
+   `busyTimeThresholdMs` — increase their limit by `increment`, up to `max`.
+
+The key design: sustained observation before action. A momentary dip doesn't trigger
+rebalancing — only sustained idle or busy states do. And changes are incremental, not
+all-at-once, allowing the system to stabilize between adjustments.
+
+```typescript
+import { ResourceCapacitySource, HierarchicalBalancer } from '@firebrandanalytics/shared-utils';
+
+const cluster = new ResourceCapacitySource({ gpu: 16 });
+const teamA = new ResourceCapacitySource({ gpu: 12 }, cluster);
+const teamB = new ResourceCapacitySource({ gpu: 12 }, cluster);
+
+const balancer = new HierarchicalBalancer([
+  { capacity: teamA, min: { gpu: 4 }, max: { gpu: 15 } },
+  { capacity: teamB, min: { gpu: 4 }, max: { gpu: 15 } },
+], {
+  checkIntervalMs: 1000,       // Sample every second
+  idleTimeThresholdMs: 5000,   // 5s sustained idle before shrinking
+  busyTimeThresholdMs: 5000,   // 5s sustained busy before growing
+  idleThreshold: 0.3,          // Below 30% utilization = idle
+  busyThreshold: 0.85,         // Above 85% utilization = busy
+  increment: { gpu: 1 },       // Adjust 1 GPU at a time
+});
+
+balancer.start();
+// Now runs automatically — idle teams shrink, busy teams grow
+```
+
+**How this solves the 4-idle-GPU problem:** In the 12+12 under 16 hierarchy, if Team B
+is at 0% utilization for 5 seconds, the balancer shrinks Team B from 12 → 11 → 10 → ...
+down to `min: 4`. Simultaneously, if Team A is busy, it grows from 12 → 13 → 14 → 15
+(`max: 15`). Team A now has access to 15 of 16 GPUs instead of being capped at 12. When
+Team B wakes up and starts using its 4, the balancer detects Team B's sustained busyness
+and grows it back. If Team A becomes less busy, it shrinks back. The system converges to
+match actual demand.
+
+The `min` guarantee (4 for each team) ensures that even at maximum imbalance, the
+returning team has enough capacity to start meaningful work, which triggers the
+rebalancing in the other direction.
+
+### Custom strategies with `setLimits()`
+
+`HierarchicalBalancer` covers the common case. For specialized scenarios, use
+`setLimits()` directly to implement any strategy:
+
+- **Time-of-day profiles:** Shift capacity to batch processing teams at night, back to
+  interactive teams during business hours.
+- **Priority-weighted redistribution:** Give more capacity to higher-priority tenants
+  during contention, using `PrioritySourceObj` aging data to detect starvation.
+- **External signal-driven:** React to Kubernetes HPA events, cloud cost alerts, or
+  SLA breach notifications.
+- **Queue-depth-based:** Monitor queue depth per tenant and rebalance toward the
+  deepest queue.
+
+```typescript
+// Example: queue-depth-driven rebalancing with setLimits()
+async function rebalanceByQueueDepth(
+  children: Array<{ capacity: ResourceCapacitySource; queueDepthFn: () => number;
+                    min: number; max: number }>,
+  intervalMs: number
+) {
   while (true) {
-    await sleep(1000);
-    const depth = queueDepthFn();
-    const now = Date.now();
-    if (now - lastScale < COOLDOWN_MS) continue;
+    await sleep(intervalMs);
+    const depths = children.map(c => c.queueDepthFn());
+    const totalDepth = depths.reduce((sum, d) => sum + d, 0) || 1;
 
-    if (depth > HIGH && reserved > 0) {
-      const n = Math.min(2, reserved);
-      capacity.release({ workers: n });
-      reserved -= n;
-      lastScale = now;
-    } else if (depth < LOW && reserved < 8) {
-      const n = Math.min(2, 8 - reserved);
-      if (capacity.canAcquire({ workers: n })) {
-        capacity.acquireImmediate({ workers: n });
-        reserved += n;
-        lastScale = now;
-      }
+    for (let i = 0; i < children.length; i++) {
+      const share = depths[i] / totalDepth; // proportional to queue pressure
+      const target = Math.round(share * 16); // 16 = parent total
+      const clamped = Math.max(children[i].min, Math.min(children[i].max, target));
+      children[i].capacity.setLimits({ gpu: clamped });
     }
   }
 }
 ```
 
-### Guardrails
+### Guardrails for any scaling strategy
 
-- **Hysteresis bands:** Separate high/low thresholds prevent rapid oscillation.
-- **Cooldown timers:** Minimum interval between scaling actions.
-- **Min/max bounds:** Never scale below a minimum or above a maximum.
-- **Proportional response:** Scale in small increments (1-2 slots) to allow stabilization.
+- **Sustained observation:** Don't react to momentary spikes — require a time threshold.
+- **Incremental adjustment:** Scale in small increments to allow stabilization.
+- **Min/max bounds:** Never scale below a minimum (starvation) or above a maximum
+  (crowding).
+- **Cooldown timers:** Minimum interval between scaling actions prevents oscillation.
+- **Hysteresis bands:** Separate idle/busy thresholds (e.g., shrink at 30%, grow at 85%)
+  create a dead zone that dampens rapid cycling.
 
 ---
 
@@ -1013,7 +1098,7 @@ Decision matrix for common symptoms:
 | Burst producer into slow sink     | Buffer + throttle      | `PushChainBuilder.serial().window()`                        |
 | Push source, pull consumer        | Bridge                 | `PushPullBufferObj`                                         |
 | Heterogeneous resource needs      | Capacity-gated         | `ResourceCapacitySource` + `ScheduledTaskPoolRunner`        |
-| Variable load patterns            | Dynamic scaling        | `ResourceCapacitySource` reserve/release pattern             |
+| Variable load patterns            | Dynamic scaling        | `HierarchicalBalancer`, or `setLimits()` for custom strategies |
 | Data loss acceptable              | Drop / sample          | `PushChainBuilder.filter()`                                 |
 | Need observability                | Callbacks + envelopes  | `.callback()`, `TaskProgressEnvelope`                       |
 | Multiple sources, fair processing | Multi-source combiner  | `PullChain.roundRobin()`, `PullChain.race()`                |

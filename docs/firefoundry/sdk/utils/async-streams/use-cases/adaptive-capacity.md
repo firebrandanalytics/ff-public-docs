@@ -309,6 +309,59 @@ capacity.release({ slots: 1, memory_gb: 4 });
 
 This lets you independently scale concurrency and memory budget in response to different metrics.
 
+### Using `setLimits()` instead of reserve/release
+
+The reserve/release pattern shown above works by pre-acquiring capacity and then
+releasing it. An alternative is to use `setLimits()` to directly change the capacity
+ceiling. This is simpler — no need to track a `reserved` counter — and works especially
+well with hierarchical capacity:
+
+```typescript
+const capacity = new ResourceCapacitySource({ slots: 3 }); // Start low
+
+// Scale up: just increase the limit
+if (backlog > 10) {
+  const current = capacity.limits.slots ?? 0;
+  capacity.setLimits({ slots: Math.min(current + 1, 6) });
+}
+
+// Scale down: decrease the limit (in-flight tasks are not interrupted)
+if (backlog < 4) {
+  const current = capacity.limits.slots ?? 0;
+  capacity.setLimits({ slots: Math.max(current - 1, 2) });
+}
+```
+
+### Hierarchical auto-balancing
+
+For multi-tenant systems where sibling capacity sources share a parent,
+`HierarchicalBalancer` automates the rebalancing. It monitors utilization over time
+and incrementally adjusts child limits — shrinking idle tenants and growing busy ones:
+
+```typescript
+import { ResourceCapacitySource, HierarchicalBalancer } from '@firebrandanalytics/shared-utils';
+
+const cluster = new ResourceCapacitySource({ slots: 6 });
+const teamA = new ResourceCapacitySource({ slots: 5 }, cluster);
+const teamB = new ResourceCapacitySource({ slots: 5 }, cluster);
+
+const balancer = new HierarchicalBalancer([
+  { capacity: teamA, min: { slots: 2 }, max: { slots: 5 } },
+  { capacity: teamB, min: { slots: 2 }, max: { slots: 5 } },
+], {
+  idleTimeThresholdMs: 3000,
+  busyTimeThresholdMs: 3000,
+  increment: { slots: 1 },
+});
+
+balancer.start();
+```
+
+Unlike manual reserve/release, the balancer handles the full control loop: sustained
+observation, incremental adjustment, min/max bounds, and timer reset after each action.
+See the [Scheduling Reference](../reference/scheduling.md#hierarchicalbalancer) for the
+full API.
+
 ## See Also
 
 - [Conceptual Guide -- Scheduling](../concepts.md#6-scheduling-dependency-graphs-priority-and-resource-management) -- Design philosophy and how the scheduling primitives fit together

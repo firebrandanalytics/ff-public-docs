@@ -222,15 +222,49 @@ All resources are checked atomically. If any single resource is insufficient, th
 
 ### Hierarchical capacity
 
-Enforce team-level limits within a global budget:
+Enforce team-level limits within a shared global budget, while allowing elastic
+sharing of idle capacity:
 
 ```typescript
-const global = new ResourceCapacitySource({ gpu: 8 });
-const teamA  = new ResourceCapacitySource({ gpu: 4 }, global);
-const teamB  = new ResourceCapacitySource({ gpu: 4 }, global);
+const cluster = new ResourceCapacitySource({ gpu: 8 });
+const teamA   = new ResourceCapacitySource({ gpu: 6 }, cluster);
+const teamB   = new ResourceCapacitySource({ gpu: 6 }, cluster);
 
-// teamA and teamB each have 4 GPUs, but the global cap is 8.
-// If teamA uses 4 and teamB tries to use 5, the global check fails.
+// Each team can burst up to 6 GPUs — but the cluster cap is 8.
+// If teamA is using 0, teamB can use all 6 of its allocation.
+// If both teams are active, the cluster cap (8) prevents
+// combined usage from exceeding the hardware limit.
+// Neither team can starve the other entirely: even if teamA uses
+// all 6, teamB still has 2 GPUs available (8 - 6 = 2).
+```
+
+For automatic rebalancing based on sustained utilization, add
+`HierarchicalBalancer`:
+
+```typescript
+import { HierarchicalBalancer } from '@firebrandanalytics/shared-utils';
+
+const balancer = new HierarchicalBalancer([
+  { capacity: teamA, min: { gpu: 3 }, max: { gpu: 6 } },
+  { capacity: teamB, min: { gpu: 3 }, max: { gpu: 6 } },
+], {
+  idleTimeThresholdMs: 5000,  // shrink after 5s of sustained low usage
+  busyTimeThresholdMs: 5000,  // grow after 5s of sustained high usage
+  increment: { gpu: 1 },
+});
+
+balancer.start();
+// If teamA is idle for 5+ seconds, the balancer shrinks its limit
+// (down to min 3), freeing headroom for teamB to grow (up to max 6).
+```
+
+You can also adjust limits manually with `setLimits()`:
+
+```typescript
+// Temporarily give teamA more capacity during a batch job
+teamA.setLimits({ gpu: 7 });
+// Later, restore normal allocation
+teamA.setLimits({ gpu: 6 });
 ```
 
 ### Priority ordering
@@ -265,6 +299,7 @@ const task: ScheduledTask<string, string> = {
 ## See Also
 
 - [Conceptual Guide -- Scheduling](../concepts.md#6-scheduling-dependency-graphs-priority-and-resource-management) -- Design philosophy and how the scheduling primitives fit together
-- [Scheduling Reference](../reference/scheduling.md) -- Complete API for `ResourceCapacitySource`, `ScheduledTaskPoolRunner`, `ScheduledTask`, and `TaskProgressEnvelope`
+- [Scheduling Reference](../reference/scheduling.md) -- Complete API for `ResourceCapacitySource`, `ScheduledTaskPoolRunner`, `ScheduledTask`, `HierarchicalBalancer`, and `TaskProgressEnvelope`
 - [Pull Obj Classes Reference](../reference/pull-obj-classes.md) -- `SourceObj`, `Peekable`, and the pull model that scheduling sources implement
 - [Scheduling Fundamentals Tutorial](../tutorials/scheduling-fundamentals.md) -- Step-by-step introduction to dependency graphs, priority, and resource management
+- [Use Case 5: Adaptive Capacity](./adaptive-capacity.md) -- Dynamic scaling with the reserve/release pattern, `setLimits()`, and `HierarchicalBalancer`

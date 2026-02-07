@@ -146,7 +146,8 @@ The constructor validates that all limit values are non-negative and copies them
 |----------|------|-------------|
 | `limits` | `Readonly<ResourceCost>` | Maximum capacity for each resource |
 | `available` | `Readonly<ResourceCost>` | Currently available resources (returns a copy) |
-| `waitObj` | `WaitObject<boolean>` | Signaled on `release()` to wake retry loops |
+| `utilization` | `Readonly<ResourceCost>` | Per-resource usage ratio: `(limits - available) / limits`. Returns 0.0 (idle) to 1.0 (fully used). Resources with a limit of 0 report 0. |
+| `waitObj` | `WaitObject<boolean>` | Signaled on `release()` and `setLimits()` to wake retry loops |
 
 **Methods:**
 
@@ -156,6 +157,7 @@ The constructor validates that all limit values are non-negative and copies them
 | `canAcquire` | `canAcquire(cost: ResourceCost): boolean` | Synchronous check: can ALL resources in `cost` be satisfied? Checks local AND parent chain recursively. Resources in `cost` that are not tracked locally are ignored locally but still checked against the parent. Returns `false` for negative amounts. |
 | `acquireImmediate` | `acquireImmediate(cost: ResourceCost): void` | Synchronous atomic decrement. **Only call after `canAcquire()` returns `true`.** JS single-threaded event loop guarantees no interleaving between the check and the acquire. Throws if any resource is insufficient (indicates a programming error). If parent acquisition fails, rolls back local changes. |
 | `release` | `release(cost: ResourceCost): void` | Releases resources back. Clamps each resource to its limit (prevents over-release). Releases the same cost from the parent. Signals `waitObj` to wake waiters. |
+| `setLimits` | `setLimits(newLimits: ResourceCost): void` | Adjusts capacity limits at runtime. Increasing a limit grows available capacity by the delta. Decreasing shrinks available (clamped to 0) — in-flight tasks are not revoked and release against the new ceiling. Supports partial updates (only specified keys change). Can add new resource keys. Signals `waitObj`. Throws on negative values. |
 | `validateCost` | `validateCost(cost: ResourceCost): boolean` | Checks if a cost is satisfiable in principle (no resource exceeds total capacity). Call at enqueue time to reject impossible tasks early. Checks the parent chain recursively. |
 
 **Usage Example:**
@@ -196,6 +198,85 @@ team.acquireImmediate(bigTask);
 const team2 = new ResourceCapacitySource({ gpu: 12 }, global);
 const hugeTask: ResourceCost = { gpu: 11 };
 console.log(team2.canAcquire(hugeTask)); // false (11 <= 12 local, but 11 > 10 global)
+```
+
+---
+
+## HierarchicalBalancer
+
+Periodic control loop that monitors child `ResourceCapacitySource` utilization over time and incrementally rebalances — shrinking idle children and growing busy children. Uses sustained observation (time thresholds) to avoid reacting to momentary spikes.
+
+**Constructor:**
+
+```typescript
+constructor(children: BalancerChildConfig[], options?: HierarchicalBalancerOptions)
+```
+
+**`BalancerChildConfig`:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `capacity` | `ResourceCapacitySource` | The child capacity source to manage |
+| `min` | `ResourceCost` | Floor per resource — child will never be shrunk below these |
+| `max` | `ResourceCost` | Ceiling per resource — child will never be grown above these |
+
+**`HierarchicalBalancerOptions`:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `checkIntervalMs` | `number` | `1000` | How often to sample utilization (ms) |
+| `idleTimeThresholdMs` | `number` | `5000` | How long a child must be continuously idle before shrinking (ms) |
+| `busyTimeThresholdMs` | `number` | `5000` | How long a child must be continuously busy before growing (ms) |
+| `idleThreshold` | `number` | `0.3` | Utilization ratio below which a child is considered idle |
+| `busyThreshold` | `number` | `0.85` | Utilization ratio above which a child is considered busy |
+| `increment` | `ResourceCost` | `{ <key>: 1 }` for each key in min/max | Amount to adjust per rebalance step |
+
+**Properties:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `running` | `boolean` | Whether the periodic check loop is active |
+| `options` | `Readonly<Required<HierarchicalBalancerOptions>>` | Current options (read-only) |
+
+**Methods:**
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `start` | `start(): void` | Start the periodic rebalancing loop (idempotent) |
+| `stop` | `stop(): void` | Stop the periodic loop (idempotent) |
+| `check` | `check(): void` | Run a single rebalance check manually (for testing or one-shot use) |
+
+**Behavior:**
+
+- A child is **idle** when ALL resources are below `idleThreshold`.
+- A child is **busy** when ANY resource is above `busyThreshold`.
+- Shrinking: decreases the child's limit by `increment` (per resource), clamped to `min`.
+- Growing: increases the child's limit by `increment` (per resource), clamped to `max`.
+- After each shrink/grow action, the time tracker resets — the next adjustment requires another full threshold period.
+
+**Example:**
+
+```typescript
+import { ResourceCapacitySource, HierarchicalBalancer } from '@firebrandanalytics/shared-utils';
+
+const cluster = new ResourceCapacitySource({ gpu: 16 });
+const teamA = new ResourceCapacitySource({ gpu: 12 }, cluster);
+const teamB = new ResourceCapacitySource({ gpu: 12 }, cluster);
+
+const balancer = new HierarchicalBalancer([
+  { capacity: teamA, min: { gpu: 4 }, max: { gpu: 15 } },
+  { capacity: teamB, min: { gpu: 4 }, max: { gpu: 15 } },
+], {
+  checkIntervalMs: 1000,
+  idleTimeThresholdMs: 5000,
+  busyTimeThresholdMs: 5000,
+  increment: { gpu: 1 },
+});
+
+balancer.start();
+// Idle teams gradually shrink (down to 4 GPUs)
+// Busy teams gradually grow (up to 15 GPUs)
+// Call balancer.stop() when done
 ```
 
 ---
