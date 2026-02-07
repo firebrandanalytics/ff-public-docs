@@ -66,33 +66,82 @@ for await (const squaredNumber of squareLink) {
 }
 ```
 
-## 3. A Tour of Common Pull Stream Operations
+## 3. Mutable Configuration: Changing Behavior Mid-Stream
+
+A key advantage of the Obj pattern is that configuration is exposed as **public mutable members**. You can change a filter predicate, a map function, or a timeout value while the stream is running — the new configuration takes effect on the next iteration cycle.
+
+```typescript
+const source = new SourceBufferObj([1, 2, 3, 4, 5, 6]);
+const filter = new PullFilterObj(source, (n) => n % 2 === 0); // even numbers
+
+// Pull first match
+const first = await filter.next(); // { value: 2, done: false }
+
+// Swap filter mid-stream to odd numbers
+filter.filter = (n) => n % 2 === 1;
+
+// Remaining values now use the new predicate
+for await (const n of filter) {
+  console.log(n); // 3, 5
+}
+```
+
+**Lifecycle note:** When a `pull_impl()` generator uses `for await (const x of this.source)`, the iterator is captured at loop start. Source swaps take effect on the next `pull_impl()` cycle (after the current one completes and the base class reinitializes the generator). Configuration members like `filter`, `transform`, `time_out`, etc. take effect immediately since they're read on each iteration.
+
+## 4. A Tour of Common Pull Stream Operations
 
 While this guide isn't a full API reference, it's helpful to see the breadth of built-in tools for common pull-based manipulations. The library provides composable objects for nearly any convergent pattern you might need.
 
-### Single-Stream Transformations
+### Single-Stream Transformations (1-to-1)
 
-These objects operate on a single stream of data, much like array methods.
+These objects extend `PullObj1To1Link` and operate on a single upstream source.
 
-*   **`PullMap`**: Transforms each item in a stream. (e.g., `(n) => n * 2`)
-*   **`PullFilter`**: Keeps only the items that match a condition. (e.g., `(n) => n > 10`)
-*   **`PullDedupe`**: Removes duplicate items from a stream.
-*   **`PullReduce`**: Combines all items into a result, yielding each intermediate step. (e.g., calculating a running total)
-*   **`PullFlatMap`**: Transforms one item into many, flattening the result into the main stream.
-*   **`PullWindow` / `PullBuffer`**: Groups items into batches, either by a fixed size (`Window`) or a dynamic condition (`Buffer`).
+| Class | Mutable Members | Description |
+|-------|----------------|-------------|
+| `PullMapObj` | `transform` | Transforms each item (e.g., `(n) => n * 2`) |
+| `PullFilterObj` | `filter` | Keeps items matching a predicate (sync or async) |
+| `PullDedupeObj` | `obj2id`, `cache` | Removes duplicates, with optional custom ID function |
+| `PullReduceObj` | `reducer`, `accum` | Running accumulator, yields each intermediate result |
+| `PullFlatMapObj` | `transform` | Transforms one item into many via an inner generator |
+| `PullWindowObj` | `window_size` | Groups items into fixed-size arrays |
+| `PullBufferObj` | `condition` | Groups items by a dynamic condition function |
+| `PullBufferReduceObj` | `reducer` | Reduces items in buffered groups |
+| `PullCallbackObj` | `callbacks` | Executes side-effect callbacks on each value |
+| `PullEagerObj` | `buffer_size` (readonly) | Pre-fetches values into a buffer for throughput |
+| `PullTimeoutObj` | `time_out`, `throw_on_timeout` | Adds timeout to each pull from the source |
+| `PullFlattenObj` | — | Flattens nested iterables into a single stream |
+| `PullInOrderObj` | `obj2index`, `start`, `cache` | Reorders items by index |
 
-### Combining Multiple Streams (Many-to-One)
+### Combining Multiple Streams (Many-to-1)
 
-These tools orchestrate multiple pull streams together, demonstrating the convergent nature of the pull model.
+These objects extend `PullObjManyTo1Link` and combine an array of sources.
 
-*   **`PullConcat`**: Chains streams together sequentially, exhausting one before starting the next.
-*   **`PullZip`**: Combines streams into a single stream of tuples, pairing corresponding items from each source.
-*   **`PullRoundRobin`**: Merges streams by taking one item from each in a fair, rotating sequence.
-*   **`PullRace`**: Merges streams by yielding the next item from whichever stream produces one first, enabling resolution-order processing.
+| Class | Options | Description |
+|-------|---------|-------------|
+| `PullConcatObj` | `eager` | Chains sources sequentially, exhausting one before the next |
+| `PullZipObj` | `eager` | Pairs corresponding items from each source into tuples |
+| `PullRoundRobinObj` | `yieldReturn`, `eager` | Takes one item from each source in rotation |
+| `PullRaceObj` | `yieldReturn`, `eager` | Yields from whichever source produces first |
+| `PullRaceRobinObj` | `eager` | Hybrid: races within rounds, round-robins across them |
+| `PullRaceCutoffObj` | `throw_on_cutoff` | Races a source against a cutoff signal |
 
-This is just a sample; these building blocks allow you to construct sophisticated, declarative data pipelines.
+The `eager` option (construction-only, readonly) wraps each source in `PullEagerObj` for pre-fetching. The `yieldReturn` option controls whether a source's return value is yielded as a regular value.
 
-## 4. The Push Model: Eager, Divergent (One-to-Many) Processing
+### Labeled Many-to-1
+
+These extend `PullObjLabeledManyTo1Link` and accept a `Map<Label, PullObj>`:
+
+*   `PullLabeledZipObj`, `PullLabeledRoundRobinObj`, `PullLabeledRaceObj`, `PullLabeledRaceRobinObj`
+
+### Sources and Bridges
+
+| Class | Base | Description |
+|-------|------|-------------|
+| `PullTimerObj` | `SourceObj` | Emits values on an interval (timestamp or counter) |
+| `PullPushBridgeObj` | `PullObj1To1Link` | Forwards pulled values to push sinks |
+| `PullPushDistributeObj` | `PullObj1To1Link` | Routes pulled values to labeled push sinks via a selector |
+
+## 5. The Push Model: Eager, Divergent (One-to-Many) Processing
 
 The push model is the symmetric opposite of pull. It represents the **divergent**, or **one-to-many**, half of the library's design. It excels at taking a single input stream and splitting it out to multiple destinations.
 
@@ -109,7 +158,7 @@ A key feature of the push model is that `next()` calls can be made concurrently.
 
 ### Familiar Transformation Patterns
 
-Just like the pull model, the push model provides a rich set of 1-to-1 transformation links. Developers who understand `PullMap` will find `PushMap` intuitive; they serve the same purpose for a different stream type. This includes:
+Just like the pull model, the push model provides a rich set of 1-to-1 transformation links. Developers who understand `PullMapObj` will find `PushMapObj` intuitive; they serve the same purpose for a different stream type. This includes:
 
 *   `PushMapObj`
 *   `PushFilterObj`
@@ -143,7 +192,7 @@ console.log(highPrioritySink.buffer); // ["ALERT: URGENT CPU at 99%."]
 console.log(lowPrioritySink.buffer);  // ["INFO: System normal."]
 ```
 
-## 5. Combining Streams: The `AsyncIteratorCombiner`
+## 6. Combining Streams: The `AsyncIteratorCombiner`
 
 The `AsyncIteratorCombiner` is the powerful engine for managing multiple **pull** streams in parallel. It provides the low-level implementation for many of the multi-stream patterns like `Race` and `RoundRobin`.
 
@@ -155,7 +204,7 @@ It provides several strategies for consuming from multiple iterators:
 **When to Use It:**
 Use the combiner when you have a known set of pull streams (e.g., from `entity.start()`) and need to consume them concurrently.
 
-## 6. Synchronizing Operations: The `WaitObject`
+## 7. Synchronizing Operations: The `WaitObject`
 
 A `WaitObject` is a low-level synchronization primitive. You can think of it as a **resettable, one-time signal** or a **sequence of promises**.
 
@@ -164,7 +213,7 @@ A `WaitObject` is a low-level synchronization primitive. You can think of it as 
 
 Its key feature is that the signal generator can keep generating signals without worrying whether anyone is waiting. Most developers will not need to instantiate a `WaitObject` directly. It is primarily used as an internal mechanism to build more complex components.
 
-## 7. Bridging the Models: The `PushPullBufferObj`
+## 8. Bridging the Models: The `PushPullBufferObj`
 
 The `PushPullBufferObj` is the essential bridge that connects the push and pull worlds. It acts as a decoupled, asynchronous queue.
 
@@ -176,7 +225,7 @@ Internally, it uses a `WaitObject` to signal the pull side when new data has bee
 **When to Use It:**
 Use it whenever you need to decouple a fast producer from a slow consumer (or vice-versa), or when you need to create a dynamic work queue where one part of your system adds tasks and another part consumes them.
 
-## 8. The Grand Unifier: `HierarchicalTaskPoolRunner`
+## 9. The Grand Unifier: `HierarchicalTaskPoolRunner`
 
 The `HierarchicalTaskPoolRunner` is the highest-level abstraction in the library. It brings all the other concepts together to provide a robust engine for orchestrating complex, capacity-limited workloads.
 
@@ -190,3 +239,24 @@ Key features that build on the lower-level concepts:
 
 **When to Use It:**
 This is your go-to tool for production-grade parallelism in FireFoundry, especially for processing large collections of items or handling dynamically discovered work.
+
+## 10. Class Hierarchy and Lifecycle
+
+All Obj classes follow a consistent inheritance hierarchy that determines their source topology:
+
+```
+PullObj<T>                          (base — implements AsyncIterable<T>)
+├── SourceObj<T>                    (no upstream source — generates values)
+│   └── PullTimerObj
+├── PullObj1To1Link<IN,OUT>         (one upstream source)
+│   ├── PullMapObj, PullFilterObj, PullDedupeObj, PullReduceObj, ...
+│   └── PullPushBridgeObj, PullPushDistributeObj
+├── PullObjManyTo1Link<IN,OUT>      (array of upstream sources)
+│   └── PullConcatObj, PullRoundRobinObj, PullRaceObj, ...
+└── PullObjLabeledManyTo1Link<L,IN,OUT>  (labeled map of sources)
+    └── PullLabeledRoundRobinObj, PullLabeledRaceObj, ...
+```
+
+**Close propagation:** Calling `close()` or `closeInterrupt()` on any Obj class propagates to all upstream sources. This ensures graceful shutdown of entire pipelines — closing the consumer end tears down the full chain.
+
+**Generator reinit:** When a `pull_impl()` generator completes (returns), the base `PullObj` class can reinitialize it via `handle_result()`. This enables long-lived Obj instances that restart their internal logic cycle, picking up any configuration changes made between cycles.
