@@ -34,7 +34,7 @@ type CanonicalPreferences = {
 // ---------------------------------------------------------------------------
 
 class V1Preferences {
-  @Discriminator('1')
+  @Discriminator(1)
   version!: number;
 
   // Extract raw fields into staging properties using @JSONPath (one-time sourcing)
@@ -68,7 +68,7 @@ class V1Preferences {
 // ---------------------------------------------------------------------------
 
 class V2Preferences {
-  @Discriminator('2')
+  @Discriminator(2)
   version!: number;
 
   // Extract raw fields into staging properties using @JSONPath (one-time sourcing)
@@ -117,7 +117,7 @@ class V2Preferences {
 // ---------------------------------------------------------------------------
 
 class V3Preferences {
-  @Discriminator('3')
+  @Discriminator(3)
   version!: number;
 
   @Copy()
@@ -132,7 +132,7 @@ class V3Preferences {
 // ---------------------------------------------------------------------------
 
 class V1WithStaging {
-  @Discriminator('1')
+  @Discriminator(1)
   version!: number;
 
   @JSONPath('$.theme')

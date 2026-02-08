@@ -114,8 +114,8 @@ class OrderForm {
   // ── Derived fields ────────────────────────────────────────
 
   @DerivedFrom(
-    ['quantity', 'unitPrice'],
-    ([qty, price]: [number, number]) => qty * price
+    'quantity',
+    (qty: number, { instance }: { instance: any }) => qty * (instance.unitPrice ?? 0)
   )
   @CoerceRound({ precision: 2 })
   subtotal!: number;
@@ -131,8 +131,8 @@ class OrderForm {
   shipping!: number;
 
   @DerivedFrom(
-    ['subtotal', 'tax', 'shipping'],
-    ([sub, tax, ship]: [number, number, number]) => sub + tax + ship
+    'subtotal',
+    (sub: number, { instance }: { instance: any }) => sub + (instance.tax ?? 0) + (instance.shipping ?? 0)
   )
   @CoerceRound({ precision: 2 })
   total!: number;
@@ -296,7 +296,7 @@ class SimpleInvoice {
   @CoerceRound({ precision: 2 })
   tax!: number;
 
-  @DerivedFrom(['subtotal', 'tax'], ([s, t]: [number, number]) => s + t)
+  @DerivedFrom('subtotal', (s: number, { instance }: { instance: any }) => s + (instance.tax ?? 0))
   @CoerceRound({ precision: 2 })
   total!: number;
 }
@@ -317,8 +317,8 @@ class PrecisionOrder {
   unitPrice!: number;
 
   @DerivedFrom(
-    ['quantity', 'unitPrice'],
-    ([q, p]: [number, number]) => q * p
+    'quantity',
+    (q: number, { instance }: { instance: any }) => q * (instance.unitPrice ?? 0)
   )
   @CoerceRound({ precision: 2 })
   subtotal!: number;
@@ -327,7 +327,7 @@ class PrecisionOrder {
   @CoerceRound({ precision: 2 })
   tax!: number;
 
-  @DerivedFrom(['subtotal', 'tax'], ([s, t]: [number, number]) => s + t)
+  @DerivedFrom('subtotal', (s: number, { instance }: { instance: any }) => s + (instance.tax ?? 0))
   @CoerceRound({ precision: 2 })
   total!: number;
 }
@@ -353,8 +353,9 @@ class BulkOrder {
   discountRate!: number;
 
   @DerivedFrom(
-    ['quantity', 'unitPrice', 'discountRate'],
-    ([q, p, d]: [number, number, number]) => q * p * (1 - d)
+    'quantity',
+    (q: number, { instance }: { instance: any }) =>
+      q * (instance.unitPrice ?? 0) * (1 - (instance.discountRate ?? 0))
   )
   @CoerceRound({ precision: 2 })
   subtotal!: number;
@@ -365,8 +366,8 @@ class BulkOrder {
   shipping!: number;
 
   @DerivedFrom(
-    ['subtotal', 'shipping'],
-    ([s, sh]: [number, number]) => s + sh
+    'subtotal',
+    (s: number, { instance }: { instance: any }) => s + (instance.shipping ?? 0)
   )
   @CoerceRound({ precision: 2 })
   total!: number;

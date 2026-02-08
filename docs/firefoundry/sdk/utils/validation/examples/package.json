@@ -15,7 +15,7 @@
     "error-recovery-and-repair": "tsx error-recovery-and-repair.ts"
   },
   "dependencies": {
-    "@firebrandanalytics/shared-utils": "^4.1.0-beta.0"
+    "@firebrandanalytics/shared-utils": "^4.2.0-beta.0"
   },
   "devDependencies": {
     "tsx": "^4.0.0",

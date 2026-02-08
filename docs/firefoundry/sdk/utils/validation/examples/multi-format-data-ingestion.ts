@@ -19,7 +19,7 @@ import {
     ValidateRequired,
     ValidateRange,
     ValidatePattern,
-} from '@firebrandanalytics/shared-utils';
+} from '@firebrandanalytics/shared-utils/validation';
 
 // ---------------------------------------------------------------------------
 // 1. FinancialRecord -- multi-currency, European decimals, accounting negatives

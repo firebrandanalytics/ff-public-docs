@@ -24,7 +24,7 @@ import {
   Examples,
   DerivedFrom,
   ValidationError,
-} from '@firebrandanalytics/shared-utils';
+} from '@firebrandanalytics/shared-utils/validation';
 
 // ============================================================
 // Reusable styles

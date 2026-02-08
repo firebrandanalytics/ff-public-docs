@@ -17,7 +17,7 @@ import {
     CoerceType,
     ValidateRequired,
     ValidateRange,
-} from '@firebrandanalytics/shared-utils';
+} from '@firebrandanalytics/shared-utils/validation';
 
 // ── Context interfaces ──────────────────────────────────────────────────────
 

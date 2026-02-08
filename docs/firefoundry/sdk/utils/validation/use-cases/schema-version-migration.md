@@ -86,26 +86,23 @@ V1 input has `theme` and `fontSize` at the root level. There are no notification
 ```typescript
 class V1Preferences {
   @Discriminator(1)
-  version: number;
+  version!: number;
 
-  @DerivedFrom(
-    ['$.theme', '$.fontSize'],
-    ([theme, fontSize]) => ({
-      colorTheme: theme ?? 'light',
-      fontScale: typeof fontSize === 'number' ? fontSize : 14,
-      language: 'en',
-    })
-  )
-  appearance: { colorTheme: string; fontScale: number; language: string };
+  @DerivedFrom('version', (_v: number, { raw }: { raw: any }) => ({
+    colorTheme: raw.theme ?? 'light',
+    fontScale: typeof raw.fontSize === 'number' ? raw.fontSize : 14,
+    language: 'en',
+  }))
+  appearance!: { colorTheme: string; fontScale: number; language: string };
 
-  @DerivedFrom('$.version', () => ({
+  @DerivedFrom('version', () => ({
     channels: ['email'],
   }))
-  alerts: { channels: string[] };
+  alerts!: { channels: string[] };
 }
 ```
 
-`@DerivedFrom(['$.theme', '$.fontSize'], ...)` pulls two fields from the raw input by JSONPath, then the transform function builds the nested `appearance` object. The `alerts` property has no V1 source data, so the transform ignores the input and returns a sensible default.
+`@DerivedFrom('version', fn)` derives from the `version` property (which is always set by the discriminator), and the transform function accesses the raw V1 fields through `ctx.raw`. The `alerts` property has no V1 source data, so the transform ignores the input and returns a sensible default.
 
 ### 3. V2 migration class: rename and restructure
 
@@ -114,28 +111,23 @@ V2 input has `display.theme`, `display.fontSize`, `notifications.email`, and `no
 ```typescript
 class V2Preferences {
   @Discriminator(2)
-  version: number;
+  version!: number;
 
-  @DerivedFrom(
-    ['$.display.theme', '$.display.fontSize'],
-    ([theme, fontSize]) => ({
-      colorTheme: theme ?? 'light',
-      fontScale: typeof fontSize === 'number' ? fontSize : 14,
-      language: 'en',
-    })
-  )
-  appearance: { colorTheme: string; fontScale: number; language: string };
+  @DerivedFrom('version', (_v: number, { raw }: { raw: any }) => ({
+    colorTheme: raw.display?.theme ?? 'light',
+    fontScale: typeof raw.display?.fontSize === 'number' ? raw.display.fontSize : 14,
+    language: 'en',
+  }))
+  appearance!: { colorTheme: string; fontScale: number; language: string };
 
-  @DerivedFrom(
-    ['$.notifications.email', '$.notifications.push'],
-    ([email, push]) => {
-      const channels: string[] = [];
-      if (email) channels.push('email');
-      if (push) channels.push('push');
-      return { channels };
-    }
-  )
-  alerts: { channels: string[] };
+  @DerivedFrom('version', (_v: number, { raw }: { raw: any }) => {
+    const channels: string[] = [];
+    if (raw.notifications?.email) channels.push('email');
+    if (raw.notifications?.push) channels.push('push');
+    if (channels.length === 0) channels.push('email');
+    return { channels };
+  })
+  alerts!: { channels: string[] };
 }
 ```
 
@@ -148,13 +140,13 @@ V3 input already matches the canonical shape. `@Copy()` passes each property thr
 ```typescript
 class V3Preferences {
   @Discriminator(3)
-  version: number;
+  version!: number;
 
   @Copy()
-  appearance: { colorTheme: string; fontScale: number; language: string };
+  appearance!: { colorTheme: string; fontScale: number; language: string };
 
   @Copy()
-  alerts: { channels: string[] };
+  alerts!: { channels: string[] };
 }
 ```
 
@@ -232,17 +224,17 @@ When a migration requires multiple steps -- for example, parsing a legacy string
 ```typescript
 class V1Preferences {
   @Discriminator(1)
-  version: number;
+  version!: number;
 
-  // Parse the legacy comma-separated channels string
-  @DerivedFrom('$.notificationChannels')
+  // Extract the legacy comma-separated channels string into a staging property
+  @JSONPath('$.notificationChannels')
   @Staging()
-  rawChannels: string;
+  rawChannels!: string;
 
-  @DerivedFrom('rawChannels', (raw) => ({
+  @DerivedFrom('rawChannels', (raw: string | undefined) => ({
     channels: raw ? raw.split(',').map((s: string) => s.trim()) : ['email'],
   }))
-  alerts: { channels: string[] };
+  alerts!: { channels: string[] };
 }
 ```
 
@@ -255,16 +247,13 @@ Apply `@Validate` after the migration transform to catch data that is structural
 ```typescript
 class V1Preferences {
   @Discriminator(1)
-  version: number;
+  version!: number;
 
-  @DerivedFrom(
-    ['$.theme', '$.fontSize'],
-    ([theme, fontSize]) => ({
-      colorTheme: theme ?? 'light',
-      fontScale: typeof fontSize === 'number' ? fontSize : 14,
-      language: 'en',
-    })
-  )
+  @DerivedFrom('version', (_v: number, { raw }: { raw: any }) => ({
+    colorTheme: raw.theme ?? 'light',
+    fontScale: typeof raw.fontSize === 'number' ? raw.fontSize : 14,
+    language: 'en',
+  }))
   @Validate(
     (appearance) =>
       ['light', 'dark', 'system'].includes(appearance.colorTheme) ||
@@ -277,7 +266,7 @@ class V1Preferences {
       'Font scale must be between 10 and 24',
     'Font scale range check'
   )
-  appearance: { colorTheme: string; fontScale: number; language: string };
+  appearance!: { colorTheme: string; fontScale: number; language: string };
 }
 ```
 
@@ -319,32 +308,32 @@ When sub-objects also evolve independently, apply the same pattern at the nested
 ```typescript
 class AlertSettingsV1 {
   @Discriminator(1)
-  alertVersion: number;
+  alertVersion!: number;
 
-  @DerivedFrom('$.emailEnabled', (enabled) => ({
-    channels: enabled ? ['email'] : [],
+  @DerivedFrom('alertVersion', (_v: number, { raw }: { raw: any }) => ({
+    channels: raw.emailEnabled ? ['email'] : [],
   }))
-  config: { channels: string[] };
+  config!: { channels: string[] };
 }
 
 class AlertSettingsV2 {
   @Discriminator(2)
-  alertVersion: number;
+  alertVersion!: number;
 
   @Copy()
-  config: { channels: string[] };
+  config!: { channels: string[] };
 }
 
 class UserPreferences {
   @Copy()
-  version: number;
+  version!: number;
 
   @Copy()
-  appearance: { colorTheme: string; fontScale: number; language: string };
+  appearance!: { colorTheme: string; fontScale: number; language: string };
 
   // The alerts sub-object has its own version and migration classes
   @ValidatedClass([AlertSettingsV1, AlertSettingsV2])
-  alerts: AlertSettingsV1 | AlertSettingsV2;
+  alerts!: AlertSettingsV1 | AlertSettingsV2;
 }
 ```
 

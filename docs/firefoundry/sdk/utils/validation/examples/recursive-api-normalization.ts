@@ -22,11 +22,7 @@ import {
   RecursiveValues,
   ValidationError,
   MatchingStrategy,
-} from '@firebrandanalytics/shared-utils';
-// Note: MatchingStrategy is both a decorator function and a type alias in the
-// current package version.  The type export shadows the decorator at the TS
-// level (a known packaging issue). The @ts-expect-error comments below suppress
-// the resulting TS2693 errors; at runtime the decorator works correctly.
+} from '@firebrandanalytics/shared-utils/validation';
 
 // ── Reusable styles ──────────────────────────────────────────
 
@@ -38,7 +34,6 @@ class TrimStyle {
 
 // ── Nested validated classes ─────────────────────────────────
 
-// @ts-expect-error -- MatchingStrategy type/decorator name collision (see import note)
 @MatchingStrategy({ strategy: 'fuzzy', threshold: 0.7 })
 @DefaultTransforms({ string: TrimStyle })
 @ManageAll()
@@ -49,7 +44,6 @@ class Address {
   @ValidatePattern(/^\d{5}(-\d{4})?$/, 'Invalid ZIP code') zipCode!: string;
 }
 
-// @ts-expect-error -- MatchingStrategy type/decorator name collision
 @MatchingStrategy({ strategy: 'fuzzy', threshold: 0.7 })
 @DefaultTransforms({ string: TrimStyle })
 @ManageAll()
@@ -70,7 +64,6 @@ class ContactInfo {
 // properties, so a blanket string default would incorrectly apply CoerceTrim
 // to the Address and ContactInfo sub-objects.
 
-// @ts-expect-error -- MatchingStrategy type/decorator name collision
 @MatchingStrategy({ strategy: 'fuzzy', threshold: 0.7 })
 @ManageAll()
 class APICustomer {
@@ -83,7 +76,6 @@ class APICustomer {
 
 // ── Dynamic payload class using @RecursiveValues ─────────────
 
-// @ts-expect-error -- MatchingStrategy type/decorator name collision
 @MatchingStrategy({ strategy: 'fuzzy', threshold: 0.7 })
 @ManageAll()
 class DynamicConfig {

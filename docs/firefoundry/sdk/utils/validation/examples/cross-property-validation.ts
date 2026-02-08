@@ -22,7 +22,7 @@ import {
   ValidateRange,
   Validate,
   ValidationError,
-} from '@firebrandanalytics/shared-utils';
+} from '@firebrandanalytics/shared-utils/validation';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 

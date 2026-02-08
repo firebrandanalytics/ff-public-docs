@@ -89,8 +89,8 @@ class Invoice {
     @CoerceType('number')
     taxRate: number;
 
-    @DerivedFrom(['price', 'taxRate'], ([p, r]) => p * r)
-    tax: number;     // Depends on price and taxRate — fine, it's a DAG
+    @DerivedFrom('price', (p: number, { instance }: { instance: any }) => p * (instance.taxRate ?? 0))
+    tax: number;     // Depends on price, accesses taxRate via instance — fine, it's a DAG
 }
 ```
 
@@ -107,8 +107,8 @@ class ShoppingCart {
     @DerivedFrom('subtotal', (s) => s > 100 ? 0 : 5.99)
     shipping: number;        // Depends on subtotal
 
-    @DerivedFrom(['subtotal', 'shipping'], ([s, sh]) => s + sh)
-    total: number;           // Depends on subtotal AND shipping
+    @DerivedFrom('subtotal', (s: number, { instance }: { instance: any }) => s + (instance.shipping ?? 0))
+    total: number;           // Depends on subtotal, accesses shipping via instance
 }
 ```
 

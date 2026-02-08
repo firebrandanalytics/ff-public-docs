@@ -24,7 +24,7 @@ import {
   Validate,
   ValidateLength,
   AIHandlerParams,
-} from '@firebrandanalytics/shared-utils';
+} from '@firebrandanalytics/shared-utils/validation';
 
 // ============================================================
 // Category label set

@@ -21,7 +21,7 @@ import {
     AICatchRepair,
     Examples,
     ValidationError,
-} from '@firebrandanalytics/shared-utils';
+} from '@firebrandanalytics/shared-utils/validation';
 
 // ── Mock AI handler ──────────────────────────────────────────────────────────
 // Simulates AI repair for standalone execution. In production, replace with
