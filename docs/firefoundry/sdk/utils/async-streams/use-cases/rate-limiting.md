@@ -135,6 +135,8 @@ quota.stopTimer();
 console.log(`done: ${completed} requests completed`);
 ```
 
+For the full runnable version (including token-bucket and multi-resource quota demos), see [`examples/rate-limiting.ts`](../examples/rate-limiting.ts).
+
 ## What to Observe
 
 With 250 tasks, 100 quota per minute, and tasks completing in ~65ms average:

@@ -106,6 +106,7 @@ npx tsx multi-resource-scheduling.ts
 npx tsx adaptive-capacity.ts
 npx tsx priority-request-routing.ts
 npx tsx latency-bounded-batching.ts
+npx tsx rate-limiting.ts
 ```
 
 ### Platform Integration
