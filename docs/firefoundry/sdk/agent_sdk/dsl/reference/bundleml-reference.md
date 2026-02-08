@@ -8,6 +8,14 @@ use the `.bundleml` extension and are loaded by the `BundleMLLoader`.
 A bundle file is the single entry point that ties together AgentML entities, BotML bots,
 and PromptML prompts into a deployable unit.
 
+BundleML can be used in two modes:
+
+- **Automatic bootstrap** (xml-bundle-server): The bootstrap loader reads the BundleML
+  and automatically parses all referenced DSL files, registers components, compiles CDATA
+  handlers, and starts the HTTP server. No TypeScript code is required.
+- **TypeScript wiring**: A TypeScript class extends `FFAgentBundle`, reads the BundleML
+  for structural validation, and handles component registration programmatically.
+
 ---
 
 ## Table of Contents

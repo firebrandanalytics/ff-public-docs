@@ -52,7 +52,11 @@ The parser produces an `AgentMLProgram` containing typed AST nodes. `bindInterpr
 
 BundleML defines the top-level manifest for an agent bundle. A `.bundleml` file uses a `<bundle>` root element with `id`, `name`, and optional `description` attributes. Inside the bundle, `<config>` sets runtime parameters (port, file size limits). `<constructors>` maps entity types and bot types to their XML definition files. `<endpoints>` defines HTTP routes with inline JavaScript handlers (in CDATA sections). `<methods>` defines custom methods on the bundle class, also with inline JavaScript.
 
-BundleML serves primarily as a validation and documentation layer. The `parseBundleML` function extracts a `BundleNode` AST, and `validateBundleML` checks structural correctness (valid methods, required attributes, endpoint configuration). In the current implementation, the TypeScript wiring class reads the BundleML for validation but handles actual component registration programmatically.
+BundleML has two usage modes:
+
+1. **Automatic bootstrap** (xml-bundle-server): The bootstrap loader reads the BundleML, parses all referenced `.agentml` and `.botml` files, registers components in the `ComponentRegistry`, compiles CDATA endpoint handlers, and starts the HTTP server — all without any hand-written TypeScript. This is the recommended approach for new bundles.
+
+2. **Validation and manifest** (TypeScript wiring): A TypeScript class extends `FFAgentBundle`, reads the BundleML for structural validation, and handles component registration programmatically. This approach gives full control over initialization and is used when custom TypeScript logic is needed during setup.
 
 **Key elements:** `<bundle>`, `<config>`, `<port>`, `<file-size-limit>`, `<max-files>`, `<constructors>`, `<entity>`, `<bot>`, `<endpoints>`, `<endpoint>`, `<handler>`, `<methods>`, `<method>`
 
@@ -172,6 +176,68 @@ Here is a minimal four-file bundle that demonstrates all four DSLs working toget
 </bundle>
 ```
 
+## Zero-Code Deployment: xml-bundle-server
+
+The xml-bundle-server is a pre-built Docker image that bootstraps agent bundles entirely from BundleML configuration at runtime. You write only XML files — no TypeScript, no compilation, no per-bundle Docker images.
+
+### How It Works
+
+1. Write a `.bundleml` file referencing `.agentml` and `.botml` files
+2. Package the XML files into a Kubernetes ConfigMap (or mount from blob storage)
+3. Deploy the `xml-bundle-server` image with the ConfigMap mounted at `/config`
+4. The server reads the BundleML, parses all referenced DSL files, registers components, compiles CDATA handlers, and starts serving
+
+### Fleet Model
+
+Multiple Kubernetes deployments share the same Docker image, each with a different ConfigMap containing their BundleML and DSL files. Each deployment scales independently.
+
+```
+                    ┌─────────────────────┐
+                    │  xml-bundle-server   │
+                    │  (single image)      │
+                    └──────┬──────────────┘
+                           │
+          ┌────────────────┼────────────────┐
+          │                │                │
+    ┌─────┴──────┐  ┌─────┴──────┐  ┌─────┴──────┐
+    │ ConfigMap A │  │ ConfigMap B │  │ ConfigMap C │
+    │ analytics  │  │ reporting  │  │ processing │
+    │ bundle     │  │ bundle     │  │ bundle     │
+    └────────────┘  └────────────┘  └────────────┘
+```
+
+### Standard Endpoints
+
+Every xml-bundle-server deployment automatically exposes:
+
+- `GET /health/ready` — readiness check with component inventory
+- `GET /health/live` — liveness check
+- `GET /api/dsl-info` — lists all registered DSL components
+- `POST /api/invoke/:entityType` — create and run an entity by type
+- `POST /api/bot/:botName/run` — invoke a registered bot directly
+- Custom endpoints defined in BundleML `<endpoints>` section
+
+### Bundle Sources
+
+The server supports multiple bundle source types via environment variables:
+
+| Source | Config | Description |
+|--------|--------|-------------|
+| `file` | `BUNDLE_PATH=/config/bundle.bundleml` | ConfigMap or volume mount (default) |
+| `blob` | `BUNDLE_SOURCE=blob` | Azure Blob Storage |
+| `postgres` | `BUNDLE_SOURCE=postgres` | Database row (enables management console) |
+
+### When to Use xml-bundle-server vs TypeScript Wiring
+
+| Scenario | Approach |
+|----------|----------|
+| Standard workflow bundles | xml-bundle-server (zero code) |
+| AI-generated bundles | xml-bundle-server (LLMs produce XML) |
+| Rapid prototyping | xml-bundle-server (edit XML, restart pod) |
+| Custom initialization logic | TypeScript wiring class |
+| Complex middleware or interceptors | TypeScript wiring class |
+| Existing TypeScript codebase | TypeScript wiring class (or migrate gradually) |
+
 ## Getting Started
 
 - **[Reference Guides](reference/)** -- complete element and attribute reference for each DSL
@@ -216,9 +282,23 @@ The interpreter maintains a `RuntimeContext` with scoped variable declarations. 
                                                             Interpreter walks AST, yields progress, returns result
 ```
 
-### BundleML to Validation and Manifest
+### BundleML to Bootstrap or Validation
 
-The BundleML parser (`parseBundleML`) reads XML into a `BundleNode` AST describing constructors, endpoints, methods, and config. `validateBundleML` checks structural correctness -- verifying that required attributes are present, HTTP methods are valid (`GET` or `POST`), response types are valid (`json`, `binary`, or `iterator`), and that constructor references point to recognized file extensions. In the current architecture, BundleML serves as a validated manifest -- the TypeScript wiring class reads it for validation and logging, while actual component registration is handled programmatically via `ComponentRegistry` and `FFAgentBundle`.
+The BundleML parser (`parseBundleML`) reads XML into a `BundleNode` AST describing constructors, endpoints, methods, and config. `validateBundleML` checks structural correctness -- verifying that required attributes are present, HTTP methods are valid (`GET` or `POST`), response types are valid (`json`, `binary`, or `iterator`), and that constructor references point to recognized file extensions.
+
+**Automatic bootstrap mode** (xml-bundle-server): The bootstrap loader uses the parsed `BundleNode` to drive the entire initialization pipeline. It reads each `ref` path, parses the referenced `.agentml` and `.botml` files, registers all components in the `ComponentRegistry`, compiles CDATA handlers into executable functions, and wires up HTTP endpoints — all automatically from the XML.
+
+```
+.bundleml file --> parseBundleML() --> BundleNode --> BootstrapLoader
+                                                          |
+                                      reads each ref --> parse .agentml / .botml / .promptml
+                                                          |
+                                      registers in ComponentRegistry + compiles CDATA handlers
+                                                          |
+                                      wires HTTP endpoints --> starts server
+```
+
+**TypeScript wiring mode** (manual): A TypeScript class extends `FFAgentBundle`, reads the BundleML for structural validation, and handles component registration programmatically. This is the approach shown in the [E2E Bundle Walkthrough](examples/xml-e2e-bundle.md).
 
 ```
 .bundleml file --> parseBundleML() --> BundleNode --> validateBundleML() --> validation result
@@ -228,7 +308,7 @@ The BundleML parser (`parseBundleML`) reads XML into a `BundleNode` AST describi
 
 ### The ComponentRegistry
 
-All four DSLs converge at the `ComponentRegistry`, a singleton that holds registered bots, prompts, and AgentML programs. The TypeScript wiring class (which extends `FFAgentBundle`) reads DSL files during `init()`, parses them, and registers the resulting components:
+All four DSLs converge at the `ComponentRegistry`, a singleton that holds registered bots, prompts, and AgentML programs. Components can be registered either automatically by the bootstrap loader (from BundleML) or manually by a TypeScript wiring class during `init()`. In both cases, the registration pattern is the same:
 
 1. Parse and validate BundleML (structural validation)
 2. Parse AgentML and bind interpreter (register as `agentml-program`)

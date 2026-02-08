@@ -331,8 +331,8 @@ Defines custom methods on the bundle class. Each `<method>` has a `name` attribu
 
 **Key patterns:**
 - BundleML CDATA handlers are JavaScript, not TypeScript. They run in the bundle's runtime context with access to the `bundle` instance.
-- The `constructors` section creates a documented mapping between types and their DSL files. This is primarily for validation and documentation -- the TypeScript wiring class handles actual registration.
-- Endpoint definitions in BundleML match the `@ApiEndpoint` decorator pattern used in the TypeScript class, providing a declarative alternative.
+- The `constructors` section maps type names to their DSL definition files. In TypeScript-wired bundles, this serves as documentation and validation. In xml-bundle-server deployments, the bootstrap loader uses these references to automatically parse and register all components.
+- Endpoint definitions in BundleML match the `@ApiEndpoint` decorator pattern used in the TypeScript class. In xml-bundle-server mode, the CDATA handlers are compiled and served directly without needing TypeScript equivalents.
 
 ## TypeScript Wiring: agent-bundle.ts
 
@@ -424,7 +424,7 @@ const bundleDef = parseBundleML(bundleXml);
 const bundleValidation = validateBundleML(bundleXml, join(DSL_DIR, "bundle.bundleml"));
 ```
 
-Reads the BundleML file, parses it into a `BundleNode` AST, and validates its structure. The validation result is logged. If validation fails, the bundle can still start (BundleML is currently a validation/documentation layer), but the failure is logged as a warning.
+Reads the BundleML file, parses it into a `BundleNode` AST, and validates its structure. The validation result is logged. In this TypeScript-wired approach, the bundle handles component registration manually (see stages 2-4 below). For zero-code deployment, the xml-bundle-server's bootstrap loader automates all of this from the BundleML.
 
 **Stage 2: Parse and register AgentML**
 
@@ -495,7 +495,7 @@ async getDSLInfo(): Promise<any> { ... }
 
 The `runAnalysis` method creates an entity, starts it, and collects progress envelopes via the async generator. The `getDSLInfo` method queries the `ComponentRegistry` to report which components are loaded.
 
-Note that these TypeScript endpoints mirror the endpoints declared in the BundleML file. The TypeScript versions are the ones that actually run -- the BundleML endpoints serve as documentation and validation targets.
+Note that these TypeScript endpoints mirror the endpoints declared in the BundleML file. In this TypeScript-wired bundle, the TypeScript versions are the ones that actually run. However, when using the xml-bundle-server (automatic bootstrap mode), the BundleML CDATA handlers are compiled and executed directly — no TypeScript endpoints are needed.
 
 ## Running the Example
 
