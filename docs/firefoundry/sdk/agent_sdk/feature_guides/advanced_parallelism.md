@@ -11,6 +11,9 @@ This guide introduces two powerful patterns for advanced parallelism that solve 
 
 -   **`AsyncIteratorCombiner`**: For simple, fixed-N parallelism with full progress streaming.
 -   **`HierarchicalTaskPoolRunner`**: For production-grade, capacity-limited concurrency with support for dynamic task sources.
+-   **`ScheduledTaskPoolRunner`**: For dependency-aware scheduling with multi-resource capacity and priority ordering (see [Async Streams -- FireFoundry Integration](../../utils/async-streams/firefoundry/agent-integration.md)).
+
+> **Library Reference:** The streaming and scheduling primitives used in this guide are documented in the [Async Streams Library](../../utils/async-streams/README.md). See the [Scheduling API Reference](../../utils/async-streams/reference/scheduling.md) for full method signatures and the [Scheduling Fundamentals Tutorial](../../utils/async-streams/tutorials/scheduling-fundamentals.md) for a step-by-step walkthrough.
 
 ## 2. Pattern 1: Simple Parallelism with Progress Streaming (`AsyncIteratorCombiner`)
 
@@ -319,6 +322,7 @@ Here is a summary to help you choose the right tool for the job:
 | **`Promise.allSettled`**        |         ❌         |         ❌          |      ❌       | Simple, fire-and-forget parallelism where only the final results matter.                     |
 | **`AsyncIteratorCombiner`**     |         ✅         |         ❌          |      ❌       | Small, fixed number of tasks where you need to stream progress from all of them together.      |
 | **`HierarchicalTaskPoolRunner`**|         ✅         |         ✅          |      ✅       | Large, variable, or dynamic sets of tasks that require concurrency limiting and high throughput. |
+| **`ScheduledTaskPoolRunner`**  |         ✅         |         ✅          |      ✅       | Tasks with dependency ordering, multi-resource budgets, priority, retry/abort. See [integration guide](../../utils/async-streams/firefoundry/agent-integration.md). |
 
 ---
 ## Appendix A: Understanding Eagerness, Buffering, and Throughput
@@ -396,3 +400,12 @@ protected override async *run_impl(): AsyncGenerator<any, any, never> {
   return finalResults;
 }
 ```
+
+---
+
+## See Also
+
+- **[Async Streams Library](../../utils/async-streams/README.md)** -- Full documentation for the streaming and scheduling primitives used in this guide
+- **[FireFoundry Agent Integration](../../utils/async-streams/firefoundry/agent-integration.md)** -- Using async streams with entities, including `ScheduledTaskPoolRunner` patterns
+- **[Scheduling API Reference](../../utils/async-streams/reference/scheduling.md)** -- `DependencyGraph`, `ResourceCapacitySource`, `PriorityDependencySourceObj`, `ScheduledTaskPoolRunner`
+- **[Utilities Reference](../../utils/async-streams/reference/utilities.md)** -- `AsyncIteratorCombiner`, `PushPullBufferObj`, `CapacitySource`
