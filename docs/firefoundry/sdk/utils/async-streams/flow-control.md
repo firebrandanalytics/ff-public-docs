@@ -1036,6 +1036,44 @@ async function rebalanceByQueueDepth(
 - **Hysteresis bands:** Separate idle/busy thresholds (e.g., shrink at 30%, grow at 85%)
   create a dead zone that dampens rapid cycling.
 
+### Quota and rate-limiting patterns: `QuotaCapacitySource`
+
+The strategies above model **resource pools** where tasks borrow and return capacity.
+A different model applies to **usage quotas**: capacity is consumed permanently until
+an external event restores it. Examples: API rate limits (100 requests/minute), daily
+usage caps, or token budgets.
+
+`QuotaCapacitySource` extends `ResourceCapacitySource` with one fundamental change:
+`release()` is a no-op. Tasks consume quota; completing a task does not refill it.
+Instead, capacity is replenished by timer or external code:
+
+```typescript
+import { QuotaCapacitySource } from '@firebrandanalytics/shared-utils';
+
+// API rate limit: 100 requests/minute, full reset each minute
+const quota = new QuotaCapacitySource({ requests: 100 });
+quota.startPeriodicReset(60_000);
+
+// Wire to ScheduledTaskPoolRunner — tasks consume quota, release is a no-op
+// When quota is exhausted, the runner blocks until the next timer reset
+```
+
+**Token bucket** — gradual refill instead of full reset:
+
+```typescript
+// Max 100 tokens, add 10 every second
+const bucket = new QuotaCapacitySource({ tokens: 100 });
+bucket.startPeriodicIncrement(1000, { tokens: 10 });
+```
+
+The same `ScheduledTaskPoolRunner` works with both `ResourceCapacitySource` (resource
+pool) and `QuotaCapacitySource` (quota) — the runner calls `release()` on completion
+either way. In pool mode it frees resources; in quota mode it's a no-op.
+
+See the [Scheduling Reference](./reference/scheduling.md#quotacapacitysource) for the
+full API and the [Rate-Limiting Use Case](./use-cases/rate-limiting.md) for a complete
+worked example.
+
 ---
 
 ## 9. Observability and Failure Containment
@@ -1103,7 +1141,9 @@ Decision matrix for common symptoms:
 | Need observability                | Callbacks + envelopes  | `.callback()`, `TaskProgressEnvelope`                       |
 | Multiple sources, fair processing | Multi-source combiner  | `PullChain.roundRobin()`, `PullChain.race()`                |
 | Ordered output from parallel work | Reorder buffer         | `PullChain.inOrder()`                                       |
-| External API rate limit           | Periodic pull          | `PullTimerObj` (paces upstream requests)                    |
+| External API rate limit           | Quota capacity         | `QuotaCapacitySource` + `startPeriodicReset()`              |
+| Token bucket / gradual refill    | Quota capacity         | `QuotaCapacitySource` + `startPeriodicIncrement()`          |
+| Paced upstream requests          | Periodic pull          | `PullTimerObj` (paces upstream requests)                    |
 | Concurrent push corruption        | Serialization          | `PushChainBuilder.serial()`                                 |
 
 ### Combining strategies

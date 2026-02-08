@@ -187,6 +187,8 @@ capacity.release({ cpu: 4, gpu: 1 });
 
 Supports **hierarchical parent/child chains** for quota enforcement (e.g., team capacity within department capacity within org capacity). Limits can be adjusted at runtime via `setLimits()` for dynamic rebalancing, and `HierarchicalBalancer` provides a prebuilt control loop that automatically shrinks idle children and grows busy ones.
 
+For rate-limiting and usage-quota patterns, `QuotaCapacitySource` extends `ResourceCapacitySource` with a no-op `release()` — consumed capacity is not restored when tasks complete. Instead, capacity is replenished by periodic timers (`startPeriodicReset`, `startPeriodicIncrement`) or external calls to `reset()`/`increment()`.
+
 ### Priority with Aging
 
 `PriorityDependencySourceObj` combines dependency ordering with priority-based scheduling. An **aging rate** prevents starvation: tasks that wait longer get a priority boost.

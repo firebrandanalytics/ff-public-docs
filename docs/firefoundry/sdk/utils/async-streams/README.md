@@ -91,6 +91,7 @@ for await (const envelope of runner.runTasks(false)) {
 | [Adaptive Capacity](./use-cases/adaptive-capacity.md) | Dynamic concurrency scaling via the reserve/release pattern |
 | [Priority Request Routing (QoS)](./use-cases/priority-request-routing.md) | Tiered user priority with aging-based starvation prevention for LLM broker requests |
 | [Latency-Bounded Batching](./use-cases/latency-bounded-batching.md) | Batch by count OR timeout (Kafka batch.size + linger.ms pattern) for pull and push pipelines |
+| [Rate-Limiting and Usage Quotas](./use-cases/rate-limiting.md) | Quota-gated scheduling with periodic reset and token bucket patterns |
 
 ### Runnable Examples
 

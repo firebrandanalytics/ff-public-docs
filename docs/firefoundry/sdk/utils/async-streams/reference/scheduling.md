@@ -6,11 +6,12 @@ For design philosophy and how these pieces fit into the broader async streams ar
 
 ```typescript
 import {
-    ResourceCost, ResourceCapacitySource,
+    ResourceCost, ResourceCapacitySource, QuotaCapacitySource,
     NodeState, DependencyGraph,
     DependencySourceObj, PrioritySourceObj, PriorityDependencySourceObj,
     ScheduledTask, TASK_RUNNER, STREAMING_TASK_RUNNER, TaskProgressEnvelope,
     ScheduledTaskPoolRunner, HierarchicalTaskPoolRunner,
+    HierarchicalBalancer,
 } from '@firebrandanalytics/shared-utils';
 ```
 
@@ -147,7 +148,7 @@ The constructor validates that all limit values are non-negative and copies them
 | `limits` | `Readonly<ResourceCost>` | Maximum capacity for each resource |
 | `available` | `Readonly<ResourceCost>` | Currently available resources (returns a copy) |
 | `utilization` | `Readonly<ResourceCost>` | Per-resource usage ratio: `(limits - available) / limits`. Returns 0.0 (idle) to 1.0 (fully used). Resources with a limit of 0 report 0. |
-| `waitObj` | `WaitObject<boolean>` | Signaled on `release()` and `setLimits()` to wake retry loops |
+| `waitObj` | `WaitObject<boolean>` | Signaled on `release()`, `setLimits()`, `reset()`, and `increment()` to wake retry loops |
 
 **Methods:**
 
@@ -157,6 +158,8 @@ The constructor validates that all limit values are non-negative and copies them
 | `canAcquire` | `canAcquire(cost: ResourceCost): boolean` | Synchronous check: can ALL resources in `cost` be satisfied? Checks local AND parent chain recursively. Resources in `cost` that are not tracked locally are ignored locally but still checked against the parent. Returns `false` for negative amounts. |
 | `acquireImmediate` | `acquireImmediate(cost: ResourceCost): void` | Synchronous atomic decrement. **Only call after `canAcquire()` returns `true`.** JS single-threaded event loop guarantees no interleaving between the check and the acquire. Throws if any resource is insufficient (indicates a programming error). If parent acquisition fails, rolls back local changes. |
 | `release` | `release(cost: ResourceCost): void` | Releases resources back. Clamps each resource to its limit (prevents over-release). Releases the same cost from the parent. Signals `waitObj` to wake waiters. |
+| `reset` | `reset(limits?: ResourceCost): void` | Restores available capacity to the current limits (full refill). If `limits` is provided, calls `setLimits(limits)` first, then sets available equal to the new limits. Signals `waitObj`. |
+| `increment` | `increment(amount: ResourceCost, cap?: ResourceCost): void` | Adds `amount` to available capacity without changing limits. Each resource is capped at `cap` (defaults to `limits`). Ignores keys not tracked by this source. Signals `waitObj`. Useful for token-bucket refill patterns. |
 | `setLimits` | `setLimits(newLimits: ResourceCost): void` | Adjusts capacity limits at runtime. Increasing a limit grows available capacity by the delta. Decreasing shrinks available (clamped to 0) — in-flight tasks are not revoked and release against the new ceiling. Supports partial updates (only specified keys change). Can add new resource keys. Signals `waitObj`. Throws on negative values. |
 | `validateCost` | `validateCost(cost: ResourceCost): boolean` | Checks if a cost is satisfiable in principle (no resource exceeds total capacity). Call at enqueue time to reject impossible tasks early. Checks the parent chain recursively. |
 
@@ -277,6 +280,74 @@ balancer.start();
 // Idle teams gradually shrink (down to 4 GPUs)
 // Busy teams gradually grow (up to 15 GPUs)
 // Call balancer.stop() when done
+```
+
+---
+
+## QuotaCapacitySource
+
+A `ResourceCapacitySource` subclass for quota and rate-limiting patterns where consumed
+capacity is **not restored** when tasks complete. Instead, capacity is replenished by
+a periodic timer or by external code calling `reset()` or `increment()`.
+
+The key difference: `release()` is a no-op. The `ScheduledTaskPoolRunner` still calls
+`release(cost)` on task completion, but in quota mode that does nothing — capacity only
+comes back on a timer tick or explicit replenishment call.
+
+**Constructor:**
+
+```typescript
+constructor(limits: ResourceCost, parent?: ResourceCapacitySource)
+```
+
+Inherits the same constructor as `ResourceCapacitySource`. All base class methods
+(`canAcquire`, `acquireImmediate`, `reset`, `increment`, `setLimits`, `validateCost`,
+`peek`) work identically except `release`.
+
+**Overridden Methods:**
+
+| Method | Behavior |
+|--------|----------|
+| `release(cost)` | No-op. Does not restore capacity. Does not signal `waitObj`. Does not propagate to parent. |
+
+**Timer Helper Methods:**
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `startPeriodicReset` | `startPeriodicReset(intervalMs: number): void` | Start a repeating timer that calls `reset()` every `intervalMs` milliseconds, fully restoring available capacity to limits. Stops any previously running timer. |
+| `startPeriodicIncrement` | `startPeriodicIncrement(intervalMs: number, amount: ResourceCost): void` | Start a repeating timer that calls `increment(amount)` every `intervalMs` milliseconds, adding capacity up to limits. Stops any previously running timer. |
+| `stopTimer` | `stopTimer(): void` | Stop the running periodic timer, if any. Idempotent. |
+
+**API Rate Limit Example:**
+
+```typescript
+// 100 requests per minute, full reset each minute
+const quota = new QuotaCapacitySource({ requests: 100 });
+quota.startPeriodicReset(60_000);
+
+// Wire to a runner — tasks consume quota, release is a no-op
+const runner = new ScheduledTaskPoolRunner('api', source, quota);
+for await (const e of runner.runTasks(false)) {
+    // When quota is exhausted, runner blocks until next timer reset
+}
+
+quota.stopTimer();
+```
+
+**Token Bucket Example:**
+
+```typescript
+// Max 100 tokens, refill 10 tokens every second
+const bucket = new QuotaCapacitySource({ tokens: 100 });
+bucket.startPeriodicIncrement(1000, { tokens: 10 });
+```
+
+**External Reset Example (daily quota):**
+
+```typescript
+const dailyQuota = new QuotaCapacitySource({ api_calls: 1000 });
+// External cron at midnight:
+dailyQuota.reset();
 ```
 
 ---
