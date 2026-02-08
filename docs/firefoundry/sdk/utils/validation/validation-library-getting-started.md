@@ -257,7 +257,7 @@ const order = await factory.create(Order, {
 });
 
 // The quantity inside the item is correctly coerced to a number
-console.log(typeof order.items.quantity); // 'number'
+console.log(typeof order.items[0].quantity); // 'number'
 ```
 
 ## The Repetition Problem & A "CSS-Style" Solution
@@ -271,7 +271,8 @@ class User {
 
   @CoerceTrim() @CoerceCase('lower') @ValidatePattern(/*...email regex...*/)
   alternateEmail: string;
-}```
+}
+```
 
 This is verbose and hard to maintain.
 
@@ -309,20 +310,20 @@ Here's where the library truly shines, handling the dynamic and unpredictable da
 **The Solution:** Pass runtime data into the validation process using the `context` object.
 
 ```typescript
-interface OrderContext {
+interface InventoryContext {
   availableProducts: string[];
 }
 
 class Order {
-  @CoerceFromSet<OrderContext>(
+  @CoerceFromSet<InventoryContext>(
     (ctx) => ctx.availableProducts, // Access context data
-    { strategy: 'fuzzy', fuzzyThreshold: 0.7 } // Use fuzzy matching!
+    { strategy: 'fuzzy', threshold: 0.7 } // Use fuzzy matching!
   )
   productName: string;
 }
 
 // At runtime...
-const context: OrderContext = {
+const context: InventoryContext = {
   availableProducts: ['Widget', 'Gadget', 'Doohickey']
 };
 
@@ -400,9 +401,13 @@ class SkuStyle {
   value: string;
 }
 
+const PRICE_LOOKUP: Record<string, number> = {
+  'WID-001': 19.99,
+  'GAD-002': 49.5,
+};
+
 interface OrderContext {
   validSkus: string[];
-  productPrices: Record<string, number>; // e.g., { 'WID-001': 19.99 }
 }
 
 class Order {
@@ -419,8 +424,9 @@ class Order {
   quantity: number;
 
   // This property is derived from another after it's been validated
-  @DerivedFrom<Order, OrderContext>('sku', (sku, obj, ctx) => {
-    return ctx.productPrices[sku] || 0;
+  @DerivedFrom('sku', (sku, ctx) => {
+    const fallback = typeof ctx.raw?.basePrice === 'number' ? ctx.raw.basePrice : 0;
+    return PRICE_LOOKUP[sku] ?? fallback;
   })
   basePrice: number;
 
@@ -451,7 +457,7 @@ class Order {
 
 // Your application code is now clean, declarative, and focused on business logic.
 const messyLLMData = { orderId: 'ORD-456', sku: ' wid-001 ', quantity: 'about eight' };
-const runtimeContext = { validSkus: ['WID-001', 'GAD-002'], productPrices: { 'WID-001': 19.99 }};
+const runtimeContext: OrderContext = { validSkus: ['WID-001', 'GAD-002'] };
 
 const order = await Order.fromLLMOutput(messyLLMData, runtimeContext);
 
@@ -463,6 +469,8 @@ console.log(`Free shipping eligibility: ${order.isEligibleForFreeShipping()}`);
 ```
 
 This final example is the goal. Your business logic is pure and simple because it operates on a guaranteed-valid `Order` instance. All the messy, complex work of cleaning, coercing, correcting, and validating the data is handled declaratively by the library.
+
+> `@DerivedFrom` callbacks receive both the resolved source value and a `{ raw, instance }` helper object, so you can peek at the original LLM response for fallbacks while still working with the clean, validated instance.
 
 ## Where to Go From Here
 

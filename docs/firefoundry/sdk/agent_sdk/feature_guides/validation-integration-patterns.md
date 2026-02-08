@@ -44,6 +44,9 @@ class OrderOutput {
   customer_name: string;
 }
 
+// Create factory once at module level - reuse across all validations
+const validationFactory = new ValidationFactory();
+
 // Bot that produces structured output
 class OrderBot extends ComposeMixins(MixinBot, StructuredOutputBotMixin) {
   constructor() {
@@ -65,9 +68,8 @@ class OrderProcessingEntity extends AddMixins(
     // Run bot
     const botResponse = yield* this.run_bot();
 
-    // Additional validation with the validation library
-    const factory = new ValidationFactory();
-    const validated = await factory.create(OrderOutput, botResponse);
+    // Additional validation with the shared factory
+    const validated = await validationFactory.create(OrderOutput, botResponse);
 
     return validated;
   }
@@ -98,13 +100,15 @@ class CustomerInput {
   phone: string;
 }
 
+// Create factory once at module level
+const validationFactory = new ValidationFactory();
+
 class CustomerEntity extends RunnableEntity<CustomerRETH> {
   protected async *run_impl() {
     const dto = await this.get_dto();
 
-    // Normalize input before processing
-    const factory = new ValidationFactory();
-    const cleanInput = await factory.create(CustomerInput, dto.data);
+    // Normalize input using the shared factory
+    const cleanInput = await validationFactory.create(CustomerInput, dto.data);
 
     // Now process with clean data
     const result = await processCustomer(cleanInput);
@@ -589,13 +593,15 @@ class ConditionalOutput {
   approval_notes: string | null;
 }
 
+// Create factory once at module level
+const validationFactory = new ValidationFactory();
+
 class WorkflowEntity extends RunnableEntity<WorkflowRETH> {
   protected async *run_impl() {
     const dto = await this.get_dto();
     const status = dto.data.is_approved ? 'final' : 'draft';
 
-    const factory = new ValidationFactory();
-    const validated = await factory.create(ConditionalOutput, {
+    const validated = await validationFactory.create(ConditionalOutput, {
       status,
       content: dto.data.content,
       approval_notes: dto.data.approval_notes
@@ -615,16 +621,17 @@ Validate multiple items efficiently:
 ```typescript
 import { ValidationFactory } from '@firebrandanalytics/shared-utils';
 
+// Create factory once at module level
+const validationFactory = new ValidationFactory();
+
 class BatchProcessingEntity extends RunnableEntity<BatchRETH> {
   protected async *run_impl() {
     const dto = await this.get_dto();
     const items = dto.data.items as any[];
 
-    const factory = new ValidationFactory();
-
-    // Validate all items in parallel
+    // Validate all items in parallel using the shared factory
     const validatedItems = await Promise.all(
-      items.map(item => factory.create(ItemOutput, item))
+      items.map(item => validationFactory.create(ItemOutput, item))
     );
 
     // Filter out any that failed validation
@@ -643,7 +650,54 @@ class BatchProcessingEntity extends RunnableEntity<BatchRETH> {
 
 ## Best Practices
 
-### 1. Use Zod for Structure, Validation Library for Transformation
+### 1. Create Factory Once, Reuse Everywhere
+
+The `ValidationFactory` is designed to be instantiated once and reused across all validation calls. Creating a new factory per request adds unnecessary overhead.
+
+```typescript
+// ✅ CORRECT: Create factory once at module level
+const validationFactory = new ValidationFactory({
+  aiHandler: myAIHandler,
+  aiValidationHandler: myValidationHandler
+});
+
+class MyEntity extends RunnableEntity {
+  protected async *run_impl() {
+    // Reuse the shared factory
+    const result = await validationFactory.create(MyClass, data);
+    return result;
+  }
+}
+
+// ❌ AVOID: Creating factory per request
+class BadEntity extends RunnableEntity {
+  protected async *run_impl() {
+    // Don't do this - unnecessary overhead
+    const factory = new ValidationFactory();
+    const result = await factory.create(MyClass, data);
+    return result;
+  }
+}
+```
+
+For applications with multiple validation configurations, create named factory instances:
+
+```typescript
+// Multiple factories for different use cases
+export const basicFactory = new ValidationFactory();
+
+export const aiFactory = new ValidationFactory({
+  aiHandler: brokerBasedHandler,
+  aiValidationHandler: brokerBasedValidator
+});
+
+export const strictFactory = new ValidationFactory({
+  throwOnError: true,
+  collectAllErrors: true
+});
+```
+
+### 2. Use Zod for Structure, Validation Library for Transformation
 
 ```typescript
 // Zod: Define structure and basic constraints
@@ -679,7 +733,7 @@ class MyEntity extends RunnableEntity {
 }
 ```
 
-### 2. Create Reusable Validation Classes
+### 3. Create Reusable Validation Classes
 
 ```typescript
 // Define once, reuse across entities
@@ -704,15 +758,16 @@ class Entity2 extends RunnableEntity {
 }
 ```
 
-### 3. Handle Validation Errors Gracefully
+### 4. Handle Validation Errors Gracefully
 
 ```typescript
+// Create factory once at module level
+const validationFactory = new ValidationFactory();
+
 class RobustEntity extends RunnableEntity {
   protected async *run_impl() {
-    const factory = new ValidationFactory();
-
     try {
-      const validated = await factory.create(MyOutput, rawData);
+      const validated = await validationFactory.create(MyOutput, rawData);
       return { status: 'success', data: validated };
     } catch (error) {
       if (error instanceof ValidationError) {

@@ -8,10 +8,12 @@ This document provides a complete API reference for the data validation library.
 
 - [ValidationFactory](#validationfactory)
 - [Coercion Decorators](#coercion-decorators)
+- [Collection Decorators](#collection-decorators)
 - [Validation Decorators](#validation-decorators)
 - [AI Decorators](#ai-decorators)
 - [Data Source Decorators](#data-source-decorators)
 - [Context Decorators](#context-decorators)
+- [Conditional Decorators](#conditional-decorators)
 - [Class-Level Decorators](#class-level-decorators)
 - [Text Normalization](#text-normalization)
 - [Matching Strategies](#matching-strategies)
@@ -143,36 +145,78 @@ class Product {
 }
 ```
 
+### @Set(value)
+
+Assigns a constant value to a property. Unlike `@Coerce`, which takes a function, `@Set` directly assigns the provided value. Particularly useful within conditional blocks.
+
+```typescript
+@Set(value: T)
+```
+
+**Example:**
+```typescript
+class Order {
+  status: string;
+
+  @If('status', 'pending')
+    @Set('Awaiting shipment')
+  @ElseIf('status', 'active')
+    @Set('In transit')
+  @Else()
+    @Set('N/A')
+  @EndIf()
+  message: string;
+}
+```
+
+**Note:** The value parameter can be any type, including functions themselves (not as callbacks). If you need to compute the value dynamically, use `@Coerce(() => computedValue)` instead.
+
 ### @CoerceType(targetType, options?)
 
-Converts values to the specified type.
+Converts values to the specified type, with nullish handling and extra primitives.
 
 ```typescript
 @CoerceType(
-  targetType: 'string' | 'number' | 'boolean' | 'date',
+  targetType: 'string' | 'number' | 'boolean' | 'date' | 'url' | 'bigint' | 'regexp',
   options?: CoerceTypeOptions
 )
 ```
 
+**Shared Options:**
+```typescript
+interface CoerceTypeOptions {
+  coerceNullish?: boolean; // Default: true (''/0/false for primitives; dates error)
+}
+```
+- Nullish defaults cascade: decorator → class `@CoerceTypeDefaults` → factory defaults.
+- With `@ValidateRequired` placed before `@CoerceType`, nullish fails fast; placed after, it observes the coerced value.
+
 **Boolean Options:**
 ```typescript
-interface BooleanCoercionOptions {
-  strict?: boolean;                    // Shorthand for strictness: 'strict'
-  strictness?: 'strict' | 'standard'; // Default: 'standard'
+interface BooleanCoercionOptions extends CoerceTypeOptions {
+  strict?: boolean;                     // Shorthand for strictness: 'strict'
+  strictness?: 'strict' | 'standard';   // Default: 'standard'
   customMap?: (value: any) => boolean | undefined;
 }
 ```
+- Standard: accepts true/false, 1/0, "true"/"false", "1"/"0", yes/no, y/n, on/off, t/f
+- Strict: accepts only true/false, 1/0, "true"/"false", "1"/"0"
 
-- **Standard mode** (default): Accepts true/false, 1/0, "true"/"false", "1"/"0", yes/no, y/n, on/off, t/f
-- **Strict mode**: Accepts only true/false, 1/0, "true"/"false", "1"/"0"
-
-**Date Options:**
+**Date/URL/RegExp Options:**
 ```typescript
-interface DateCoercionOptions {
+interface DateCoercionOptions extends CoerceTypeOptions {
   format?: 'loose' | 'iso' | 'iso-datetime' | 'iso-date' | 'timestamp' | RegExp;
   timezone?: 'utc' | 'local';    // For date-only strings
   parser?: (value: unknown) => Date;
   allowTimestamps?: boolean;     // Default: true for 'loose'
+}
+
+interface UrlCoercionOptions extends CoerceTypeOptions {
+  base?: string; // optional base for relative URLs
+}
+
+interface RegExpCoercionOptions extends CoerceTypeOptions {
+  flags?: string; // flags used when string -> regexp
 }
 ```
 
@@ -187,6 +231,68 @@ class Order {
 
   @CoerceType('date', { format: 'iso-date', timezone: 'utc' })
   orderDate: Date;
+
+  @CoerceType('url', { base: 'https://example.com' })
+  href: URL; // "/path" -> new URL("https://example.com/path")
+}
+```
+
+### @CoerceParse(formatOrFn, options?)
+
+Parses inbound strings into objects using the ParserRegistry. Built-in parsers: `'json'`, `'number'`, `'currency'`. Optional parsers (require registration): `'yaml'`, `'xml'`, `'html'`.
+
+```typescript
+@CoerceParse(
+  formatOrFn: string | ((value: string) => any),
+  options?: {
+    allowNonString?: boolean;
+    locale?: string;
+    currency?: string;         // for 'currency' parser (default: 'USD')
+    allowParentheses?: boolean;// treat "(123)" as -123 (default: true)
+  }
+)
+```
+- Defaults to only accepting strings; when `allowNonString` is true, already-parsed objects pass through.
+- For `number`/`currency`, locale-aware separators are handled; currency symbols and grouping are stripped.
+- For `yaml`/`xml`/`html`, use `registerYAMLParser()`, `registerXMLParser()`, or `registerHTMLParser()` first.
+
+```typescript
+import { registerYAMLParser } from '@firebrandanalytics/shared-utils/validation';
+
+// Register optional parsers once at startup
+registerYAMLParser();
+
+class Payload {
+  @CoerceParse('json')
+  body: unknown; // "{ \"a\": 1 }" -> { a: 1 }
+
+  @CoerceParse('yaml')
+  config: any; // Requires registration
+
+  @CoerceParse('number', { locale: 'de-DE' })
+  total: number; // "1.234,56" -> 1234.56
+
+  @CoerceParse('currency', { locale: 'en-US' })
+  amount: number; // "$1,234.56" -> 1234.56
+}
+```
+
+### @CoerceFormat(targetType, format)
+
+Coerces first, then renders to a formatted string.
+
+```typescript
+@CoerceFormat(
+  targetType: 'date' | 'number',
+  format: 'iso' | 'iso-date' | Intl.DateTimeFormatOptions | Intl.NumberFormatOptions
+)
+```
+- Dates honor embedded timezone but do not shift instants; use `timeZone` option to render in a specific zone.
+
+```typescript
+class LogLine {
+  @CoerceFormat('date', { timeZone: 'UTC' })
+  timestamp: string; // "2024-01-01T00:00:00-05:00" -> "1/1/2024, 5:00:00 AM"
 }
 ```
 
@@ -260,7 +366,7 @@ class Product {
 
 ### @CoerceFromSet(contextExtractor, options?)
 
-Matches value to nearest item from a context-provided set.
+Matches a value to the closest candidate from a context-provided set without losing the original type.
 
 ```typescript
 @CoerceFromSet<Context = any>(
@@ -269,30 +375,49 @@ Matches value to nearest item from a context-provided set.
 )
 
 interface CoercionFromSetOptions {
-  strategy?: MatchingStrategy;       // Default: 'fuzzy'
-  caseSensitive?: boolean;           // Default: false
-  fuzzyThreshold?: number;           // 0-1, default: 0.8
-  customMatcher?: (value: string, candidate: string) => number;
+  strategy?: MatchingStrategy | 'numeric';   // String strategies or numeric distance
+  caseSensitive?: boolean;                   // Default: false
+  fuzzyThreshold?: number;                   // For fuzzy, default 0.6
+  customMatcher?: (value: string, candidate: string) => number; // Custom string scorer
+  selector?: (item: any) => any;             // Project a property before comparison but return original
+  numericTolerance?: number;                 // Max allowed distance for numeric strategy
+  numericRounding?: number;                  // Optional rounding precision
+  customCompare?: (a: any, b: any) => number;// Custom distance for objects (lower is better)
+  ambiguityTolerance?: number;               // Accept near-ties within tolerance
+  synonyms?: Record<string, string[]>;       // Alternate labels mapping to a candidate (string strategies)
 }
 ```
+- Exact matches short-circuit; string strategies require string inputs.
+- Number strategy picks the closest value and errors on ambiguity; selector/customCompare enable object matching.
 
 **Example:**
 ```typescript
-interface OrderContext {
-  products: string[];
+interface InventoryContext {
+  products: { code: string; id: number }[];
 }
 
 class Order {
-  @CoerceFromSet<OrderContext>(
+  @CoerceFromSet<InventoryContext>(
     (ctx) => ctx.products,
-    { strategy: 'fuzzy', fuzzyThreshold: 0.7 }
+    { strategy: 'selector', selector: (p) => p.code }
   )
-  product: string; // "Widgit" -> "Widget"
+  product!: { code: string; id: number }; // "widgit" -> { code: "WIDGIT", id: 2 }
 }
+```
 
-const order = await factory.create(Order, data, {
-  context: { products: ['Widget', 'Gadget'] }
-});
+Use `synonyms` to accept aliases without losing your canonical values:
+
+```typescript
+class NotificationPrefs {
+  @CoerceFromSet(() => ['email', 'phone', 'sms'], {
+    strategy: 'fuzzy',
+    synonyms: {
+      sms: ['text', 'text message', 'txt'],
+      phone: ['call'],
+    },
+  })
+  channel!: 'email' | 'phone' | 'sms';
+}
 ```
 
 ### @CoerceArrayElements(elementCoercion)
@@ -308,6 +433,61 @@ Applies a coercion function to each element in an array.
 class TagList {
   @CoerceArrayElements((tag) => tag.toLowerCase().trim())
   tags: string[];
+}
+```
+
+---
+
+## Collection Decorators
+
+Decorators for transforming and manipulating arrays and collections.
+
+### @Join(separator)
+
+Joins an array of strings into a single string.
+
+```typescript
+@Join(separator: string)
+```
+
+**Example:**
+```typescript
+class Tags {
+  @Join(',')
+  @CoerceTrim()
+  tags: string[]; // ["a", "b", "c"] -> "a,b,c"
+}
+```
+
+### @Map(callback)
+
+Applies a callback function to each element in an array.
+
+```typescript
+@Map(callback: (value: any, index: number, array: any[]) => any)
+```
+
+**Example:**
+```typescript
+class Numbers {
+  @Map((n) => n * 2)
+  values: number[]; // [1, 2, 3] -> [2, 4, 6]
+}
+```
+
+### @Filter(callback)
+
+Filters elements in an array based on a predicate.
+
+```typescript
+@Filter(callback: (value: any, index: number, array: any[]) => boolean)
+```
+
+**Example:**
+```typescript
+class Numbers {
+  @Filter((n) => n > 10)
+  values: number[]; // [5, 15, 8, 20] -> [15, 20]
 }
 ```
 
@@ -530,6 +710,40 @@ class Review {
 }
 ```
 
+### AI Presets
+
+Thin wrappers over `@AITransform` to build stable prompts for common jobs. They respect the same handler and retry behavior.
+
+```typescript
+@AITranslate(language: string)
+@AIRewrite(style?: string)
+@AISummarize(length?: 'short' | 'medium' | 'long')
+@AIClassify(labels: string[], coerceOptions?: CoercionFromSetOptions) // auto @CoerceFromSet
+@AIExtract(fields: string[] | object)
+@AISpellCheck()
+@AIJSONRepair()
+```
+
+```typescript
+class Copy {
+  @AITranslate('japanese') title!: string;
+  @AISummarize('short') blurb!: string;
+  @AIClassify(['news', 'opinion', 'sports'], { strategy: 'fuzzy' }) section!: string;
+}
+```
+
+### @Catch(handler) and @AICatchRepair(prompt?, options?)
+
+Attach to a property to intercept coercion/validation errors and repair the value (or rethrow).
+
+```typescript
+@Catch((err, value, ctx) => recover(value) ?? err)
+@AICatchRepair(prompt?: PromptDefinition, options?: AITransformOptions)
+```
+- Runs once when a `ValidationError`/coercion error occurs on the property.
+- Return a repaired value to continue, or throw to surface the failure.
+- `@AICatchRepair` builds a repair prompt and delegates to `AITransform`; it replays subsequent decorators.
+
 ### AIHandlerParams
 
 Parameters passed to AI handler functions.
@@ -571,6 +785,20 @@ class User {
 }
 ```
 
+> Tip: Use `@ManageAll` on the class when you want every field managed without sprinkling `@Copy` everywhere.
+
+### @Staging()
+
+Marks a property as temporary: it participates in sourcing/coercion/validation but is removed from the final instance after validation. Useful for intermediate values (parsed payloads, helper flags).
+
+```typescript
+class Payload {
+  @Copy() @Staging() raw!: string;                     // used during validation only
+  @DerivedFrom('raw', (v) => v.trim()) body!: string;  // survives
+}
+// Result will have `body`, not `raw`
+```
+
 ### @DerivedFrom(source, deriveFn?, options?)
 
 Derives property value from one or more source properties. Supports JSONPath expressions.
@@ -607,13 +835,21 @@ class Order {
 
 **Custom Derivation Function:**
 ```typescript
+const PRICE_LOOKUP: Record<string, number> = {
+  'WID-001': 19.99,
+  'GAD-002': 49.5,
+};
+
 class Order {
   @DerivedFrom('sku', (sku, ctx) => {
-    return ctx.context.productPrices[sku] || 0;
+    const fallback = typeof ctx.raw?.basePrice === 'number' ? ctx.raw.basePrice : 0;
+    return PRICE_LOOKUP[sku] ?? fallback;
   })
   basePrice: number;
 }
 ```
+
+> `deriveFn` receives the resolved source value and a `{ raw, instance }` object. Use `ctx.raw` to inspect the original input or `ctx.instance` to look at already-processed properties.
 
 ### @RenameFrom(sourceKey, options?)
 
@@ -721,17 +957,17 @@ class Profile {
 
 ## Context Decorators
 
-Decorators that change the context in which subsequent decorators operate.
+Decorators that change the context in which subsequent decorators operate. Contexts can be applied to properties **or to a class**; class-level usage canonicalizes the raw input before any property-level sourcing/validation (base-class canonicalization happens before discriminated-union resolution).
 
 ### @Keys()
 
-Applies subsequent decorators to object keys.
+Applies subsequent decorators to object keys. Supported as property or class decorator.
 
 ```typescript
 @Keys()
 ```
 
-**Example:**
+**Example (property):**
 ```typescript
 class HttpRequest {
   @Keys()
@@ -742,9 +978,20 @@ class HttpRequest {
 }
 ```
 
+**Example (class):**
+```typescript
+@Keys()
+@CoerceCase('lower')
+class Animal {
+  @Copy()
+  name!: string;
+}
+// Handles { "NAME": "Fido" } before property decorators run.
+```
+
 ### @Values()
 
-Applies subsequent decorators to object values or array elements.
+Applies subsequent decorators to object values or array elements. Supported as property or class decorator.
 
 ```typescript
 @Values()
@@ -760,6 +1007,34 @@ class TagContainer {
   // ["  TAG-ONE  ", "TAG-TWO"] -> ["tag-one", "tag-two"]
 }
 ```
+
+### @RecursiveKeys()
+
+Recursively applies subsequent decorators to keys of the current object/map and all descendants (objects and arrays). Available on properties or classes. Use for whole-graph canonicalization; for nested opt-in, prefer `@Values()` + `@UseStyle`.
+
+```typescript
+@RecursiveKeys()
+@CoerceCase('lower')
+class Config {
+  @Copy()
+  settings!: Record<string, unknown>;
+}
+```
+
+### @RecursiveValues()
+
+Recursively applies subsequent decorators to values (objects, arrays, primitives) from the current node downward. Works on properties or classes. Useful for “lowercase everything” normalization.
+
+```typescript
+@RecursiveValues()
+@CoerceCase('lower')
+class Payload {
+  @Copy()
+  data!: unknown;
+}
+```
+
+> Note: Context pipelines disallow decorators that don’t make sense on keys/values (e.g., `@DerivedFrom`, `@CollectProperties`, `@Merge`, `@Copy` in key/value context; `@DependsOn` is ignored for error-free contexts). Coercions, validations, and string/array transforms are fair game.
 
 ### @Split(separator, options?)
 
@@ -825,6 +1100,193 @@ class CsvRow {
 
 ---
 
+## Conditional Decorators
+
+Decorators that apply rules conditionally based on runtime values. Conditional blocks consist of `@If`, optional `@ElseIf` and `@Else` branches, and `@EndIf` markers.
+
+### @If(condition)
+
+Starts a conditional block. Decorators between `@If` and the next branch marker (`@ElseIf`, `@Else`, or `@EndIf`) are applied only if the condition is true.
+
+**Overloads:**
+
+```typescript
+// Check current value equality
+@If(expectedValue: any)
+
+// Check current value with predicate
+@If(predicate: (value: any, ctx?: ConditionalContext) => boolean)
+
+// Check referenced property/JSONPath equality
+@If(topic: string, expectedValue: any)
+
+// Check referenced property/JSONPath with predicate
+@If(topic: string, predicate: (value: any, ctx?: ConditionalContext) => boolean)
+
+// Check multiple properties with predicate
+@If(topics: string[], predicate: (values: any[], ctx?: ConditionalContext) => boolean)
+```
+
+**Parameters:**
+- `expectedValue` - Value to compare against (strict equality; if `expectedValue` is an array and the checked value is scalar, it is treated as an in-list check)
+- `predicate` - Function returning boolean
+- `topic` - Property name or JSONPath expression
+- `topics` - Array of property names/JSONPath expressions
+- `ctx` - Optional context object with `raw`, `instance`, and user context
+
+**Topic Resolution:**
+- **No topic**: Checks current property's value in progress
+- **Property name** (e.g., `'status'`): Creates intra-cycle dependency, gets completed value
+- **Self-reference** (topic === property name): Gets value in progress
+- **JSONPath** (starts with `'$'`): References original input, no intra-cycle dependency
+
+**Examples:**
+```typescript
+// Equality check on current value
+@If('active')
+@CoerceType('number')
+@EndIf()
+status: string | number;
+
+// Lambda on current value
+@If((val: string) => val.length > 100)
+@AITransform('Summarize')
+@EndIf()
+text: string;
+
+// Check another property
+@If('type', (t) => t === 'premium')
+@Validate(isPremiumValidator)
+@EndIf()
+features: string[];
+
+// JSONPath to input
+@If('$.metadata.version', (v: number) => v >= 2)
+@Set('V2_FORMAT')
+@EndIf()
+format: string;
+
+// Multiple properties
+@If(['price', 'quantity'], ([p, q]: any[]) => p * q > 1000)
+@Validate(() => 'Requires approval')
+@EndIf()
+orderValue: number;
+```
+
+### @ElseIf(condition)
+
+Adds an alternative conditional branch. Evaluated if previous `@If` or `@ElseIf` conditions were false. Accepts the same overloads as `@If`.
+
+**Important:** `@ElseIf` cannot change the topic being checked - this maintains static dependency graphs.
+
+**Example:**
+```typescript
+const STATUSES = ['draft', 'pending', 'active'] as const;
+type Status = typeof STATUSES[number];
+
+class Order {
+  @CoerceFromSet(STATUSES)
+  status: Status;
+
+  @If('status', 'active')
+    @CoerceType('date')
+  @ElseIf('status', 'pending')
+    @Set('TBD')
+  @Else()
+    @Set('N/A')
+  @EndIf()
+  shippingDate: Date | string;
+}
+```
+
+### @Else()
+
+Provides a default branch when all previous conditions are false. No parameters.
+
+**Example:**
+```typescript
+@If((val: number) => val > 100)
+  @Validate(isHighValue)
+@Else()
+  @Validate(isStandardValue)
+@EndIf()
+amount: number;
+```
+
+### @EndIf()
+
+Marks the end of a conditional block. Must appear after the property, closest to it in the decorator stack.
+
+**Example:**
+```typescript
+@If('status', (s) => s === 'active')
+  @Validate(isRequired)
+@EndIf()
+@Copy()
+value: string;
+```
+
+### Conditional Block Constraints
+
+1. **No nested conditionals**: You cannot have an `@If` block inside another `@If` block
+2. **Single `@Else`**: Only one `@Else` allowed per block, must be last
+3. **Static dependencies**: `@ElseIf` cannot reference different properties than `@If`
+4. **Sequential evaluation**: Branches are checked in order; first match wins
+
+### Practical Patterns
+
+**Status-based processing:**
+```typescript
+const ORDER_STATUSES = ['draft', 'active', 'shipped'] as const;
+type OrderStatus = typeof ORDER_STATUSES[number];
+
+class Order {
+  @CoerceFromSet(ORDER_STATUSES)
+  status: OrderStatus;
+
+  @If('status', 'shipped')
+    @CoerceType('date')
+    @Validate((d) => d <= new Date(), 'Cannot be future date')
+  @ElseIf('status', 'active')
+    @Set('Pending shipment')
+  @EndIf()
+  shippedDate?: Date | string;
+}
+```
+
+**Self-checking transformations:**
+```typescript
+class Document {
+  @CoerceTrim()
+  @If((val: string) => val.length > 1000)
+    @AITransform('Provide a brief summary')
+  @EndIf()
+  content: string;
+}
+```
+
+**Format-based coercion:**
+```typescript
+const FORMATS = ['iso', 'unix', 'custom'] as const;
+type DateFormat = typeof FORMATS[number];
+
+class Event {
+  @CoerceFromSet(FORMATS)
+  format: DateFormat;
+
+  @If('format', 'iso')
+    @CoerceType('date')
+  @ElseIf('format', 'unix')
+    @Coerce((v: number) => new Date(v * 1000))
+  @Else()
+    @Coerce((v: string) => parseCustomDate(v))
+  @EndIf()
+  eventDate: Date;
+}
+```
+
+---
+
 ## Class-Level Decorators
 
 Decorators applied to classes or used for nested validation.
@@ -868,6 +1330,37 @@ class OrderItem {
 class Order {
   @ValidatedClassArray(OrderItem)
   items: OrderItem[];
+}
+```
+
+### @ManageAll(options?)
+
+Marks properties as "managed" so defaults/styles apply without adding `@Copy` on every field.
+
+```typescript
+@ManageAll(options?: { include?: string[]; exclude?: string[] })
+```
+
+- By default, all public fields are managed; `include`/`exclude` lets you scope it.
+- Managed fields still honor any property-level decorators you add.
+
+```typescript
+@ManageAll({ include: ['name', 'code'] })
+class Country {
+  name!: string;      // Managed without @Copy
+  code!: string;
+  note?: string;      // Not managed
+}
+```
+
+### @CoerceTypeDefaults(options)
+
+Sets class-level defaults for `@CoerceType`, cascading below factory defaults and above per-property options.
+
+```typescript
+@CoerceTypeDefaults({ coerceNullish: false })
+class Payload {
+  @CoerceType('string') name!: string; // null stays null unless overridden
 }
 ```
 
@@ -980,24 +1473,28 @@ class Subscription {
 }
 ```
 
-### @DependsOn(propertyKeys, options?)
+### @DependsOn(...propertyKeys)
 
-Declares property dependencies for dynamic prompts and execution ordering.
+Declares manual dependencies for a property. Most decorators (e.g., `@DerivedFrom`, `@Merge`, conditionals) automatically record their dependencies. Use `@DependsOn` only when your logic references other properties indirectly (like inside an AI prompt or custom lambda) and the engine cannot infer the relationship.
 
 ```typescript
-@DependsOn(propertyKeys: string[], options?: CommonDecoratorOptions)
+@DependsOn(...propertyKeys: string[])
 ```
 
 **Example:**
 ```typescript
-class Order {
-  @Copy() sku: string;
+class InvoiceSummary {
+  @Copy() currency: string;
 
-  @DependsOn(['sku'])
-  @DerivedFrom('sku', (sku, ctx) => ctx.context.prices[sku])
-  price: number;
+  @DependsOn('currency')
+  @AITransform((params, ctx) =>
+    `Summarize this invoice total (${params.value}) using ${ctx.instance.currency}.`
+  )
+  amountSummary: string;
 }
 ```
+
+The `@AITransform` callback reads `currency` from the instance at runtime, so we manually declare the dependency to ensure this transform reruns whenever `currency` changes. When using decorators that already list their sources (like `@DerivedFrom('sku', ...)`), `@DependsOn` is unnecessary.
 
 ### @UseSinglePassValidation()
 
@@ -1020,11 +1517,58 @@ Uses convergent validation engine (default).
 Applies validation styles to map keys/values.
 
 ```typescript
-@ValidateClass(rules: Array<{
+@ValidatedClass(rules: Array<{
   on: 'key' | 'value';
   ofType: any;
   style: new () => any;
 }>)
+```
+
+### @DiscriminatedUnion(options)
+
+Defines a discriminated union for polymorphic class creation.
+
+```typescript
+@DiscriminatedUnion(options: DiscriminatedUnionOptions)
+
+interface DiscriminatedUnionOptions {
+  discriminator: string;
+  map: Record<string, new () => any>;
+}
+```
+
+**Example:**
+```typescript
+@DiscriminatedUnion({
+  discriminator: 'type',
+  map: {
+    'dog': Dog,
+    'cat': Cat
+  }
+})
+class Animal {
+  @Copy() type: string;
+  @Copy() name: string;
+}
+```
+
+### @Discriminator(value)
+
+Marks a property as the discriminator for a class. Used when passing an array of classes to `ValidationFactory.create`.
+
+```typescript
+@Discriminator(value: string)
+```
+
+**Example:**
+```typescript
+class Cat {
+  @Discriminator('cat')
+  type: string;
+}
+
+// Usage:
+await factory.create([Cat, Dog], data);
 ```
 
 ### @Examples(examples, description?)
@@ -1129,6 +1673,24 @@ Strategies for matching values in `@CoerceFromSet`.
 | `'endsWith'` | Candidate ends with input |
 | `'regex'` | Input treated as regex pattern |
 | `'custom'` | Custom matcher function |
+
+### Property Matching via `@MatchingStrategy`
+
+Attach `@MatchingStrategy` to a property (or place it inside a class-level `@Keys`/`@RecursiveKeys` context) to control how raw input keys are matched without mutating the payload. It applies to simple root lookups in `@Copy`, `@DerivedFrom('name')`, simple JSONPath leaf access like `$.name`, and discriminator detection. Deeper JSONPath paths remain exact for now. Fuzzy matching defaults to a `0.8` threshold unless overridden, and ambiguous matches throw.
+
+```typescript
+@Keys()
+@MatchingStrategy('insensitive')      // case-insensitive key matching for the class
+class Animal {
+  @Copy()
+  type!: string;
+
+  @MatchingStrategy({ strategy: 'fuzzy', threshold: 0.5 }) // per-property override
+  @Copy()
+  name!: string;
+}
+// Matches { "TYPE": "dog", "nmae": "Fido" } without rewriting the input object.
+```
 
 ### Matching Functions
 
@@ -1319,10 +1881,14 @@ class SkuStyle {
   value: string;
 }
 
-// Define context type
+// Define price source and context type
+const PRICE_LOOKUP: Record<string, number> = {
+  'WID-001': 19.99,
+  'GAD-002': 29.99,
+};
+
 interface OrderContext {
   validSkus: string[];
-  productPrices: Record<string, number>;
 }
 
 // Main class with validation
@@ -1343,7 +1909,7 @@ class Order {
   @UseStyle(SkuStyle)
   @CoerceFromSet<OrderContext>(
     (ctx) => ctx.validSkus,
-    { strategy: 'fuzzy', fuzzyThreshold: 0.7 }
+    { strategy: 'fuzzy', threshold: 0.7 }
   )
   sku: string;
 
@@ -1354,8 +1920,9 @@ class Order {
   @ValidateRange(1, 100)
   quantity: number;
 
-  @DerivedFrom<Order, OrderContext>('sku', (sku, ctx) => {
-    return ctx.context.productPrices[sku] || 0;
+  @DerivedFrom('sku', (sku, ctx) => {
+    const fallback = typeof ctx.raw?.basePrice === 'number' ? ctx.raw.basePrice : 0;
+    return PRICE_LOOKUP[sku] ?? fallback;
   })
   basePrice: number;
 
@@ -1378,8 +1945,7 @@ const factory = new ValidationFactory({
 });
 
 const context: OrderContext = {
-  validSkus: ['WID-001', 'GAD-002'],
-  productPrices: { 'WID-001': 19.99, 'GAD-002': 29.99 }
+  validSkus: ['WID-001', 'GAD-002']
 };
 
 try {
@@ -1415,7 +1981,10 @@ import {
   CoerceCase,
   CoerceRound,
   CoerceFromSet,
-  CoerceArrayElements
+  CoerceArrayElements,
+  Join,
+  Map,
+  Filter
 } from '@firebrandanalytics/shared-utils/validation';
 
 // Validation decorators
@@ -1464,7 +2033,8 @@ import {
   Examples,
   UseSinglePassValidation,
   UseConvergentValidation,
-  ValidateClass
+  ValidateClass,
+  DiscriminatedUnion
 } from '@firebrandanalytics/shared-utils/validation';
 
 // Text normalization
