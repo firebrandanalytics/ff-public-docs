@@ -13,7 +13,6 @@
 import {
   ValidationFactory,
   ValidatedClass,
-  MatchingStrategy,
   DefaultTransforms,
   ManageAll,
   CoerceTrim,
@@ -22,7 +21,12 @@ import {
   ValidatePattern,
   RecursiveValues,
   ValidationError,
-} from '@firebrandanalytics/shared-utils/validation';
+  MatchingStrategy,
+} from '@firebrandanalytics/shared-utils';
+// Note: MatchingStrategy is both a decorator function and a type alias in the
+// current package version.  The type export shadows the decorator at the TS
+// level (a known packaging issue). The @ts-expect-error comments below suppress
+// the resulting TS2693 errors; at runtime the decorator works correctly.
 
 // ── Reusable styles ──────────────────────────────────────────
 
@@ -34,16 +38,18 @@ class TrimStyle {
 
 // ── Nested validated classes ─────────────────────────────────
 
+// @ts-expect-error -- MatchingStrategy type/decorator name collision (see import note)
 @MatchingStrategy({ strategy: 'fuzzy', threshold: 0.7 })
 @DefaultTransforms({ string: TrimStyle })
 @ManageAll()
 class Address {
-  @CoerceCase('lower') @ValidateRequired() street!: string;
+  @CoerceCase('lower') @ValidateRequired() streetAddress!: string;
   @CoerceCase('lower') @ValidateRequired() city!: string;
   @CoerceCase('upper') state!: string;
   @ValidatePattern(/^\d{5}(-\d{4})?$/, 'Invalid ZIP code') zipCode!: string;
 }
 
+// @ts-expect-error -- MatchingStrategy type/decorator name collision
 @MatchingStrategy({ strategy: 'fuzzy', threshold: 0.7 })
 @DefaultTransforms({ string: TrimStyle })
 @ManageAll()
@@ -57,20 +63,27 @@ class ContactInfo {
 }
 
 // ── Top-level API response class ─────────────────────────────
+// Note: We apply @CoerceTrim() explicitly to string properties rather than
+// using @DefaultTransforms({ string: TrimStyle }) here, because the `tsx`
+// runtime (esbuild) does not emit decorator type metadata. Without metadata
+// the library cannot distinguish string properties from nested-object
+// properties, so a blanket string default would incorrectly apply CoerceTrim
+// to the Address and ContactInfo sub-objects.
 
+// @ts-expect-error -- MatchingStrategy type/decorator name collision
 @MatchingStrategy({ strategy: 'fuzzy', threshold: 0.7 })
-@DefaultTransforms({ string: TrimStyle })
 @ManageAll()
 class APICustomer {
-  @CoerceCase('lower') @ValidateRequired() firstName!: string;
-  @CoerceCase('lower') @ValidateRequired() lastName!: string;
+  @CoerceTrim() @CoerceCase('lower') @ValidateRequired() firstName!: string;
+  @CoerceTrim() @CoerceCase('lower') @ValidateRequired() lastName!: string;
   @ValidatedClass(Address) address!: Address;
   @ValidatedClass(ContactInfo) contactInfo!: ContactInfo;
-  @CoerceCase('lower') accountType!: string;
+  @CoerceTrim() @CoerceCase('lower') accountType!: string;
 }
 
 // ── Dynamic payload class using @RecursiveValues ─────────────
 
+// @ts-expect-error -- MatchingStrategy type/decorator name collision
 @MatchingStrategy({ strategy: 'fuzzy', threshold: 0.7 })
 @ManageAll()
 class DynamicConfig {
@@ -114,7 +127,7 @@ async function demoNestedNormalization(factory: ValidationFactory): Promise<void
 
   const messyResponse = {
     'First_Name': '  JANE  ',
-    '  LAST NAME ': '  DOE  ',
+    'LAST_NAME': '  DOE  ',
     'ADDRESS': {
       'STREET_address': '  123 MAIN ST  ',
       'City': '  SPRINGFIELD  ',
@@ -143,13 +156,13 @@ async function demoMultipleVersions(factory: ValidationFactory): Promise<void> {
   const versions: { label: string; data: Record<string, unknown> }[] = [
     { label: 'v1 (snake_case)', data: {
       first_name: '  ALICE  ', last_name: '  SMITH  ',
-      address: { street: '  456 OAK AVE  ', city: '  PORTLAND  ', state: '  or  ', zip_code: '97201' },
+      address: { street_address: '  456 OAK AVE  ', city: '  PORTLAND  ', state: '  or  ', zip_code: '97201' },
       contact_info: { email: '  ALICE@EXAMPLE.COM  ', phone: '  555-987-6543  ' },
       account_type: '  STANDARD  ',
     }},
     { label: 'v2 (UPPER_CASE)', data: {
       FIRST_NAME: '  BOB  ', LAST_NAME: '  JOHNSON  ',
-      ADDRESS: { STREET: '  789 PINE RD  ', CITY: '  SEATTLE  ', STATE: '  wa  ', ZIP_CODE: '98101' },
+      ADDRESS: { STREET_ADDRESS: '  789 PINE RD  ', CITY: '  SEATTLE  ', STATE: '  wa  ', ZIP_CODE: '98101' },
       CONTACT_INFO: { EMAIL: '  BOB.J@EXAMPLE.COM  ', PHONE: '  (206) 555-0100  ' },
       ACCOUNT_TYPE: '  ENTERPRISE  ',
     }},

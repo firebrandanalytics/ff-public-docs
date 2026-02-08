@@ -19,13 +19,12 @@ import {
   DerivedFrom,
   AISpellCheck,
   AISummarize,
-  AIClassify,
   AITranslate,
   AITransform,
-  If, Else, EndIf,
+  Validate,
   ValidateLength,
   AIHandlerParams,
-} from '@firebrandanalytics/shared-utils/validation';
+} from '@firebrandanalytics/shared-utils';
 
 // ============================================================
 // Category label set
@@ -114,13 +113,13 @@ function createMockAIHandler() {
       );
     }
 
-    // --- @AIClassify: simulate a bad first attempt, then correct ---
+    // --- AI classification: return the best matching label ---
     if (key === 'category') {
       if (attempt === 1) {
-        // Intentionally return an off-label value to demonstrate retry
+        // First attempt: return a slightly off label to demonstrate retry
         return 'Tech & Science';
       }
-      // Second attempt: return exact label
+      // Retry: return an exact label match
       return 'Technology';
     }
 
@@ -170,8 +169,19 @@ class ArticleProcessing {
   summaryMedium!: string;
 
   // Stage 3: classification into fixed label set
-  @AIClassify(CATEGORIES)
-  @DerivedFrom('cleanedContent')
+  // Use @AITransform to classify the cleaned text into a category label.
+  // The prompt reads from params.instance.cleanedContent rather than using
+  // @DerivedFrom, since the engine retries must not re-source the value.
+  @AITransform(
+    (params: AIHandlerParams) =>
+      `Classify the following text into one of: ${CATEGORIES.join(', ')}. ` +
+      `Return only the best label.\n\nInput:\n${(params.instance as any).cleanedContent ?? params.value}`,
+    { description: `AI classify (${CATEGORIES.join(', ')})`, dependsOn: ['cleanedContent'] }
+  )
+  @Validate(
+    (v: string) => CATEGORIES.includes(v) || `Must be one of: ${CATEGORIES.join(', ')}`,
+    'Label validation'
+  )
   category!: string;
 
   // Stage 4: translations of the short summary
@@ -196,17 +206,22 @@ class SmartArticleProcessing {
   @DerivedFrom('rawContent')
   cleanedContent!: string;
 
-  // Only summarize if content is long enough to warrant it
-  @If('cleanedContent', (text: string) => text.length > 300)
-    @AISummarize('short')
-    @DerivedFrom('cleanedContent')
-  @Else()
-    @DerivedFrom('cleanedContent') // pass through cleaned text as-is
-  @EndIf()
+  // Summarize the cleaned content (same as full pipeline for simplicity)
+  @AISummarize('short')
+  @DerivedFrom('cleanedContent')
+  @ValidateLength(10, 200)
   summaryShort!: string;
 
-  @AIClassify(CATEGORIES)
-  @DerivedFrom('cleanedContent')
+  @AITransform(
+    (params: AIHandlerParams) =>
+      `Classify the following text into one of: ${CATEGORIES.join(', ')}. ` +
+      `Return only the best label.\n\nInput:\n${(params.instance as any).cleanedContent ?? params.value}`,
+    { description: `AI classify (${CATEGORIES.join(', ')})`, dependsOn: ['cleanedContent'] }
+  )
+  @Validate(
+    (v: string) => CATEGORIES.includes(v) || `Must be one of: ${CATEGORIES.join(', ')}`,
+    'Label validation'
+  )
   category!: string;
 
   @AITranslate('Spanish')
@@ -273,7 +288,7 @@ async function demoFullPipeline(factory: ValidationFactory): Promise<void> {
 
 async function demoCostAware(factory: ValidationFactory): Promise<void> {
   console.log('\n========================================');
-  console.log(' Demo 2: Cost-Aware Pipeline (short input)');
+  console.log(' Demo 2: Simplified Pipeline (short input)');
   console.log('========================================');
 
   console.log('\n--- Raw input (short) ---');
@@ -286,9 +301,9 @@ async function demoCostAware(factory: ValidationFactory): Promise<void> {
 
   printResult('Pipeline result', result as unknown as Record<string, unknown>);
   console.log(
-    '\n  Note: @AISummarize was SKIPPED because cleanedContent.length <= 300.'
+    '\n  Note: SmartArticleProcessing runs spell-check, summarize, classify,'
   );
-  console.log('  The cleaned text was used directly as summaryShort.');
+  console.log('  and translate -- same as full pipeline but fewer output fields.');
 }
 
 // ============================================================
@@ -297,7 +312,7 @@ async function demoCostAware(factory: ValidationFactory): Promise<void> {
 
 async function demoCostAwareLong(factory: ValidationFactory): Promise<void> {
   console.log('\n========================================');
-  console.log(' Demo 3: Cost-Aware Pipeline (long input)');
+  console.log(' Demo 3: Simplified Pipeline (long input)');
   console.log('========================================');
 
   console.log('\n--- Raw input (long) ---');
@@ -310,7 +325,7 @@ async function demoCostAwareLong(factory: ValidationFactory): Promise<void> {
 
   printResult('Pipeline result', result as unknown as Record<string, unknown>);
   console.log(
-    '\n  Note: @AISummarize WAS executed because cleanedContent.length > 300.'
+    '\n  Note: Same pipeline as Demo 2 but with longer input text.'
   );
 }
 
@@ -320,23 +335,23 @@ async function demoCostAwareLong(factory: ValidationFactory): Promise<void> {
 
 async function demoRetryBehavior(factory: ValidationFactory): Promise<void> {
   console.log('\n========================================');
-  console.log(' Demo 4: Retry Behavior (@AIClassify)');
+  console.log(' Demo 4: Retry Behavior (@AITransform + @Validate)');
   console.log('========================================');
 
   console.log(
     '\n  The mock handler deliberately returns "Tech & Science" on the'
   );
   console.log(
-    '  first classify attempt. The library detects this does not match'
+    '  first classify attempt. The @Validate decorator detects this does'
   );
   console.log(
-    '  any label in the set, retries with error context, and the second'
+    '  not match any label in the set. The engine retries the AI transform,'
   );
-  console.log('  attempt returns "Technology" (an exact match).');
+  console.log('  and the second attempt returns "Technology" (an exact match).');
   console.log(
-    '\n  Watch the AI call log above -- you will see two calls for'
+    '\n  Watch the AI call log above -- you will see retry calls for'
   );
-  console.log('  the "category" property: attempt 1/3 and attempt 2/3.');
+  console.log('  the "category" property demonstrating automatic retry.');
 }
 
 // ============================================================

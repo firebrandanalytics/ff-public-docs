@@ -22,7 +22,7 @@ import {
   ValidateRange,
   Validate,
   ValidationError,
-} from '@firebrandanalytics/shared-utils/validation';
+} from '@firebrandanalytics/shared-utils';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -68,8 +68,8 @@ class OrderForm {
   // ── Derived fields ──────────────────────────────────────
 
   @DerivedFrom(
-    ['quantity', 'unitPrice'],
-    ([qty, price]: [number, number]) => qty * price
+    'quantity',
+    (qty: number, { instance }: { instance: any }) => qty * (instance.unitPrice ?? 0)
   )
   @CoerceRound({ precision: 2 })
   subtotal!: number;
@@ -85,8 +85,9 @@ class OrderForm {
   shipping!: number;
 
   @DerivedFrom(
-    ['subtotal', 'tax', 'shipping'],
-    ([sub, tax, ship]: [number, number, number]) => sub + tax + ship
+    'subtotal',
+    (sub: number, { instance }: { instance: any }) =>
+      sub + (instance.tax ?? 0) + (instance.shipping ?? 0)
   )
   @CoerceRound({ precision: 2 })
   total!: number;

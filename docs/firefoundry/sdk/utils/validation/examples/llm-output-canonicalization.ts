@@ -14,17 +14,17 @@ import {
   CoerceTrim,
   CoerceType,
   CoerceCase,
+  Coerce,
   ValidateRange,
   ValidatePattern,
   ValidateLength,
-  NormalizeText,
   UseStyle,
   DefaultTransforms,
   ManageAll,
   Examples,
   DerivedFrom,
   ValidationError,
-} from '@firebrandanalytics/shared-utils/validation';
+} from '@firebrandanalytics/shared-utils';
 
 // ============================================================
 // Reusable styles
@@ -65,7 +65,13 @@ class LLMOrder {
   @ValidateRequired()
   order_date!: Date;
 
-  @NormalizeText('phone')
+  // Strip non-digit characters to normalize phone numbers from LLM output
+  @CoerceTrim()
+  @Coerce((v: string) => {
+    const digits = v.replace(/\D/g, '');
+    // Strip leading US country code '1' if present (11 digits -> 10)
+    return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+  })
   @ValidatePattern(/^\d{10}$/, 'Phone must be 10 digits')
   phone!: string;
 
@@ -90,7 +96,12 @@ class LLMContactCard {
   @ValidatePattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Invalid email')
   email!: string;
 
-  @NormalizeText('phone') @ValidatePattern(/^\d{10}$/)
+  @Coerce((v: string) => {
+    const digits = v.replace(/\D/g, '');
+    // Strip leading US country code '1' if present (11 digits -> 10)
+    return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+  })
+  @ValidatePattern(/^\d{10}$/)
   phone!: string;
 
   @CoerceCase('lower')
@@ -116,8 +127,8 @@ class LLMProductListing {
   @DerivedFrom('sku', (sku: string) => PRICE_TABLE[sku] ?? 0)
   unit_price!: number;
 
-  @DerivedFrom(['quantity', 'unit_price'], ([q, p]: [number, number]) =>
-    Math.round(q * p * 100) / 100)
+  @DerivedFrom('quantity', (q: number, { instance }: { instance: any }) =>
+    Math.round(q * (instance.unit_price ?? 0) * 100) / 100)
   line_total!: number;
 }
 

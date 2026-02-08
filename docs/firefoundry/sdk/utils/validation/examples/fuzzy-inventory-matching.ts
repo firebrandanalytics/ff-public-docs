@@ -17,7 +17,7 @@ import {
     CoerceType,
     ValidateRequired,
     ValidateRange,
-} from '@firebrandanalytics/shared-utils/validation';
+} from '@firebrandanalytics/shared-utils';
 
 // ── Context interfaces ──────────────────────────────────────────────────────
 
@@ -148,11 +148,11 @@ async function demoFuzzyProducts(): Promise<void> {
     header('Demo 1: Basic Fuzzy Product Matching');
 
     const testCases = [
-        { orderId: 'PO-001', product: 'macbok pro',   quantity: '5'  },
-        { orderId: 'PO-002', product: 'ipd pro',      quantity: '10' },
-        { orderId: 'PO-003', product: 'airpods maks', quantity: '20' },
-        { orderId: 'PO-004', product: 'Mac Mini',     quantity: '3'  },
-        { orderId: 'PO-005', product: 'aple watch',   quantity: '7'  },
+        { orderId: 'PO-001', product: 'macbok pro',       quantity: '5'  },
+        { orderId: 'PO-002', product: 'ipd pro',          quantity: '10' },
+        { orderId: 'PO-003', product: 'airpods maks',     quantity: '20' },
+        { orderId: 'PO-004', product: 'Mac Mini',         quantity: '3'  },
+        { orderId: 'PO-005', product: 'apple watch ultra', quantity: '7'  },
     ];
 
     for (const raw of testCases) {

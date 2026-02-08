@@ -18,8 +18,8 @@ import {
     CoerceCase,
     ValidateRequired,
     ValidateRange,
-    NormalizeText,
-} from '@firebrandanalytics/shared-utils/validation';
+    ValidatePattern,
+} from '@firebrandanalytics/shared-utils';
 
 // ---------------------------------------------------------------------------
 // 1. FinancialRecord -- multi-currency, European decimals, accounting negatives
@@ -66,28 +66,24 @@ class SalesReport {
     @CoerceCase('upper')
     region!: string;
 
-    // Parse any currency string, round, then re-render as formatted USD
+    // Parse any currency string and round to 2 decimal places
     @CoerceParse('currency', { locale: 'en-US' })
     @CoerceRound({ precision: 2 })
-    @CoerceFormat('number', {
-        numberOptions: { style: 'currency', currency: 'USD' },
-    })
-    revenue!: string;
+    revenue!: number;
 
-    // European decimal -> rounded -> formatted as percentage
+    // European decimal -> rounded number
     @CoerceParse('number', { locale: 'de-DE' })
     @CoerceRound({ precision: 1 })
-    @CoerceFormat('number', {
-        numberOptions: { style: 'percent', minimumFractionDigits: 1 },
-    })
-    growthRate!: string;
+    growthRate!: number;
 
-    // Flexible date input -> medium-date output
+    // Flexible date input -> ISO date string
     @CoerceType('date', { format: 'loose', allowTimestamps: true })
-    @CoerceFormat('date', { format: 'medium-date', timezone: 'utc' })
+    @CoerceFormat('date', { format: 'iso-date', timezone: 'utc' })
     reportDate!: string;
 
-    @NormalizeText('email')
+    @CoerceTrim()
+    @CoerceCase('lower')
+    @ValidatePattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Invalid email format')
     contactEmail!: string;
 }
 

@@ -13,9 +13,10 @@ import {
   Copy,
   Discriminator,
   DerivedFrom,
+  JSONPath,
   Validate,
   Staging,
-} from '@firebrandanalytics/shared-utils/validation';
+} from '@firebrandanalytics/shared-utils';
 
 // ---------------------------------------------------------------------------
 // Canonical output type -- all version classes produce this shape
@@ -33,21 +34,31 @@ type CanonicalPreferences = {
 // ---------------------------------------------------------------------------
 
 class V1Preferences {
-  @Discriminator(1)
-  version: number;
+  @Discriminator('1')
+  version!: number;
 
+  // Extract raw fields into staging properties using @JSONPath (one-time sourcing)
+  @JSONPath('$.theme')
+  @Staging()
+  _theme!: string;
+
+  @JSONPath('$.fontSize')
+  @Staging()
+  _fontSize!: number;
+
+  // Build canonical appearance from staging values
   @DerivedFrom(
-    ['$.theme', '$.fontSize'],
-    ([theme, fontSize]: [string | undefined, number | undefined]) => ({
+    '_theme',
+    (theme: string | undefined, { instance }: { instance: any }) => ({
       colorTheme: theme ?? 'light',
-      fontScale: typeof fontSize === 'number' ? fontSize : 14,
+      fontScale: typeof instance._fontSize === 'number' ? instance._fontSize : 14,
       language: 'en',
     })
   )
-  appearance: { colorTheme: string; fontScale: number; language: string };
+  appearance!: { colorTheme: string; fontScale: number; language: string };
 
-  @DerivedFrom('$.version', () => ({ channels: ['email'] }))
-  alerts: { channels: string[] };
+  @DerivedFrom('version', () => ({ channels: ['email'] }))
+  alerts!: { channels: string[] };
 }
 
 // ---------------------------------------------------------------------------
@@ -57,30 +68,48 @@ class V1Preferences {
 // ---------------------------------------------------------------------------
 
 class V2Preferences {
-  @Discriminator(2)
-  version: number;
+  @Discriminator('2')
+  version!: number;
 
+  // Extract raw fields into staging properties using @JSONPath (one-time sourcing)
+  @JSONPath('$.display.theme')
+  @Staging()
+  _displayTheme!: string;
+
+  @JSONPath('$.display.fontSize')
+  @Staging()
+  _displayFontSize!: number;
+
+  @JSONPath('$.notifications.email')
+  @Staging()
+  _notifEmail!: boolean;
+
+  @JSONPath('$.notifications.push')
+  @Staging()
+  _notifPush!: boolean;
+
+  // Build canonical appearance from staging values
   @DerivedFrom(
-    ['$.display.theme', '$.display.fontSize'],
-    ([theme, fontSize]: [string | undefined, number | undefined]) => ({
+    '_displayTheme',
+    (theme: string | undefined, { instance }: { instance: any }) => ({
       colorTheme: theme ?? 'light',
-      fontScale: typeof fontSize === 'number' ? fontSize : 14,
+      fontScale: typeof instance._displayFontSize === 'number' ? instance._displayFontSize : 14,
       language: 'en',
     })
   )
-  appearance: { colorTheme: string; fontScale: number; language: string };
+  appearance!: { colorTheme: string; fontScale: number; language: string };
 
   @DerivedFrom(
-    ['$.notifications.email', '$.notifications.push'],
-    ([email, push]: [boolean | undefined, boolean | undefined]) => {
+    '_notifEmail',
+    (email: boolean | undefined, { instance }: { instance: any }) => {
       const channels: string[] = [];
       if (email) channels.push('email');
-      if (push) channels.push('push');
+      if (instance._notifPush) channels.push('push');
       if (channels.length === 0) channels.push('email');
       return { channels };
     }
   )
-  alerts: { channels: string[] };
+  alerts!: { channels: string[] };
 }
 
 // ---------------------------------------------------------------------------
@@ -88,14 +117,14 @@ class V2Preferences {
 // ---------------------------------------------------------------------------
 
 class V3Preferences {
-  @Discriminator(3)
-  version: number;
+  @Discriminator('3')
+  version!: number;
 
   @Copy()
-  appearance: { colorTheme: string; fontScale: number; language: string };
+  appearance!: { colorTheme: string; fontScale: number; language: string };
 
   @Copy()
-  alerts: { channels: string[] };
+  alerts!: { channels: string[] };
 }
 
 // ---------------------------------------------------------------------------
@@ -103,22 +132,22 @@ class V3Preferences {
 // ---------------------------------------------------------------------------
 
 class V1WithStaging {
-  @Discriminator(1)
-  version: number;
+  @Discriminator('1')
+  version!: number;
 
-  @DerivedFrom('$.theme')
+  @JSONPath('$.theme')
   @Staging()
-  rawTheme: string;
+  rawTheme!: string;
 
-  @DerivedFrom('$.fontSize')
+  @JSONPath('$.fontSize')
   @Staging()
-  rawFontSize: number;
+  rawFontSize!: number;
 
   @DerivedFrom(
-    ['rawTheme', 'rawFontSize'],
-    ([theme, fontSize]: [string | undefined, number | undefined]) => ({
+    'rawTheme',
+    (theme: string | undefined, { instance }: { instance: any }) => ({
       colorTheme: theme ?? 'light',
-      fontScale: typeof fontSize === 'number' ? fontSize : 14,
+      fontScale: typeof instance.rawFontSize === 'number' ? instance.rawFontSize : 14,
       language: 'en',
     })
   )
@@ -126,10 +155,10 @@ class V1WithStaging {
     (a: { fontScale: number }) => a.fontScale >= 10 && a.fontScale <= 24,
     'Font scale must be between 10 and 24'
   )
-  appearance: { colorTheme: string; fontScale: number; language: string };
+  appearance!: { colorTheme: string; fontScale: number; language: string };
 
-  @DerivedFrom('$.version', () => ({ channels: ['email'] }))
-  alerts: { channels: string[] };
+  @DerivedFrom('version', () => ({ channels: ['email'] }))
+  alerts!: { channels: string[] };
 }
 
 // ---------------------------------------------------------------------------
