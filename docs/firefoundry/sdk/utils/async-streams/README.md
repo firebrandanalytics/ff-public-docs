@@ -6,7 +6,7 @@ A composable async streaming library for TypeScript, providing structured pull a
 
 ```typescript
 import {
-    PullChain, PushChainBuilder,
+    PullChain, PushChainBuilder, BidirectionalChain,
     SourceBufferObj, PullMapObj, PullFilterObj,
     DependencyGraph, ResourceCapacitySource,
     PriorityDependencySourceObj, ScheduledTaskPoolRunner,
@@ -49,6 +49,16 @@ for await (const envelope of runner.runTasks(false)) {
 }
 ```
 
+**Bidirectional pipeline** — fluent request-response chain:
+```typescript
+const chain = BidirectionalChain.identity<string>()
+    .map(s => s.trim().toLowerCase())
+    .map(s => s.toUpperCase())
+    .tap(s => console.log('processed:', s));
+
+await chain.next("  Hello World  "); // { value: "HELLO WORLD", done: false }
+```
+
 ## Documentation
 
 ### Concepts
@@ -69,6 +79,7 @@ for await (const envelope of runner.runTasks(false)) {
 | [Scheduling API](./reference/scheduling.md) | DependencyGraph, ResourceCapacitySource, priority sources, task pool runners |
 | [Metrics](./reference/metrics.md) | Capacity utilization snapshots, throughput counters, latency histograms, reporter interface |
 | [Utilities](./reference/utilities.md) | WaitObject, AsyncIteratorCombiner, PushPullBufferObj |
+| [BidirectionalChain API](./reference/bidirectional-chain.md) | Fluent request-response pipeline: factories, transforms, generator adapter |
 
 ### Tutorials
 
@@ -94,6 +105,7 @@ for await (const envelope of runner.runTasks(false)) {
 | [Latency-Bounded Batching](./use-cases/latency-bounded-batching.md) | Batch by count OR timeout (Kafka batch.size + linger.ms pattern) for pull and push pipelines |
 | [Rate-Limiting and Usage Quotas](./use-cases/rate-limiting.md) | Quota-gated scheduling with periodic reset and token bucket patterns |
 | [Metrics Observability](./use-cases/metrics-observability.md) | Capacity utilization tracking, throughput dashboards, and latency alerting for scheduled task pools |
+| [Conversational Pipeline](./use-cases/conversational-pipeline.md) | Multi-stage request-response processing with stateful context enrichment and turn tracking |
 
 ### Runnable Examples
 
@@ -110,6 +122,7 @@ npx tsx priority-request-routing.ts
 npx tsx latency-bounded-batching.ts
 npx tsx rate-limiting.ts
 npx tsx metrics-observability.ts
+npx tsx conversational-pipeline.ts
 ```
 
 ### Platform Integration
