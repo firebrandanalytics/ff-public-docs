@@ -67,6 +67,7 @@ for await (const envelope of runner.runTasks(false)) {
 | [PullChain API](./reference/pull-chain.md) | Fluent pull pipeline: factories, transforms, terminals, dynamic mutation |
 | [PushChain API](./reference/push-chain.md) | PushChainBuilder two-phase construction + PushChain runtime |
 | [Scheduling API](./reference/scheduling.md) | DependencyGraph, ResourceCapacitySource, priority sources, task pool runners |
+| [Metrics](./reference/metrics.md) | Capacity utilization snapshots, throughput counters, latency histograms, reporter interface |
 | [Utilities](./reference/utilities.md) | WaitObject, AsyncIteratorCombiner, PushPullBufferObj |
 
 ### Tutorials
@@ -92,6 +93,7 @@ for await (const envelope of runner.runTasks(false)) {
 | [Priority Request Routing (QoS)](./use-cases/priority-request-routing.md) | Tiered user priority with aging-based starvation prevention for LLM broker requests |
 | [Latency-Bounded Batching](./use-cases/latency-bounded-batching.md) | Batch by count OR timeout (Kafka batch.size + linger.ms pattern) for pull and push pipelines |
 | [Rate-Limiting and Usage Quotas](./use-cases/rate-limiting.md) | Quota-gated scheduling with periodic reset and token bucket patterns |
+| [Metrics Observability](./use-cases/metrics-observability.md) | Capacity utilization tracking, throughput dashboards, and latency alerting for scheduled task pools |
 
 ### Runnable Examples
 
@@ -107,6 +109,7 @@ npx tsx adaptive-capacity.ts
 npx tsx priority-request-routing.ts
 npx tsx latency-bounded-batching.ts
 npx tsx rate-limiting.ts
+npx tsx metrics-observability.ts
 ```
 
 ### Platform Integration

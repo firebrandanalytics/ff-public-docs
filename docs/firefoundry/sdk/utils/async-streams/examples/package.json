@@ -12,7 +12,8 @@
     "adaptive-capacity": "tsx adaptive-capacity.ts",
     "priority-request-routing": "tsx priority-request-routing.ts",
     "latency-bounded-batching": "tsx latency-bounded-batching.ts",
-    "rate-limiting": "tsx rate-limiting.ts"
+    "rate-limiting": "tsx rate-limiting.ts",
+    "metrics-observability": "tsx metrics-observability.ts"
   },
   "dependencies": {
     "@firebrandanalytics/shared-utils": "^4.1.0-beta.0"
