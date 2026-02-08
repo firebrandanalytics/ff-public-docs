@@ -1,0 +1,24 @@
+{
+  "name": "@firebrandanalytics/validation-examples",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Runnable examples for the data validation library documentation",
+  "scripts": {
+    "llm-output-canonicalization": "tsx llm-output-canonicalization.ts",
+    "fuzzy-inventory-matching": "tsx fuzzy-inventory-matching.ts",
+    "multi-format-data-ingestion": "tsx multi-format-data-ingestion.ts",
+    "schema-version-migration": "tsx schema-version-migration.ts",
+    "cross-property-validation": "tsx cross-property-validation.ts",
+    "ai-content-pipeline": "tsx ai-content-pipeline.ts",
+    "recursive-api-normalization": "tsx recursive-api-normalization.ts",
+    "error-recovery-and-repair": "tsx error-recovery-and-repair.ts"
+  },
+  "dependencies": {
+    "@firebrandanalytics/shared-utils": "^4.1.0-beta.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "typescript": "^5.3.0"
+  }
+}
