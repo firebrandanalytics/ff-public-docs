@@ -87,6 +87,7 @@ await chain.next("  Hello World  "); // { value: "HELLO WORLD", done: false }
 |----------|-------------|
 | [Pull Pipeline Basics](./tutorials/pull-pipeline-basics.md) | Build your first pull pipeline with map, filter, reduce, collect |
 | [Push Pipeline Basics](./tutorials/push-pipeline-basics.md) | Event dispatching with PushChainBuilder, forking, and branching |
+| [Bidirectional Pipeline Basics](./tutorials/bidirectional-pipeline-basics.md) | Request-response pipelines with BidirectionalChain: factories, stateful stages, generators |
 | [Combining Streams](./tutorials/combining-streams.md) | Race, round-robin, concat, zip, and mid-chain merge |
 | [Scheduling Fundamentals](./tutorials/scheduling-fundamentals.md) | Dependency graphs, priority queues, resource-aware task execution |
 | [ETL Pipeline](./tutorials/etl-pipeline.md) | Multi-stage pipeline with per-stage resource costs |

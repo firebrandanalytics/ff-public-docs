@@ -82,7 +82,36 @@ console.log(sink.buffer); // [50]
 
 **Concurrency note:** `next()` calls on push objects can be made concurrently by default. Use `PushSerialObj` to serialize when ordering matters. See the [Push Obj Classes Reference](./reference/push-obj-classes.md).
 
-## 4. Mutable Configuration: Changing Behavior Mid-Stream
+## 4. The Bidirectional Model: Caller-Driven Request-Response
+
+The bidirectional model fills the gap between pull and push. It is **caller-driven** — each call to `.next(input)` sends a request through the pipeline and returns a response. There is no consumer pulling or producer pushing. The caller controls both when data enters and when they receive the result.
+
+**Building Blocks:**
+
+- **`BidiProcessor<IN, OUT>`**: An async function `(input) => output`. This is the stage primitive — simpler than generators, with no priming confusion.
+- **`BidiProcessorFactory<IN, OUT>`**: A factory that creates a processor. Enables lazy initialization and stateful stages via closures.
+- **`BidirectionalChain<IN, OUT>`**: Fluent builder that composes stages left-to-right and implements `AsyncGenerator<OUT, any, IN>`.
+
+```typescript
+const pipeline = BidirectionalChain.identity<string>()
+    .map(s => s.trim().toLowerCase())         // stateless transform
+    .then<{ text: string; turn: number }>(() => {  // stateful stage
+        let turn = 0;
+        return (text) => ({ text, turn: ++turn });
+    })
+    .map(ctx => `[${ctx.turn}] ${ctx.text}`); // stateless formatting
+
+await pipeline.next('  Hello  '); // { value: '[1] hello', done: false }
+await pipeline.next('  World  '); // { value: '[2] world', done: false }
+```
+
+**Why functions instead of generators?** JavaScript generators have a priming problem: the argument to the first `.next()` call is silently discarded because the generator has not yet advanced to its first `yield`. This is a well-known source of bugs in bidirectional generator code. By using plain functions internally, every `.next(input)` delivers its input and receives an output — no priming, no surprise. For cases where generator semantics are needed, the `fromGenerator()` adapter handles priming automatically.
+
+**When to use bidirectional:** Request-response protocols, stateful transformations (accumulators, session contexts), conversational interfaces, and any pipeline where the caller needs the answer before proceeding.
+
+The library provides four factory methods (`of`, `from`, `identity`, `fromGenerator`) and three fluent methods (`map`, `then`, `tap`). See the [BidirectionalChain Reference](./reference/bidirectional-chain.md).
+
+## 5. Mutable Configuration: Changing Behavior Mid-Stream
 
 A key advantage of the Obj pattern is that configuration is exposed as **public mutable members**. You can change a filter predicate, a map function, or a timeout value while the stream is running.
 
@@ -102,9 +131,9 @@ for await (const n of filter) {
 
 **Lifecycle note:** Configuration members (`.filter`, `.transform`, `.time_out`) take effect immediately since they're read on each iteration. Source swaps take effect on the next `pull_impl()` cycle, after the current generator completes.
 
-## 5. Fluent Pipeline Chains
+## 6. Fluent Pipeline Chains
 
-While Obj classes are powerful, manually chaining them is verbose. The library provides `PullChain` and `PushChainBuilder`/`PushChain` for fluent, type-safe pipeline construction.
+While Obj classes are powerful, manually chaining them is verbose. The library provides `PullChain`, `PushChainBuilder`/`PushChain`, and `BidirectionalChain` for fluent, type-safe pipeline construction.
 
 ### PullChain
 
@@ -141,7 +170,22 @@ await chain.return();
 
 Branching terminals (`.fork()`, `.distribute()`, `.roundRobinTo()`) handle one-to-many patterns. See the [PushChain Reference](./reference/push-chain.md).
 
-## 6. Scheduling: Dependency Graphs, Priority, and Resource Management
+### BidirectionalChain
+
+`BidirectionalChain<IN, OUT>` is a fluent builder for request-response pipelines. Unlike pull and push chains which use the Obj class hierarchy, it uses plain async functions as its stage primitive. The chain lazily builds a composed pipeline on first `.next()` call.
+
+```typescript
+const chain = BidirectionalChain.identity<string>()
+    .map(s => s.trim())
+    .map(s => s.toUpperCase())
+    .tap(s => console.log('processed:', s));
+
+await chain.next('  Hello World  '); // { value: 'HELLO WORLD', done: false }
+```
+
+See the [BidirectionalChain Reference](./reference/bidirectional-chain.md) for factory methods, fluent composition, and protocol details.
+
+## 7. Scheduling: Dependency Graphs, Priority, and Resource Management
 
 The scheduling subsystem provides production-grade task orchestration. It solves a common problem: *you have many tasks with dependencies between them, different resource requirements, and varying priorities — how do you execute them efficiently?*
 
@@ -225,7 +269,7 @@ for await (const envelope of runner.runTasks(false)) {
 
 See the [Scheduling Reference](./reference/scheduling.md) and the [Scheduling Fundamentals Tutorial](./tutorials/scheduling-fundamentals.md).
 
-## 7. Error Handling: Retry vs. Abort
+## 8. Error Handling: Retry vs. Abort
 
 The scheduling system supports two error recovery strategies, controlled by how you wire the `onError` callback:
 
@@ -249,7 +293,7 @@ task.onError = (key, error) => {
 
 See the [Retry and Error Handling Tutorial](./tutorials/retry-and-error-handling.md).
 
-## 8. Combining Streams
+## 9. Combining Streams
 
 The library provides several strategies for consuming multiple pull streams:
 
@@ -262,7 +306,7 @@ The library provides several strategies for consuming multiple pull streams:
 
 These are available as both standalone Obj classes and as `PullChain` static factories / mid-chain merge methods. See the [Combining Streams Tutorial](./tutorials/combining-streams.md).
 
-## 9. Class Hierarchy and Lifecycle
+## 10. Class Hierarchy and Lifecycle
 
 ```
 PullObj<T>                          (base — AsyncIterable<T>)
@@ -278,13 +322,17 @@ PushObj<T>                          (base — receives pushed values)
 ├── PushDistributeObj<T>            (routes by selector)
 ├── PushRoundRobinObj<T>            (fair rotation to sinks)
 └── PushChain<T>                    (fluent pipeline wrapper)
+
+BidirectionalChain<IN,OUT>          (caller-driven request-response)
+    Internally composes BidiProcessor functions — no Obj hierarchy.
+    Implements AsyncGenerator<OUT, any, IN> for protocol compatibility.
 ```
 
 **Close propagation:** `close()` or `closeInterrupt()` propagates to all upstream sources, ensuring graceful shutdown of entire pipelines.
 
 **Generator reinit:** When a `pull_impl()` generator completes, the base class can reinitialize it. This enables long-lived Obj instances that restart their logic cycle, picking up any configuration changes.
 
-## 10. Bridging Push and Pull
+## 11. Bridging Push and Pull
 
 The `PushPullBufferObj` bridges the two models. It exposes a push sink interface for producers and a pull source interface for consumers, with an internal buffer and `WaitObject` signaling.
 
@@ -293,6 +341,7 @@ Use it when you need to decouple a producer from a consumer, or create dynamic w
 ## Next Steps
 
 - **New to the library?** Start with the [Pull Pipeline Basics Tutorial](./tutorials/pull-pipeline-basics.md).
+- **Need request-response pipelines?** Start with the [Bidirectional Pipeline Basics Tutorial](./tutorials/bidirectional-pipeline-basics.md).
 - **Need task scheduling?** Jump to [Scheduling Fundamentals](./tutorials/scheduling-fundamentals.md).
 - **Looking for API details?** See the [Reference Documentation](./reference/).
 - **Understanding flow control?** See [Flow Control](./flow-control.md) for production vs consumption rates, backpressure strategies, and a primitive selection guide.

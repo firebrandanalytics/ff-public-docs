@@ -251,6 +251,7 @@ The `preCallback` runs once per event before the fork, so every event is logged 
 ## 8. Next Steps
 
 - [Pull Pipeline Basics](./pull-pipeline-basics.md) -- Build lazy, demand-driven pipelines with PullChain.
+- [Bidirectional Pipeline Basics](./bidirectional-pipeline-basics.md) -- Request-response pipelines for conversational and stateful transforms.
 - [Combining Streams](./combining-streams.md) -- Race, round-robin, concat, zip, and mid-chain merge.
 - [PushChain API Reference](../reference/push-chain.md) -- Full API details including dynamic mutation (insertAfter, remove, replace).
 - [Push Obj Classes Reference](../reference/push-obj-classes.md) -- Every PushObj class: constructors, properties, and examples.

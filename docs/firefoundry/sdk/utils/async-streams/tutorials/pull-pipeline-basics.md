@@ -293,5 +293,6 @@ Now that you can build and consume pull pipelines, explore these topics next:
 
 - [Combining Streams](./combining-streams.md) -- merge multiple sources with race, round-robin, concat, and zip
 - [Push Pipeline Basics](./push-pipeline-basics.md) -- event dispatching with forking and branching
+- [Bidirectional Pipeline Basics](./bidirectional-pipeline-basics.md) -- request-response pipelines for conversational and stateful transforms
 - [PullChain API Reference](../reference/pull-chain.md) -- complete API including mid-chain merge, dynamic mutation, and introspection
 - [Pull Obj Classes Reference](../reference/pull-obj-classes.md) -- all Obj classes with full constructor signatures and mutable properties
