@@ -12,7 +12,8 @@
     "cross-property-validation": "tsx cross-property-validation.ts",
     "ai-content-pipeline": "tsx ai-content-pipeline.ts",
     "recursive-api-normalization": "tsx recursive-api-normalization.ts",
-    "error-recovery-and-repair": "tsx error-recovery-and-repair.ts"
+    "error-recovery-and-repair": "tsx error-recovery-and-repair.ts",
+    "css-like-style-cascade": "tsx css-like-style-cascade.ts"
   },
   "dependencies": {
     "@firebrandanalytics/shared-utils": "^4.2.0-beta.0"
