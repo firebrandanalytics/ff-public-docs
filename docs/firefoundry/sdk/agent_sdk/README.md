@@ -94,6 +94,27 @@ Before diving into code, understand the paradigm:
 
 ---
 
+## XML DSL System (Declarative Alternative)
+
+*Build agent bundles using declarative XML instead of TypeScript*
+
+The XML DSL system provides four domain-specific languages that let you define prompts, bots, workflows, and bundle manifests in declarative XML. Every XML construct compiles down to the same SDK primitives you would use by hand -- but without writing imperative code.
+
+- **[Overview](dsl/README.md)** - Why XML, when to use DSLs vs TypeScript, architecture
+- **[Getting Started Tutorial](dsl/getting-started-tutorial.md)** - Build a complete Sentiment Analyzer bundle from scratch
+- **[Advanced Patterns](dsl/advanced-patterns-tutorial.md)** - Conditionals, loops, mixins, entity orchestration, error handling
+- **[Reference Guides](dsl/reference/)** - Complete element and attribute documentation for all four DSLs
+- **[E2E Example](dsl/examples/xml-e2e-bundle.md)** - Annotated walkthrough of a real deployed bundle
+
+| DSL | Extension | Defines |
+|-----|-----------|---------|
+| PromptML | `.promptml` | Structured LLM prompts with conditionals, loops, and interpolation |
+| BotML | `.botml` | Bot configuration with LLM settings, mixins, and prompt groups |
+| AgentML | `.agentml` | Async workflows with bot calls, working memory, and graph operations |
+| BundleML | `.bundleml` | Bundle manifest with constructors, HTTP endpoints, and methods |
+
+---
+
 ## Feature Guides
 
 Learn specific capabilities and patterns for advanced use cases:
@@ -194,6 +215,9 @@ Practical how-to guides for specific capabilities. Use as needed for your use ca
 
 **I want to understand the paradigm first**
 → Read [Entity Graph Concepts](entity_graph/README.md)
+
+**I want to define bundles in XML instead of TypeScript**
+→ Start with [XML DSL Getting Started](dsl/getting-started-tutorial.md)
 
 **I'm migrating from v2.x**
 → Check [v2.x → v3.0 Migration Guide](MIGRATION_v2_to_v3.md)
