@@ -6,15 +6,31 @@ The Data Access Service is a gRPC/REST API that provides secure, multi-database 
 
 ## Purpose and Role in Platform
 
-The Data Access Service enables FireFoundry agents and applications to:
-- Query data across 7 database backends (PostgreSQL, MySQL, SQLite, SQL Server, Oracle, Snowflake, Databricks) through a single unified API
-- Construct structured queries as JSON ASTs that are validated, dialect-translated, and access-controlled
-- Execute cross-database federated queries using staged query pipelines
-- Persist intermediate results in per-identity scratch pads for multi-step analysis
-- Leverage stored definitions (views, UDFs, TVFs) that appear as real database objects
-- Preview generated SQL before execution for debugging and validation
+### An AI-Friendly Data Layer You Don't Have to Rebuild
 
-This service acts as the secure data layer for AI agents, abstracting away database-specific SQL syntax and enforcing access controls that prevent unauthorized data access.
+Enterprise data lives in databases you can't change — production warehouses, regulated systems, vendor-managed platforms, legacy schemas with decades of organic growth. The Data Access Service sits between AI agents and these existing databases, providing a **semantic mediation layer** that makes any data source AI-ready without modifying the underlying infrastructure.
+
+This is the key value proposition: **you don't change your data layer to fit the AI — the service adapts the AI's access to fit your data layer.** The service handles dialect translation, access control, credential isolation, and query governance so that AI agents can work with enterprise data safely and effectively.
+
+### What This Enables
+
+- **Unified multi-database access**: 7 database backends (PostgreSQL, MySQL, SQLite, SQL Server, Oracle, Snowflake, Databricks) through a single API — agents don't need to know which database they're talking to
+- **Structured queries for AI**: The AST Query API lets AI agents express intent as structured JSON rather than generating raw SQL, eliminating SQL injection risks and enabling validation before execution
+- **Cross-database federation**: Staged queries pull data from different databases and combine results, letting agents work across data silos without ETL
+- **Conversational data analysis**: Per-identity scratch pads persist intermediate results across requests, enabling multi-step analytical workflows
+- **AI-curated data objects**: Stored definitions (views, UDFs, TVFs) present curated, AI-friendly abstractions over raw schemas — the AI sees meaningful business objects, not implementation details
+- **Fine-grained governance**: Table/column ACL, function blacklisting, and audit logging ensure AI agents only access what they're authorized to see
+
+### Toward a Data Catalog and Governance Platform
+
+The service is evolving beyond query execution into **data governance and discovery**:
+
+- **Data Catalog**: Machine-readable metadata about available connections, tables, columns, types, relationships, and business context — enabling AI agents to autonomously discover and understand data assets
+- **Data Dictionary**: Semantic annotations on tables and columns (descriptions, business meaning, sensitivity classifications, data quality indicators) that help AI agents make informed decisions about which data to use and how to interpret results
+- **Ontologies**: Formal domain models that describe entity relationships, hierarchies, and business rules — giving AI agents a structured understanding of how data concepts relate to each other across databases
+- **AI Navigation Skills**: Rather than hard-coding data knowledge into each agent, the service can host and serve **data navigation skills** — reusable knowledge packages that teach AI agents how to explore, query, and interpret specific data domains
+
+These capabilities complement the existing stored definitions (views/UDFs) by adding the **discovery and understanding layer** that precedes query construction: before an AI writes a query, it needs to know what data exists, what it means, and how to navigate it.
 
 ## Key Features
 
