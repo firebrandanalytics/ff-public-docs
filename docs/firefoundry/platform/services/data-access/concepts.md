@@ -2,7 +2,7 @@
 
 ## Connections
 
-A **connection** is a named reference to a database with its type, credentials, pool settings, and query limits. The service supports PostgreSQL, MySQL, and SQLite backends. Connections are defined in `connections.yaml` or managed via the Admin API.
+A **connection** is a named reference to a database with its type, credentials, pool settings, and query limits. The service currently supports PostgreSQL, MySQL, and SQLite backends, with SQL Server, Oracle, Snowflake, and Databricks planned as the next tier. Connections are defined in `connections.yaml` or managed via the Admin API.
 
 Connections never store credentials directly — they reference environment variable names. This allows credential rotation without restarting the service.
 

@@ -18,7 +18,7 @@ This service acts as the secure data layer for AI agents, abstracting away datab
 
 ## Key Features
 
-- **Multi-Database Support**: PostgreSQL, MySQL, and SQLite through a single API
+- **Multi-Database Support**: PostgreSQL, MySQL, and SQLite today; SQL Server, Oracle, Snowflake, and Databricks planned next (see [Database Support](#database-support) below)
 - **AST Query API**: Submit structured JSON queries — validated, access-controlled, and dialect-translated
 - **Staged Queries**: Execute federated pre-queries across different connections, with results injected as CTEs
 - **Scratch Pad**: Per-identity SQLite databases for persisting intermediate results across requests
@@ -71,6 +71,36 @@ Execute pre-queries against different database connections, with results automat
 
 ### Scratch Pad (Phase 3A)
 Per-identity SQLite databases for persisting intermediate results. Use `save_as` on any QueryAST request to save results, then query them in subsequent requests using the `scratch:<identity>` connection.
+
+## Database Support
+
+The service architecture is designed for broad database support. Each database requires an adapter (connection/pooling/metadata) and a dialect serializer (SQL generation).
+
+### Tier 1: Foundation (Current)
+
+| Database | Status |
+|----------|--------|
+| PostgreSQL 13+ | **Supported** |
+| MySQL 8+ | **Supported** |
+| SQLite 3.35+ | **Supported** |
+
+### Tier 2: Enterprise (Planned)
+
+| Database | Driver | Status |
+|----------|--------|--------|
+| SQL Server | `microsoft/go-mssqldb` | Planned |
+| Oracle | `sijms/go-ora` | Planned |
+| Snowflake | `snowflakedb/gosnowflake` | Planned |
+| Databricks | `databricks/databricks-sql-go` | Planned |
+
+### Tier 3: Extended (Planned)
+
+Wire-compatible databases that can reuse existing adapters with dialect adjustments:
+- **MariaDB**, **SingleStore** (MySQL-compatible)
+- **CockroachDB**, **Greenplum**, **Amazon Redshift** (PostgreSQL-compatible)
+
+Specialized databases with their own adapters:
+- **ClickHouse**, **Trino**, **Vertica**, **DuckDB**, **Teradata**, **Google BigQuery**
 
 ## Documentation
 
