@@ -228,6 +228,31 @@ The primary savings come from:
 2. **Inlined transforms**: Map and filter functions are called directly instead of through virtual dispatch.
 3. **Reduced allocations**: No intermediate `IteratorResult` objects between stages. The fast path creates zero intermediate arrays.
 
+### Benchmark Results
+
+Measured with 5000 items, 3 iterations per scenario. Numbers vary by runtime and hardware.
+
+**Pull-side compilation** (strong wins for fast-path ops):
+
+| Scenario | Node.js (V8) | Bun (JSC) | Notes |
+|----------|-------------|-----------|-------|
+| map + filter (2 stages) | 4.9x | 2.9x | Fast path; solid improvement on both runtimes |
+| 5-stage pipeline | 2.1x | 3.3x | Fast path; Bun benefits more from reduced generator overhead |
+| 10-stage pipeline | 7.3x | 5.4x | Fast path; best case — many lightweight stages |
+| High-rejection filter | 0.7x | 1.6x | Fast path; V8 optimizes uncompiled generators well here |
+| window + map | 0.5x | 0.8x | General path; array-of-values overhead outweighs savings |
+
+**Push-side compilation** (regressions under investigation — see [issue #37](https://github.com/firebrandanalytics/ff-core-types/issues/37)):
+
+| Scenario | Node.js (V8) | Bun (JSC) | Notes |
+|----------|-------------|-----------|-------|
+| map + filter (2 stages) | 1.8x | 0.8x | Mixed results across runtimes |
+| 5-stage pipeline | 0.7x | 1.1x | Regression on V8 |
+| 10-stage pipeline | 0.9x | 0.8x | Roughly neutral to regressive |
+| window batching | 0.9x | 0.8x | General path; no benefit |
+
+**Takeaway**: Pull-side compilation with fast-path operators is the sweet spot — expect 2-7x speedups for pipelines with 3+ stages of map/filter/dedupe/reduce. Push-side compilation and general-path (window/buffer/flatMap) scenarios do not currently benefit and may regress; prefer uncompiled chains for those patterns until [issue #37](https://github.com/firebrandanalytics/ff-core-types/issues/37) is resolved.
+
 ---
 
 ## Limitations
