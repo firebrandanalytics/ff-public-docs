@@ -20,7 +20,7 @@ The FireFoundry platform consists of:
 
 ## Platform Services
 
-FireFoundry provides 7 specialized microservices organized by maturity:
+FireFoundry provides 8 specialized microservices organized by maturity:
 
 ### Tier 1 - Core Runtime (GA)
 - **[Broker Service](./services/ff-broker.md)** - AI model routing and orchestration
@@ -29,6 +29,7 @@ FireFoundry provides 7 specialized microservices organized by maturity:
 
 ### Tier 2 - Extended Services (Beta)
 - **[Entity Service](./services/entity-service.md)** - Entity graph management with vector search
+- **[Data Access Service](./services/data-access-service.md)** - Multi-database SQL access with AST query translation
 - **[Document Processing Service](./services/doc-proc-service.md)** - Document extraction and transformation
 
 ### Tier 3 - Supporting Services
