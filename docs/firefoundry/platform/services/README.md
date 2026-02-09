@@ -489,7 +489,7 @@ Detailed documentation for each service:
 - [Code Sandbox](./code-sandbox.md) - Secure code execution environment
 
 ### Tier 2: Extended Services
-- [Data Access Service](./data-access/index.md) - Multi-database SQL access with AST queries, staged federation, and scratch pad
+- [Data Access Service](./data-access/README.md) - Multi-database SQL access with AST queries, staged federation, and scratch pad
 - [Entity Service](./entity-service.md) - Entity graph with vector search
 - [Document Processing Service](./doc-proc-service.md) - Document operations
 

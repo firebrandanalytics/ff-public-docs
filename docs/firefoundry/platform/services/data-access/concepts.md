@@ -2,7 +2,7 @@
 
 ## Connections
 
-A **connection** is a named reference to a database with its type, credentials, pool settings, and query limits. The service currently supports PostgreSQL, MySQL, and SQLite backends, with SQL Server, Oracle, Snowflake, and Databricks planned as the next tier. Connections are defined in `connections.yaml` or managed via the Admin API.
+A **connection** is a named reference to a database with its type, credentials, pool settings, and query limits. The service supports 7 backends: PostgreSQL, MySQL, SQLite, SQL Server, Oracle, Snowflake, and Databricks. Connections are defined in `connections.yaml` or managed via the Admin API.
 
 Connections never store credentials directly — they reference environment variable names. This allows credential rotation without restarting the service.
 
@@ -110,15 +110,16 @@ This produces dialect-specific SQL:
 
 The AST serializer generates correct SQL for each backend, handling:
 
-| Aspect | PostgreSQL | MySQL | SQLite |
-|--------|-----------|-------|--------|
-| Identifier quoting | `"name"` | `` `name` `` | `"name"` |
-| Boolean literals | `TRUE`/`FALSE` | `TRUE`/`FALSE` | `1`/`0` |
-| String escaping | `'it''s'` | `'it''s'` | `'it''s'` |
-| CAST types | Native types | Native types | Mapped subset |
-| LIMIT/OFFSET | `LIMIT n OFFSET m` | `LIMIT n OFFSET m` | `LIMIT n OFFSET m` |
-| NULLS FIRST/LAST | Native | Emulated with CASE | Emulated with CASE |
-| Recursive CTEs | `WITH RECURSIVE` | `WITH RECURSIVE` | `WITH RECURSIVE` |
+| Aspect | PostgreSQL | MySQL | SQLite | SQL Server | Oracle | Snowflake | Databricks |
+|--------|-----------|-------|--------|-----------|--------|-----------|------------|
+| Identifier quoting | `"name"` | `` `name` `` | `"name"` | `[name]` | `"name"` | `"name"` | `` `name` `` |
+| Param style | `$1` | `?` | `?` | `@p1` | `:1` | `?` | `?` |
+| Boolean literals | `TRUE`/`FALSE` | `TRUE`/`FALSE` | `1`/`0` | `1`/`0` | `1`/`0` | `TRUE`/`FALSE` | `TRUE`/`FALSE` |
+| LIMIT/OFFSET | `LIMIT n OFFSET m` | `LIMIT n OFFSET m` | `LIMIT n OFFSET m` | `TOP n` / `OFFSET FETCH` | `FETCH FIRST n ROWS` | `LIMIT n OFFSET m` | `LIMIT n OFFSET m` |
+| NULLS FIRST/LAST | Native | CASE emulation | CASE emulation | CASE emulation | CASE emulation | Native | Native |
+| Concat operator | `\|\|` | `CONCAT()` | `\|\|` | `+` | `\|\|` | `\|\|` | `CONCAT()` |
+| EXCEPT | `EXCEPT` | `EXCEPT` | `EXCEPT` | `EXCEPT` | `MINUS` | `EXCEPT` | `EXCEPT` |
+| Recursive CTEs | `WITH RECURSIVE` | `WITH RECURSIVE` | `WITH RECURSIVE` | `WITH` (no keyword) | `WITH` (no keyword) | `WITH RECURSIVE` | `WITH RECURSIVE` |
 
 Functions are passed through to the database — the service doesn't maintain a function translation table. If you call `pg_sleep()` on PostgreSQL, it works. If you call it on MySQL, the database returns an error. The blacklist blocks functions that are dangerous regardless of dialect.
 
@@ -166,7 +167,11 @@ Results are injected as VALUES CTEs, serialized per-dialect:
 
 - **PostgreSQL**: `WITH alias(col1,col2) AS (VALUES ($1::text,$2::integer), ...)`
 - **MySQL**: `WITH alias(col1,col2) AS (VALUES ROW(?,?), ROW(?,?), ...)`
-- **SQLite**: `WITH alias(col1,col2) AS (VALUES ('val1',42), ('val2',99), ...)`
+- **SQLite**: `WITH alias(col1,col2) AS (VALUES ('val1',42), ('val2',99), ...)` (inline literals)
+- **SQL Server**: `WITH alias AS (SELECT col1,col2 FROM (VALUES (@p1,@p2),(@p3,@p4)) AS t(col1,col2))`
+- **Oracle**: `WITH alias(col1,col2) AS (SELECT :1,:2 FROM DUAL UNION ALL SELECT :3,:4 FROM DUAL)`
+- **Snowflake**: `WITH alias AS (SELECT col1,col2 FROM (VALUES (?,?),(?,?)) AS t(col1,col2))`
+- **Databricks**: `WITH alias(col1,col2) AS (VALUES ROW(?,?), ROW(?,?), ...)`
 
 ### Execution Limits
 

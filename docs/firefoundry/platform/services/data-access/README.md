@@ -7,7 +7,7 @@ The Data Access Service is a gRPC/REST API that provides secure, multi-database 
 ## Purpose and Role in Platform
 
 The Data Access Service enables FireFoundry agents and applications to:
-- Query data across PostgreSQL, MySQL, and SQLite databases through a single unified API
+- Query data across 7 database backends (PostgreSQL, MySQL, SQLite, SQL Server, Oracle, Snowflake, Databricks) through a single unified API
 - Construct structured queries as JSON ASTs that are validated, dialect-translated, and access-controlled
 - Execute cross-database federated queries using staged query pipelines
 - Persist intermediate results in per-identity scratch pads for multi-step analysis
@@ -18,7 +18,7 @@ This service acts as the secure data layer for AI agents, abstracting away datab
 
 ## Key Features
 
-- **Multi-Database Support**: PostgreSQL, MySQL, and SQLite today; SQL Server, Oracle, Snowflake, and Databricks planned next (see [Database Support](#database-support) below)
+- **Multi-Database Support**: PostgreSQL, MySQL, SQLite, SQL Server, Oracle, Snowflake, and Databricks — 7 backends with dialect-specific SQL generation (see [Database Support](#database-support) below)
 - **AST Query API**: Submit structured JSON queries — validated, access-controlled, and dialect-translated
 - **Staged Queries**: Execute federated pre-queries across different connections, with results injected as CTEs
 - **Scratch Pad**: Per-identity SQLite databases for persisting intermediate results across requests
@@ -59,7 +59,8 @@ This service acts as the secure data layer for AI agents, abstracting away datab
                         │
 ┌───────────────────────▼─────────────────────────────────────┐
 │              Database Adapter Layer                           │
-│   PostgreSQL | MySQL | SQLite | Scratch Pad (SQLite)         │
+│   PostgreSQL | MySQL | SQLite | SQL Server | Oracle          │
+│   Snowflake | Databricks | Scratch Pad (SQLite)              │
 │   (Connection pooling, type normalization, timeouts)         │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -71,6 +72,9 @@ Execute pre-queries against different database connections, with results automat
 
 ### Scratch Pad (Phase 3A)
 Per-identity SQLite databases for persisting intermediate results. Use `save_as` on any QueryAST request to save results, then query them in subsequent requests using the `scratch:<identity>` connection.
+
+### Enterprise Database Support (Phase 3D)
+Full adapter and serializer implementations for SQL Server, Oracle, Snowflake, and Databricks. Each includes dialect-specific SQL generation (quoting, parameter styles, LIMIT/OFFSET syntax, boolean literals, function translation), VALUES CTE renderers for staged queries, and type normalization.
 
 ## Database Support
 
@@ -84,14 +88,16 @@ The service architecture is designed for broad database support. Each database r
 | MySQL 8+ | **Supported** |
 | SQLite 3.35+ | **Supported** |
 
-### Tier 2: Enterprise (Planned)
+### Tier 2: Enterprise
 
 | Database | Driver | Status |
 |----------|--------|--------|
-| SQL Server | `microsoft/go-mssqldb` | Planned |
-| Oracle | `sijms/go-ora` | Planned |
-| Snowflake | `snowflakedb/gosnowflake` | Planned |
-| Databricks | `databricks/databricks-sql-go` | Planned |
+| SQL Server | `microsoft/go-mssqldb` | **Supported** (adapter + serializer) |
+| Oracle | `sijms/go-ora/v2` | **Supported** (adapter + serializer) |
+| Snowflake | `snowflakedb/gosnowflake` | **Supported** (adapter + serializer) |
+| Databricks | `databricks/databricks-sql-go` | **Supported** (adapter + serializer) |
+
+> **Note:** Tier 2 adapters are fully implemented with real drivers but E2E tests require live database instances. Unit tests cover DSN building, parameter translation, type normalization, and SQL generation for all 4 backends.
 
 ### Tier 3: Extended (Planned)
 
