@@ -230,28 +230,38 @@ The primary savings come from:
 
 ### Benchmark Results
 
-Measured with 5000 items, 3 iterations per scenario. Numbers vary by runtime and hardware.
+Measured with 5000 items, 3 iterations per scenario, on a quiet machine (load average < 1). Values > 1.0x indicate the compiled chain is faster.
 
-**Pull-side compilation** (strong wins for fast-path ops):
+**Pull-side compilation** (consistent wins for fast-path ops):
 
-| Scenario | Node.js (V8) | Bun (JSC) | Notes |
-|----------|-------------|-----------|-------|
-| map + filter (2 stages) | 4.9x | 2.9x | Fast path; solid improvement on both runtimes |
-| 5-stage pipeline | 2.1x | 3.3x | Fast path; Bun benefits more from reduced generator overhead |
-| 10-stage pipeline | 7.3x | 5.4x | Fast path; best case — many lightweight stages |
-| High-rejection filter | 0.7x | 1.6x | Fast path; V8 optimizes uncompiled generators well here |
-| window + map | 0.5x | 0.8x | General path; array-of-values overhead outweighs savings |
+| Scenario | Node.js (V8) | Bun (JSC) |
+|----------|:---:|:---:|
+| map + filter (2 stages) | 2.9x | 2.8x |
+| 5-stage pipeline | 2.7x | 2.4x |
+| 10-stage pipeline | 4.1x | 5.1x |
+| High-rejection filter (90%) | 1.5x | 1.0x |
+| window + map (general path) | 1.7x | 0.5x |
 
-**Push-side compilation** (regressions under investigation — see [issue #37](https://github.com/firebrandanalytics/ff-core-types/issues/37)):
+**Push-side compilation** (modest gains on V8, regressions on JSC — see [issue #37](https://github.com/firebrandanalytics/ff-core-types/issues/37)):
 
-| Scenario | Node.js (V8) | Bun (JSC) | Notes |
-|----------|-------------|-----------|-------|
-| map + filter (2 stages) | 1.8x | 0.8x | Mixed results across runtimes |
-| 5-stage pipeline | 0.7x | 1.1x | Regression on V8 |
-| 10-stage pipeline | 0.9x | 0.8x | Roughly neutral to regressive |
-| window batching | 0.9x | 0.8x | General path; no benefit |
+| Scenario | Node.js (V8) | Bun (JSC) |
+|----------|:---:|:---:|
+| map + filter (2 stages) | 1.3x | 0.9x |
+| 5-stage pipeline | 1.3x | 1.2x |
+| 10-stage pipeline | 1.1x | 0.9x |
+| window batching (general path) | 0.95x | 0.5x |
 
-**Takeaway**: Pull-side compilation with fast-path operators is the sweet spot — expect 2-7x speedups for pipelines with 3+ stages of map/filter/dedupe/reduce. Push-side compilation and general-path (window/buffer/flatMap) scenarios do not currently benefit and may regress; prefer uncompiled chains for those patterns until [issue #37](https://github.com/firebrandanalytics/ff-core-types/issues/37) is resolved.
+### Runtime Matters — Measure Your Own Workloads
+
+These numbers vary significantly between JavaScript engines. V8 (Node.js/Deno) and JavaScriptCore (Bun) optimize async generators, closures, and promise chains differently. A pipeline that compiles 4x faster on V8 may show no benefit — or even regress — on JSC, and vice versa.
+
+**Recommendations:**
+
+- **Always benchmark your actual pipeline** with your actual data shapes and volumes before committing to compiled chains in production. The included benchmark suite (`CompiledChainPerformance.test.ts`) can serve as a starting template.
+- **System load affects results** — async pipelines with many per-item `await` points are sensitive to OS scheduling pressure. Benchmark on a quiet system for reliable numbers.
+- **Pull-side fast-path ops are the safe bet** — `map`, `filter`, `dedupe`, `reduce`, and `callback` show consistent 2-5x wins across both runtimes. This is the recommended use case for compilation.
+- **Push-side and general-path compilation is runtime-dependent** — V8 shows modest gains (1.1-1.3x), JSC can regress. If you target multiple runtimes, consider leaving push chains uncompiled or gating compilation behind a runtime check.
+- **For long-running services**, consider measuring both compiled and interpreted throughput at startup and selecting the faster path dynamically. Since `CompiledPullChain` and `PullChain` both implement `PullObj`, and `CompiledPushChain` and `PushChainBuilder` both produce `PushObj`, they are drop-in interchangeable — making runtime selection straightforward.
 
 ---
 
