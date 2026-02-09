@@ -80,6 +80,7 @@ await chain.next("  Hello World  "); // { value: "HELLO WORLD", done: false }
 | [Metrics](./reference/metrics.md) | Capacity utilization snapshots, throughput counters, latency histograms, reporter interface |
 | [Utilities](./reference/utilities.md) | WaitObject, AsyncIteratorCombiner, PushPullBufferObj |
 | [BidirectionalChain API](./reference/bidirectional-chain.md) | Fluent request-response pipeline: factories, transforms, generator adapter |
+| [Chain Compilation](./reference/chain-compilation.md) | Fused pipeline compilation: 2-5x speedup by eliminating per-stage overhead |
 
 ### Tutorials
 

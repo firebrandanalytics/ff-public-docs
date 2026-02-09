@@ -162,6 +162,7 @@ The constructor validates that all limit values are non-negative and copies them
 | `increment` | `increment(amount: ResourceCost, cap?: ResourceCost): void` | Adds `amount` to available capacity without changing limits. Each resource is capped at `cap` (defaults to `limits`). Ignores keys not tracked by this source. Signals `waitObj`. Useful for token-bucket refill patterns. |
 | `setLimits` | `setLimits(newLimits: ResourceCost): void` | Adjusts capacity limits at runtime. Increasing a limit grows available capacity by the delta. Decreasing shrinks available (clamped to 0) — in-flight tasks are not revoked and release against the new ceiling. Supports partial updates (only specified keys change). Can add new resource keys. Signals `waitObj`. Throws on negative values. |
 | `tryAcquire` | `tryAcquire(cost: ResourceCost): boolean` | Atomic check-and-acquire in a single call. Returns `true` and decrements resources if all resources in `cost` are available (locally and in the parent chain); returns `false` and changes nothing otherwise. Equivalent to `canAcquire(cost)` followed by `acquireImmediate(cost)`, but expressed as one method for convenience. Prefer this over the two-step sequence when the calling code does not need to distinguish "not affordable" from other pre-acquisition logic. |
+| `reconcile` | `reconcile(estimated: ResourceCost, actual: ResourceCost): void` | Adjusts capacity bookkeeping after actual costs are known. **Overestimate** (estimated > actual): surplus returned to available, capped at limits. **Underestimate** (estimated < actual): deficit deducted from available, clamped to 0. Propagates to parent chain. Signals `waitObj`. After reconciliation, `release(actual)` (not estimated) when the task completes. |
 | `validateCost` | `validateCost(cost: ResourceCost): boolean` | Checks if a cost is satisfiable in principle (no resource exceeds total capacity). Call at enqueue time to reject impossible tasks early. Checks the parent chain recursively. |
 
 **Usage Example:**
@@ -203,6 +204,29 @@ const team2 = new ResourceCapacitySource({ gpu: 12 }, global);
 const hugeTask: ResourceCost = { gpu: 11 };
 console.log(team2.canAcquire(hugeTask)); // false (11 <= 12 local, but 11 > 10 global)
 ```
+
+**Reconciliation Example (LLM token estimation):**
+
+```typescript
+const capacity = new ResourceCapacitySource({ tokens: 10000 });
+
+// Estimate 300 tokens for an LLM call
+const estimated: ResourceCost = { tokens: 300 };
+capacity.tryAcquire(estimated);
+// available: { tokens: 9700 }
+
+// After the call completes, actual usage was 220 tokens
+const actual: ResourceCost = { tokens: 220 };
+capacity.reconcile(estimated, actual);
+// Overestimate: 80 tokens returned to available
+// available: { tokens: 9780 }
+
+// When the task finishes, release the ACTUAL cost (not estimated)
+capacity.release(actual);
+// available: { tokens: 10000 }
+```
+
+Reconciliation works with hierarchical parent chains and `QuotaCapacitySource`. In quota mode, `release()` is a no-op but `reconcile()` still works — it adjusts the bookkeeping from the original `tryAcquire` without restoring consumed quota.
 
 ---
 
