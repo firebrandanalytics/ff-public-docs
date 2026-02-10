@@ -89,6 +89,9 @@ Execute pre-queries against different database connections, with results automat
 ### Scratch Pad (Phase 3A)
 Per-identity SQLite databases for persisting intermediate results. Use `save_as` on any QueryAST request to save results, then query them in subsequent requests using the `scratch:<identity>` connection.
 
+### Dictionary Integration (Phase 3)
+Stored view definitions now appear as first-class entries in `GetSchema` responses alongside real database tables (type `stored_view`). When views are created or updated via the Admin API, a probe query (LIMIT 1) automatically infers output column types if no explicit schema is provided. Namespace visibility filtering ensures agent-scoped views are only visible to the owning agent.
+
 ### Enterprise Database Support (Phase 3D)
 Full adapter and serializer implementations for SQL Server, Oracle, Snowflake, and Databricks. Each includes dialect-specific SQL generation (quoting, parameter styles, LIMIT/OFFSET syntax, boolean literals, function translation), VALUES CTE renderers for staged queries, and type normalization.
 

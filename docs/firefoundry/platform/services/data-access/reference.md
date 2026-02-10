@@ -131,6 +131,16 @@ message StagedQueryTranslation {
 }
 ```
 
+### SchemaResponse — Table Types
+
+| Type | Description |
+|------|-------------|
+| `table` | Real database table |
+| `view` | Real database view |
+| `stored_view` | Stored view definition managed by the service |
+
+Stored views are automatically included in schema responses when they match the requested connection and are visible to the caller's identity scope.
+
 ## Admin API
 
 ### Connection Management

@@ -311,6 +311,43 @@ curl -s -X POST "$DA_HOST/v1/connections/scratch:user:tutorial/query-ast" \
 
 The scratch pad connection name is `scratch:<identity>`. You can query any table that was previously saved by the same identity.
 
+## 10. Discover Stored Views in Schema
+
+Stored views appear in schema responses alongside real tables:
+
+```bash
+curl -s "$DA_HOST/v1/connections/warehouse/schema" \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: $IDENTITY" | jq '.tables[] | select(.type == "stored_view")'
+```
+
+Response:
+```json
+{
+  "name": "active_customers",
+  "type": "stored_view",
+  "columns": [
+    { "name": "id", "type": "INTEGER", "normalizedType": "INTEGER", "nullable": true },
+    { "name": "name", "type": "VARCHAR", "normalizedType": "VARCHAR", "nullable": true }
+  ]
+}
+```
+
+Stored views are created via the Admin API and auto-probed for column types. Query them like any table:
+
+```bash
+curl -s -X POST "$DA_HOST/v1/connections/warehouse/query-ast" \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: $IDENTITY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "select": {
+      "columns": [{ "expr": { "star": {} } }],
+      "from": { "table": { "table": "active_customers" } }
+    }
+  }' | jq
+```
+
 ## Next Steps
 
 - Read [Concepts](./concepts.md) for deeper understanding of ACL, staged queries, and stored definitions

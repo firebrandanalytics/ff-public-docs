@@ -310,6 +310,35 @@ Functions stored as AST definitions that return a single value. Called in expres
 
 Functions called in FROM/JOIN position that return rowsets. Expanded as subqueries with parameter binding.
 
+## Dictionary Integration
+
+### Schema Augmentation
+
+Stored view definitions appear in `GetSchema` responses as entries with `type: "stored_view"`, alongside real database tables and views. This means AI agents can discover stored views the same way they discover tables — through the schema endpoint.
+
+Rules:
+- Only views matching the requested connection are included
+- Views never shadow real tables (if a real table and a stored view share a name, the real table wins)
+- Namespace visibility is enforced: `system` views are visible to all, `app:X` views only to the matching app identity, `agent:X` views only to the matching agent
+- Output columns are included when available (from explicit schema or probe inference)
+
+### Probe Queries
+
+When a stored view is created or updated without an explicit `output_schema`, the service automatically runs a **probe query** — it executes the view's AST with `LIMIT 1` to infer the output column types from the database's response metadata.
+
+- Parameterized views (those with `params`) are skipped — they need real arguments to execute
+- Views with an explicit `output_schema` are not probed (the explicit schema is used as-is)
+- Probe failures are logged but non-fatal — the view is still saved, just without column metadata
+
+### View Discovery in Practice
+
+```
+1. Admin creates view: POST /admin/views { name: "active_users", connection: "warehouse", ast: ... }
+2. Service auto-probes: SELECT * FROM (view AST) LIMIT 1 → infers columns [id: INTEGER, name: VARCHAR, ...]
+3. Agent calls GetSchema("warehouse") → sees "active_users" (type: stored_view) with inferred columns
+4. Agent queries: QueryAST { from: "active_users" } → view expands transparently
+```
+
 ## Security Model
 
 - **No inline credentials**: Admin API rejects connections with inline passwords
