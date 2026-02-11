@@ -395,7 +395,7 @@ ff-eg-read search nodes-scoped --page 1 --size 5 \
   --order-by '{"created": "desc"}' | jq '.result[].id'
 ```
 
-> **Tip:** Throughout this tutorial, whenever a command requires `<entity-id>`, you can always use `search nodes-scoped` to find it. The `--condition` filter supports `specific_type_name`, `status`, `name`, and other node columns. The `--order-by` option accepts `created` or `modified` with `asc` or `desc`. Always include `--page 1` when using `--size`.
+> **Tip:** Throughout this tutorial, whenever a command requires `<entity-id>`, you can always use `search nodes-scoped` to find it. The `--condition` filter supports `specific_type_name`, `status`, `name`, and other node columns. The `--order-by` option accepts `created` or `modified` with `asc` or `desc`..
 
 ### Read the Return Value and Progress Envelopes
 
