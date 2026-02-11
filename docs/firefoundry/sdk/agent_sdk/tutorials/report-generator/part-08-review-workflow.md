@@ -621,10 +621,7 @@ ff-sdk-cli invoke <review-step-1-id> \
 Use `ff-eg-read` to see the full entity tree:
 
 ```bash
-ff-eg-read node get <workflow-entity-id> \
-  --mode=internal \
-  --gateway=http://localhost \
-  --internal-port=8180
+ff-eg-read node get <workflow-entity-id>
 ```
 
 You should see the workflow entity with child edges to `wrapped_0`, `review_0`, `wrapped_1`, and `review_1` -- a complete audit trail of every iteration.
@@ -634,7 +631,7 @@ You should see the workflow entity with child edges to `wrapped_0`, `review_0`, 
 After a revision cycle, use `ff-eg-read` to verify that feedback was stored in the config column (not data):
 
 ```bash
-ff-eg-read node get <wrapped-1-id> --mode=internal --gateway=http://localhost --internal-port=8180
+ff-eg-read node get <wrapped-1-id>
 ```
 
 In the response, you should see the user data and system metadata cleanly separated:

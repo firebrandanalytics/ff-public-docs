@@ -548,12 +548,10 @@ After the pipeline completes, use `ff-eg-read` to examine the parent-child relat
 
 ```bash
 # View the parent entity
-ff-eg-read node get <parent-entity-id> --mode=internal \
-  --gateway=http://localhost --internal-port=8180
+ff-eg-read node get <parent-entity-id>
 
 # List edges from the parent entity
-ff-eg-read edges list <parent-entity-id> \
-  --gateway=http://localhost --internal-port=8180
+ff-eg-read edges list <parent-entity-id>
 ```
 
 You should see a `Calls` edge from the `ReportEntity` to the `ReportGenerationEntity`. This edge was created automatically by `appendOrRetrieveCall`.
@@ -578,8 +576,7 @@ You should see a `Calls` edge from the `ReportEntity` to the `ReportGenerationEn
 View the child entity to see its stored data and result:
 
 ```bash
-ff-eg-read node get <report-generation-entity-id> --mode=internal \
-  --gateway=http://localhost --internal-port=8180
+ff-eg-read node get <report-generation-entity-id>
 ```
 
 The child entity's data will contain:
@@ -604,8 +601,7 @@ Stage 2 should complete almost instantly because the child entity's result is al
 Check the LLM call that was made during Stage 2:
 
 ```bash
-ff-telemetry-read calls list --entity-id <report-generation-entity-id> \
-  --gateway=http://localhost --internal-port=8180
+ff-telemetry-read calls list --entity-id <report-generation-entity-id>
 ```
 
 This shows the broker request made by `ReportGenerationBot`, including the prompt that was sent and the LLM's response.

@@ -340,7 +340,7 @@ ff-sdk-cli invoke-blob <entity-id> process_document \
 Check that the working memory ID was saved to entity data:
 
 ```bash
-ff-eg-read node get <entity-id> --mode=internal --gateway=http://localhost --internal-port=8180
+ff-eg-read node get <entity-id>
 ```
 
 In the response, you should see:
@@ -362,13 +362,13 @@ Use `ff-wm-read` to inspect the stored file:
 
 ```bash
 # List working memory records for this entity
-ff-wm-read list --entity-id <entity-id> --gateway=http://localhost --internal-port=8180
+ff-wm-read list --entity-id <entity-id>
 
 # Get details for a specific working memory record
-ff-wm-read get <working-memory-id> --gateway=http://localhost --internal-port=8180
+ff-wm-read get <working-memory-id>
 
 # Download the stored file
-ff-wm-read download <working-memory-id> --output ./downloaded-document.pdf --gateway=http://localhost --internal-port=8180
+ff-wm-read download <working-memory-id> --output ./downloaded-document.pdf
 ```
 
 The `list` command shows all working memory records linked to the entity. The `get` command shows metadata including content type, file size, and custom metadata fields. The `download` command retrieves the actual file bytes.

@@ -236,16 +236,15 @@ ff-sdk-cli api call report-status \
 
 ## Step 4: Verify with Diagnostic Tools
 
+> **Note:** The commands below assume you have the `.env` file from [Part 1](./part-01-hello-entity.md) in your project root. All FF diagnostic tools auto-load connection settings from this file, so no `--mode`, `--gateway`, or `--internal-port` flags are needed.
+
 ### 4.1: Inspect the Entity Graph with ff-eg-read
 
 Verify the entity hierarchy was created correctly:
 
 ```bash
 # Get the workflow entity
-ff-eg-read node get $ENTITY_ID \
-  --mode=internal \
-  --gateway=http://localhost \
-  --internal-port=8180
+ff-eg-read node get $ENTITY_ID
 ```
 
 This shows the entity's data, status, and metadata. Check that:
@@ -257,11 +256,7 @@ List child entities (the wrapped entity and review steps):
 
 ```bash
 # Get outgoing edges from the workflow entity
-ff-eg-read edges from $ENTITY_ID \
-  --mode=internal \
-  --gateway=http://localhost \
-  --internal-port=8180
-```
+ff-eg-read edges from $ENTITY_ID```
 
 You should see `Calls` edges to:
 - `wrapped_0` (ReportEntity) -- the main workflow orchestrator
@@ -272,11 +267,7 @@ If you rejected and revised, you will also see `wrapped_1`, `review_1`, etc.
 Drill into the ReportEntity to see its children:
 
 ```bash
-ff-eg-read edges from <wrapped-0-id> \
-  --mode=internal \
-  --gateway=http://localhost \
-  --internal-port=8180
-```
+ff-eg-read edges from <wrapped-0-id>```
 
 This shows the `Calls` edge to `ReportGenerationEntity` (the AI generation step).
 
@@ -286,11 +277,7 @@ When reviewing entities that participate in the feedback loop, inspect the `conf
 
 ```bash
 # Inspect the ReportEntity (wrapped_0)
-ff-eg-read node get <wrapped-0-id> \
-  --mode=internal \
-  --gateway=http://localhost \
-  --internal-port=8180
-```
+ff-eg-read node get <wrapped-0-id>```
 
 In the response, look for the separation between `data` and `config`:
 
@@ -329,10 +316,7 @@ Check that the original document, extracted text, and final PDF were stored in w
 
 ```bash
 # List working memory records for the workflow entity
-ff-wm-read list --entity-id $ENTITY_ID \
-  --gateway=http://localhost \
-  --internal-port=8180
-```
+ff-wm-read list --entity-id $ENTITY_ID```
 
 You should see:
 - The original uploaded document (`stage: original_upload`)
@@ -340,10 +324,7 @@ You should see:
 
 ```bash
 # List working memory records for the ReportEntity (wrapped_0)
-ff-wm-read list --entity-id <wrapped-0-id> \
-  --gateway=http://localhost \
-  --internal-port=8180
-```
+ff-wm-read list --entity-id <wrapped-0-id>```
 
 You should see:
 - The extracted text (`stage: text_extraction`)
@@ -353,10 +334,7 @@ Download the generated PDF to verify it:
 
 ```bash
 ff-wm-read download <pdf-working-memory-id> \
-  --output ./generated-report.pdf \
-  --gateway=http://localhost \
-  --internal-port=8180
-```
+  --output ./generated-report.pdf```
 
 Open `generated-report.pdf` to confirm the report was generated correctly with the expected content, formatting, and orientation.
 
@@ -366,10 +344,7 @@ Verify that the LLM broker was called correctly:
 
 ```bash
 # List recent telemetry events for this entity
-ff-telemetry-read traces --entity-id $ENTITY_ID \
-  --gateway=http://localhost \
-  --internal-port=8180
-```
+ff-telemetry-read traces --entity-id $ENTITY_ID```
 
 Check:
 - The model pool used (`firebrand_completion_default`)
@@ -381,10 +356,7 @@ If you ran a revision cycle, you should see multiple LLM calls -- one per iterat
 
 ```bash
 # Get detailed trace for a specific call
-ff-telemetry-read trace <trace-id> \
-  --gateway=http://localhost \
-  --internal-port=8180
-```
+ff-telemetry-read trace <trace-id>```
 
 This shows the full prompt that was sent to the LLM, which is invaluable for debugging prompt issues.
 
@@ -445,11 +417,7 @@ ff-sdk-cli invoke <review-step-id> \
 If you have lost the ReviewStep entity ID, find it via the entity graph:
 
 ```bash
-ff-eg-read edges from $ENTITY_ID \
-  --mode=internal \
-  --gateway=http://localhost \
-  --internal-port=8180
-```
+ff-eg-read edges from $ENTITY_ID```
 
 Look for the `ReviewStep` child entity.
 
@@ -530,9 +498,17 @@ Over this 10-part series, you have used:
 4. **The entity graph is your audit trail** -- Every entity, every edge, every version is preserved. You can reconstruct exactly what happened during any workflow run.
 5. **Three services to configure** -- LLM Broker (gRPC), Context Service (HTTP), and Doc-Proc Service (HTTP). All are specified via environment variables.
 
-## Series Complete
+## Agent Bundle Complete
 
-You have completed the Document-to-Report Generator tutorial series. You now have the knowledge to build production-grade agent bundles with the FireFoundry Agent SDK.
+You have completed the agent bundle portion of the Document-to-Report Generator tutorial. You now have a deployed, production-ready agent bundle that accepts documents, generates reports, and supports human review cycles.
+
+### Next: Building the Consumer Application
+
+Parts 11--13 continue with the **consumer side** -- building a backend that talks to your deployed agent bundle from a web application:
+
+- **[Part 11: Building the Consumer Backend](./part-11-consumer-backend.md)** -- Backend-for-Frontend (BFF) pattern with Next.js API routes
+- **[Part 12: Real-Time Progress Streaming](./part-12-progress-streaming.md)** -- SSE endpoints that bridge agent bundle iterators to the browser
+- **[Part 13: Review Interaction & Report Management](./part-13-review-and-management.md)** -- Human-in-the-loop review, report history, PDF downloads
 
 ### Where to Go From Here
 

@@ -388,7 +388,7 @@ The two runs should produce different HTML layouts. The portrait version will ha
 Use `ff-telemetry-read` to see exactly what prompt the LLM received:
 
 ```bash
-ff-telemetry-read broker-requests --entity-id <entity-id> --gateway=http://localhost --internal-port=8180
+ff-telemetry-read broker-requests --entity-id <entity-id>
 ```
 
 In the system message, you should see the five sections rendered in order, with the Layout section showing instructions specific to the orientation you chose. You should also see the Zod schema information that `StructuredOutputBotMixin` injected.

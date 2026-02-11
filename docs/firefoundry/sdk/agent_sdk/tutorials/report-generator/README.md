@@ -36,6 +36,14 @@ By the end of this series, you'll have a complete **Document-to-Report Generator
 | [9](./part-09-api-endpoints.md) | Custom API Endpoints | REST API for creating reports and checking status | `@ApiEndpoint` decorator, request validation |
 | [10](./part-10-deployment.md) | Deployment & Testing | Deploy to a cluster and verify end-to-end | `ff ops build`, `ff ops deploy`, `ff-sdk-cli`, `ff-eg-read`, `ff-telemetry-read` |
 
+**Building the Consumer Application** (Parts 11--13)
+
+| Part | Title | What You Build | Key Concepts |
+|------|-------|---------------|--------------|
+| [11](./part-11-consumer-backend.md) | Building the Consumer Backend | Next.js BFF that proxies to the agent bundle | `RemoteAgentBundleClient`, `RemoteEntityClient`, `call_api_endpoint_with_blobs` |
+| [12](./part-12-progress-streaming.md) | Real-Time Progress Streaming | SSE endpoint bridging iterators to the browser | `start_iterator`, `ReadableStream`, SSE protocol, envelope types |
+| [13](./part-13-review-and-management.md) | Review Interaction & Report Management | Review workflow UI, history, downloads, archiving | `invoke_entity_method`, `search_nodes_scoped`, `ContextServiceClient` |
+
 ## How to Use This Tutorial
 
 **Sequential approach**: Each part builds directly on the previous one. Start at Part 1 and work through in order.

@@ -586,7 +586,7 @@ Use `ff-wm-read` to inspect the extracted text stored in working memory:
 
 ```bash
 # Get the extracted_text_wm_id from the entity data
-ff-eg-read node get <entity-id> --mode=internal --gateway=http://localhost --internal-port=8180
+ff-eg-read node get <entity-id>
 
 # Download and inspect the extracted text
 ff-wm-read download <extracted-text-wm-id>
@@ -608,18 +608,29 @@ xdg-open report.pdf  # Linux
 Inspect the entity to confirm all working memory IDs are tracked:
 
 ```bash
-ff-eg-read node get <entity-id> --mode=internal --gateway=http://localhost --internal-port=8180
+ff-eg-read node get <entity-id>
 ```
 
 You should see `original_document_wm_id`, `extracted_text_wm_id`, and `pdf_working_memory_id` all populated in the entity's data.
 
-### Inspect Progress Envelopes After Completion
+### Inspect the Return Value and Progress Envelopes
 
-After the workflow finishes, you can use `ff-eg-read` to inspect the entity's final state and see what happened during processing:
+After the workflow finishes, use `ff-eg-read` to read the entity's return value and the progress envelopes that were emitted during processing:
 
 ```bash
-# View the entity's status, data, and metadata
-ff-eg-read node get <entity-id> --mode=internal --gateway=http://localhost --internal-port=8180
+# Get the entity's return value (the final result from run_impl)
+ff-eg-read node io <entity-id>
+
+# Get the progress envelopes (every INTERNAL_UPDATE, STATUS, VALUE event)
+ff-eg-read node progress <entity-id>
+```
+
+The `node io` output shows the entity's final return value -- this should contain `pdf_working_memory_id` and `extracted_text_wm_id`. The `node progress` output shows the same envelopes you saw streaming from `iterator run`, but persisted in the entity graph for after-the-fact inspection.
+
+You can also verify the entity's data was fully populated:
+
+```bash
+ff-eg-read node get <entity-id>
 ```
 
 Check that:
@@ -628,7 +639,7 @@ Check that:
 - `data.extracted_text_wm_id` contains the extracted text's working memory ID
 - `data.pdf_working_memory_id` contains the generated PDF's working memory ID
 
-This is the "after the fact" complement to the real-time progress streaming you saw during `iterator run`. The entity graph is your audit trail -- every piece of state is persisted and inspectable.
+This is the "after the fact" complement to the real-time progress streaming. The entity graph is your audit trail -- every piece of state is persisted and inspectable.
 
 ---
 

@@ -338,13 +338,48 @@ You should see:
 3. A `VALUE` event with the stored text as the return value
 4. A `STATUS` event with `"status": "COMPLETED"`
 
+### Set Up Diagnostic Tool Configuration
+
+FireFoundry's CLI diagnostic tools (`ff-eg-read`, `ff-wm-read`, `ff-telemetry-read`) all share the same connection configuration. Rather than passing `--mode`, `--gateway`, and `--internal-port` flags on every command, create a `.env` file in your project root:
+
+**`.env`** (add to `.gitignore`):
+
+```bash
+# Shared configuration for all FF diagnostic tools
+FF_GATEWAY=http://localhost
+FF_PORT=8180
+FF_NAMESPACE=ff-dev
+FF_EG_AGENT_BUNDLE_ID=1ba3a4a6-4df4-49b5-9291-c0bacfe46201
+
+# For internal mode (direct port-forward to entity service)
+FF_MODE=internal
+```
+
+> **Note:** The tools auto-load `.env` from the current working directory. With this file in place, you can run all diagnostic commands without any connection flags. The rest of this tutorial assumes this `.env` file is set up.
+
 ### Inspect the Entity Graph
 
 Use `ff-eg-read` to verify the entity was created in the graph:
 
 ```bash
-ff-eg-read node get <entity-id> --mode=internal --gateway=http://localhost --internal-port=8180
+ff-eg-read node get <entity-id>
 ```
+
+### Read the Return Value and Progress Envelopes
+
+After a runnable entity completes, you can retrieve its output and the progress trail:
+
+```bash
+# Get the entity's return value (what run_impl returned)
+ff-eg-read node io <entity-id>
+
+# Get the progress envelopes (INTERNAL_UPDATE, STATUS, VALUE events)
+ff-eg-read node progress <entity-id>
+```
+
+The `node io` command shows the entity's input arguments and final return value. The `node progress` command shows every envelope the iterator yielded during execution -- the same events you saw in real-time from `ff-sdk-cli iterator run`, but persisted in the entity graph for after-the-fact inspection.
+
+> **Tip:** These two commands are your primary debugging tools whenever a workflow behaves unexpectedly. `node io` tells you what went in and what came out; `node progress` tells you what happened in between.
 
 ## What You've Built
 

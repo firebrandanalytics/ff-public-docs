@@ -416,7 +416,13 @@ The `VALUE` event contains your validated `REPORT_OUTPUT`. The `reasoning` field
 ### Inspect with ff-eg-read
 
 ```bash
-ff-eg-read node get <entity-id> --mode=internal --gateway=http://localhost --internal-port=8180
+ff-eg-read node get <entity-id>
+
+# Check the return value
+ff-eg-read node io <entity-id>
+
+# Review the progress envelopes
+ff-eg-read node progress <entity-id>
 ```
 
 ### Check LLM Call Details with ff-telemetry-read
@@ -424,7 +430,7 @@ ff-eg-read node get <entity-id> --mode=internal --gateway=http://localhost --int
 To see the actual prompt that was sent to the LLM, including the injected schema:
 
 ```bash
-ff-telemetry-read broker-requests --entity-id <entity-id> --gateway=http://localhost --internal-port=8180
+ff-telemetry-read broker-requests --entity-id <entity-id>
 ```
 
 This shows the full request/response, including how `StructuredOutputBotMixin` injected the Zod schema description into the system prompt.

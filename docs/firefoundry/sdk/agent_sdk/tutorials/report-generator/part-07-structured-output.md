@@ -415,8 +415,7 @@ When validation fails, the mixin returns the validation errors to the bot framew
 You can inspect validation failures via `ff-telemetry-read`:
 
 ```bash
-ff-telemetry-read calls list --entity-id <entity-id> \
-  --gateway=http://localhost --internal-port=8180
+ff-telemetry-read calls list --entity-id <entity-id>
 ```
 
 Look for calls with `status: "error"` and check the error details for Zod validation messages.
@@ -587,8 +586,7 @@ The `VALUE` event at the end should contain a JSON object with exactly two field
 To see exactly what schema documentation the LLM received, use `ff-telemetry-read` to view the full prompt:
 
 ```bash
-ff-telemetry-read calls list --entity-id <report-generation-entity-id> \
-  --gateway=http://localhost --internal-port=8180
+ff-telemetry-read calls list --entity-id <report-generation-entity-id>
 ```
 
 Look for the system message that contains the schema documentation. It should read something like:
