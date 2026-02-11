@@ -371,30 +371,31 @@ The commands above require an entity ID. If you don't have it -- for example bec
 
 ```bash
 # List the 10 most recent entities (any type)
-ff-eg-read search nodes-scoped --order-by '{"created_at": "desc"}' --size 10
+ff-eg-read search nodes-scoped --page 1 --size 10 --order-by '{"created": "desc"}'
 
-# Find entities of a specific type
-ff-eg-read search nodes-scoped --condition '{"entity_type": {"$eq": "TextDocumentEntity"}}'
+# Find entities of a specific type (use the @EntityMixin name)
+ff-eg-read search nodes-scoped --page 1 --size 10 \
+  --condition '{"specific_type_name": "TextDocumentEntity"}'
 
 # Find failed entities
-ff-eg-read search nodes-scoped --condition '{"status": {"$eq": "Failed"}}' --size 5
+ff-eg-read search nodes-scoped --page 1 --size 5 \
+  --condition '{"status": "Failed"}'
 
 # Combine filters: recent entities of a specific type
-ff-eg-read search nodes-scoped \
-  --condition '{"entity_type": {"$eq": "TextDocumentEntity"}}' \
-  --order-by '{"created_at": "desc"}' \
-  --size 5
+ff-eg-read search nodes-scoped --page 1 --size 5 \
+  --condition '{"specific_type_name": "TextDocumentEntity"}' \
+  --order-by '{"created": "desc"}'
 ```
 
 Extract just the IDs with `jq`:
 
 ```bash
-ff-eg-read search nodes-scoped \
-  --condition '{"entity_type": {"$eq": "TextDocumentEntity"}}' \
-  --order-by '{"created_at": "desc"}' --size 5 | jq '.result[].id'
+ff-eg-read search nodes-scoped --page 1 --size 5 \
+  --condition '{"specific_type_name": "TextDocumentEntity"}' \
+  --order-by '{"created": "desc"}' | jq '.result[].id'
 ```
 
-> **Tip:** Throughout this tutorial, whenever a command requires `<entity-id>`, you can always use `search nodes-scoped` to find it. The `--condition` filter supports `entity_type`, `status`, `name`, and other node fields. The `--order-by` option accepts `created_at` or `updated_at` with `asc` or `desc`.
+> **Tip:** Throughout this tutorial, whenever a command requires `<entity-id>`, you can always use `search nodes-scoped` to find it. The `--condition` filter supports `specific_type_name`, `status`, `name`, and other node columns. The `--order-by` option accepts `created` or `modified` with `asc` or `desc`. Always include `--page 1` when using `--size`.
 
 ### Read the Return Value and Progress Envelopes
 
