@@ -365,6 +365,37 @@ Use `ff-eg-read` to verify the entity was created in the graph:
 ff-eg-read node get <entity-id>
 ```
 
+### Find Entities When You Don't Know the ID
+
+The commands above require an entity ID. If you don't have it -- for example because you lost the terminal output, or something went wrong and you want to see what was created -- use `search nodes-scoped` to query the entity graph:
+
+```bash
+# List the 10 most recent entities (any type)
+ff-eg-read search nodes-scoped --order-by '{"created_at": "desc"}' --size 10
+
+# Find entities of a specific type
+ff-eg-read search nodes-scoped --condition '{"entity_type": {"$eq": "TextDocumentEntity"}}'
+
+# Find failed entities
+ff-eg-read search nodes-scoped --condition '{"status": {"$eq": "Failed"}}' --size 5
+
+# Combine filters: recent entities of a specific type
+ff-eg-read search nodes-scoped \
+  --condition '{"entity_type": {"$eq": "TextDocumentEntity"}}' \
+  --order-by '{"created_at": "desc"}' \
+  --size 5
+```
+
+Extract just the IDs with `jq`:
+
+```bash
+ff-eg-read search nodes-scoped \
+  --condition '{"entity_type": {"$eq": "TextDocumentEntity"}}' \
+  --order-by '{"created_at": "desc"}' --size 5 | jq '.result[].id'
+```
+
+> **Tip:** Throughout this tutorial, whenever a command requires `<entity-id>`, you can always use `search nodes-scoped` to find it. The `--condition` filter supports `entity_type`, `status`, `name`, and other node fields. The `--order-by` option accepts `created_at` or `updated_at` with `asc` or `desc`.
+
 ### Read the Return Value and Progress Envelopes
 
 After a runnable entity completes, you can retrieve its output and the progress trail:
