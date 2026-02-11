@@ -65,7 +65,6 @@ import {
   BotRequestArgs,
   Context,
   FeedbackRunnableEntityMixin,
-  FeedbackRequestArgs,
   logger
 } from '@firebrandanalytics/ff-agent-sdk';
 import { AddMixins } from '@firebrandanalytics/shared-utils';
@@ -78,7 +77,7 @@ import { ReportBundleConstructors } from '../constructors.js';
  * Data stored in the ReportGenerationEntity.
  * This is set by the parent orchestrator via appendOrRetrieveCall.
  */
-interface ReportGenerationEntityDTOData extends FeedbackRequestArgs<string> {
+interface ReportGenerationEntityDTOData {
   plain_text: string;                          // Extracted document text
   orientation: 'portrait' | 'landscape';       // Page layout
   user_prompt: string;                          // User's instructions
@@ -204,20 +203,14 @@ import {
   EntityNodeTypeHelper,
   EntityFactory,
   WorkingMemoryProvider,
-  getContextServiceClient,
-  FeedbackRequestArgs,
   logger
 } from '@firebrandanalytics/ff-agent-sdk';
+import { ContextServiceClient } from '@firebrandanalytics/cs-client';
 import { UUID, EntityInstanceNodeDTO } from '@firebrandanalytics/shared-types';
 import { DocProcClient } from '@firebrandanalytics/doc-proc-client';
 import { ReportGenerationEntity } from './ReportGenerationEntity.js';
 
-/**
- * Updated data interface.
- * Now extends FeedbackRequestArgs to support revision cycles
- * when used with a ReviewableEntity wrapper (Part 8).
- */
-interface ReportEntityDTOData extends FeedbackRequestArgs<string> {
+interface ReportEntityDTOData {
   prompt: string;
   orientation: 'portrait' | 'landscape';
   original_document_wm_id?: string;
@@ -256,14 +249,9 @@ type REPORT_WORKFLOW_OUTPUT = {
 protected override async *run_impl(): AsyncGenerator<any, REPORT_WORKFLOW_OUTPUT, never> {
   const startTime = Date.now();
   const dto = await this.get_dto();
-  const {
-    prompt,
-    orientation,
-    original_document_wm_id,
-    _ff_feedback,
-    _ff_previous_result,
-    _ff_version
-  } = dto.data;
+  const { prompt, orientation, original_document_wm_id } = dto.data;
+  // Feedback context is stored in the config column by ReviewableEntity (Part 8)
+  const config = (dto as any).config || {};
 
   if (!original_document_wm_id) {
     throw new Error('No document uploaded - original_document_wm_id is missing');
@@ -317,10 +305,7 @@ protected override async *run_impl(): AsyncGenerator<any, REPORT_WORKFLOW_OUTPUT
       {
         plain_text: extractedText,
         orientation: orientation,
-        user_prompt: prompt,
-        _ff_feedback,              // Forward feedback for revision cycles
-        _ff_previous_result,
-        _ff_version
+        user_prompt: prompt
       }
     );
 

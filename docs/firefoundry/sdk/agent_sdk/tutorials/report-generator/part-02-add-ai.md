@@ -79,6 +79,7 @@ import {
   StructuredPromptGroup,
   PromptGroup,
   PromptInputText,
+  RegisterBot,
 } from '@firebrandanalytics/ff-agent-sdk';
 import { ComposeMixins } from '@firebrandanalytics/shared-utils';
 import { ReportOutputSchema, REPORT_OUTPUT } from '../schemas.js';
@@ -106,11 +107,15 @@ export type REPORT_BTH = BotTypeHelper<REPORT_PTH, REPORT_OUTPUT>;
 
 /**
  * Bot that generates HTML reports from document content.
- * 
+ *
+ * @RegisterBot registers this bot with the framework by name,
+ * enabling it to be discovered and referenced in the bot registry.
+ *
  * ComposeMixins creates a class that inherits behavior from:
  *   - MixinBot: core bot functionality (prompt rendering, LLM calls)
  *   - StructuredOutputBotMixin: Zod schema validation on LLM output
  */
+@RegisterBot('ReportGenerationBot')
 export class ReportGenerationBot extends ComposeMixins(
   MixinBot,
   StructuredOutputBotMixin,

@@ -3,7 +3,7 @@
 In this part, you'll add the ability to receive binary file uploads and store them in FireFoundry's **working memory** system. Working memory provides persistent blob storage tied to entities, so files survive restarts and can be referenced by ID throughout a processing pipeline.
 
 **What you'll learn:**
-- Initializing the context service client with `getContextServiceClient`
+- Initializing the context service client with `ContextServiceClient`
 - Creating a `WorkingMemoryProvider` for file operations
 - Storing files with `add_memory_from_buffer` and metadata
 - Receiving blob uploads via `ff-sdk-cli invoke-blob`
@@ -51,10 +51,10 @@ import {
   EntityNodeTypeHelper,
   EntityFactory,
   WorkingMemoryProvider,
-  getContextServiceClient,
   logger
 } from '@firebrandanalytics/ff-agent-sdk';
 import { UUID, EntityInstanceNodeDTO } from '@firebrandanalytics/shared-types';
+import { ContextServiceClient } from '@firebrandanalytics/cs-client';
 
 /**
  * Data stored in the ReportEntity
@@ -108,7 +108,7 @@ export class ReportEntity extends RunnableEntity<ReportEntityRETH> {
       'http://firefoundry-core-context-service.ff-dev.svc.cluster.local:50051';
     const CONTEXT_SERVICE_API_KEY = process.env.CONTEXT_SERVICE_API_KEY || '';
 
-    const context_client = getContextServiceClient({
+    const context_client = new ContextServiceClient({
       address: CONTEXT_SERVICE_ADDRESS,
       apiKey: CONTEXT_SERVICE_API_KEY,
     });
@@ -221,13 +221,15 @@ export class ReportEntity extends RunnableEntity<ReportEntityRETH> {
 }
 ```
 
-### Understanding getContextServiceClient
+### Understanding ContextServiceClient
 
-`getContextServiceClient` creates a gRPC client that connects to FireFoundry's context service. The context service manages working memory records, including blob storage and metadata.
+`ContextServiceClient` from `@firebrandanalytics/cs-client` connects to FireFoundry's context service. The context service manages working memory records, including blob storage and metadata.
 
 ```typescript
-const context_client = getContextServiceClient({
-  address: CONTEXT_SERVICE_ADDRESS,  // gRPC service address
+import { ContextServiceClient } from '@firebrandanalytics/cs-client';
+
+const context_client = new ContextServiceClient({
+  address: CONTEXT_SERVICE_ADDRESS,  // HTTP service address
   apiKey: CONTEXT_SERVICE_API_KEY,   // Optional API key for auth
 });
 ```
@@ -446,7 +448,7 @@ You now have:
 ## Key Takeaways
 
 1. **Working memory stores binary files** -- entity data stores JSON, working memory stores blobs. Bridge them with working memory IDs.
-2. **getContextServiceClient connects to the context service** -- it takes an address and optional API key, returning a gRPC client.
+2. **ContextServiceClient connects to the context service** -- instantiate it with an address and optional API key. Import from `@firebrandanalytics/cs-client`.
 3. **WorkingMemoryProvider wraps the client** -- use `add_memory_from_buffer` to store files with metadata.
 4. **entityNodeId links files to entities** -- every working memory record is associated with an entity node ID.
 5. **Metadata is your audit trail** -- store stage, timestamps, file sizes, and source information in the metadata field for debugging and tracking.

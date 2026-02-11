@@ -23,7 +23,7 @@ Before writing code, understand how the review system works.
 1. Runs a **wrapped entity** (your `ReportEntity`) to produce a result
 2. Creates a **ReviewStep** entity that pauses execution and waits for human input
 3. If the human **approves**, the workflow completes with the result
-4. If the human provides **feedback**, the workflow increments the version, merges the feedback into the wrapped entity's data, and re-runs from step 1
+4. If the human provides **feedback**, the workflow increments the version, stores the feedback in the wrapped entity's config column, and re-runs from step 1
 
 Each iteration creates a new named node (`wrapped_0`, `wrapped_1`, etc.) for idempotency -- completed nodes will not re-run if the workflow is restarted.
 
@@ -32,11 +32,11 @@ Each iteration creates a new named node (`wrapped_0`, `wrapped_1`, etc.) for ide
 For the revision cycle to work, the LLM needs to know what the reviewer said. Two mixins handle this:
 
 - **`FeedbackBotMixin`** adds a conditional feedback prompt to the bot. When `_ff_feedback` is present, it automatically injects a "Please address the following user feedback" section into the LLM prompt, along with the previous result as an assistant message for context.
-- **`FeedbackRunnableEntityMixin`** auto-injects feedback fields from the entity's DTO data into the bot request args during the `get_bot_request_args_pre()` hook.
+- **`FeedbackRunnableEntityMixin`** auto-injects feedback fields from the entity's **config column** into the bot request args during the `get_bot_request_args_pre()` hook. This keeps system metadata separate from user data.
 
-### FeedbackRequestArgs
+### FeedbackRequestArgs and the Config Column
 
-The `FeedbackRequestArgs<T>` interface defines three special fields that flow through the entire chain:
+The `FeedbackRequestArgs<T>` interface defines three special fields that flow through the review chain:
 
 ```typescript
 interface FeedbackRequestArgs<FeedbackType> {
@@ -46,7 +46,9 @@ interface FeedbackRequestArgs<FeedbackType> {
 }
 ```
 
-These fields are passed from `ReviewableEntity` into the wrapped entity's data, then from the entity into the bot request args, and finally into the prompt system where `FeedbackBotMixin` renders them.
+**These fields are stored in the entity's `config` column, not the `data` column.** This is an important design decision -- it keeps system metadata (feedback state, version tracking) cleanly separated from user-facing entity data (prompt, orientation, document IDs).
+
+`ReviewableEntity` writes feedback to the wrapped entity's config via `update_config()`. `FeedbackRunnableEntityMixin` reads from config and injects the fields into bot request args. Your entity data interfaces do NOT need to extend `FeedbackRequestArgs`.
 
 ## Step 1: Update ReportEntity to Accept Feedback
 
@@ -62,19 +64,19 @@ import {
   EntityNodeTypeHelper,
   EntityFactory,
   WorkingMemoryProvider,
-  getContextServiceClient,
-  FeedbackRequestArgs,
   logger
 } from '@firebrandanalytics/ff-agent-sdk';
+import { ContextServiceClient } from '@firebrandanalytics/cs-client';
 import { UUID, EntityInstanceNodeDTO } from '@firebrandanalytics/shared-types';
 import { DocProcClient } from '@firebrandanalytics/doc-proc-client';
 import { ReportGenerationEntity } from './ReportGenerationEntity.js';
 
 /**
  * Data stored in the ReportEntity.
- * Extends FeedbackRequestArgs so ReviewableEntity can inject feedback context.
+ * Note: feedback fields (_ff_feedback, etc.) are NOT in data --
+ * they are stored in the config column by ReviewableEntity.
  */
-interface ReportEntityDTOData extends FeedbackRequestArgs<string> {
+interface ReportEntityDTOData {
   prompt: string;
   orientation: 'portrait' | 'landscape';
   original_document_wm_id?: string;
@@ -85,46 +87,54 @@ interface ReportEntityDTOData extends FeedbackRequestArgs<string> {
 }
 ```
 
-In `run_impl`, destructure the feedback fields and pass them when creating the child entity:
+In `run_impl`, read user data from `dto.data` and feedback context from the config column:
 
 ```typescript
 protected override async *run_impl(): AsyncGenerator<any, REPORT_WORKFLOW_OUTPUT, never> {
   const dto = await this.get_dto();
-  const {
-    prompt,
-    orientation,
-    original_document_wm_id,
-    _ff_feedback,
-    _ff_previous_result,
-    _ff_version
-  } = dto.data;
+  const { prompt, orientation, original_document_wm_id } = dto.data;
+  // Feedback context is stored in config column by ReviewableEntity
+  const config = (dto as any).config || {};
 
   // ... (stages 1 and 3 remain the same) ...
 
-  // Stage 2: Pass feedback context to ReportGenerationEntity
+  // Stage 2: Generate HTML via child entity
   const reportGenEntity = await this.appendOrRetrieveCall(
     ReportGenerationEntity,
     `ai_html_generation`,
     {
       plain_text: extractedText,
       orientation: orientation,
-      user_prompt: prompt,
-      _ff_feedback,           // Reviewer's feedback (if any)
-      _ff_previous_result,    // Previous HTML output (if any)
-      _ff_version             // Iteration number
+      user_prompt: prompt
     }
   );
+
+  // Propagate feedback context from our config to child entity's config
+  // FeedbackRunnableEntityMixin on ReportGenerationEntity reads from config
+  if (config._ff_feedback !== undefined || config._ff_version !== undefined) {
+    try {
+      await reportGenEntity.update_config({
+        _ff_feedback: config._ff_feedback,
+        _ff_previous_result: config._ff_previous_result,
+        _ff_version: config._ff_version
+      });
+    } catch (err) {
+      logger.warn('[ReportEntity] Config propagation failed', {
+        error: err instanceof Error ? err.message : String(err)
+      });
+    }
+  }
 
   const aiResult = yield* await reportGenEntity.start();
   // ... rest of workflow ...
 }
 ```
 
-The key change is threading `_ff_feedback`, `_ff_previous_result`, and `_ff_version` through to the child entity. On the first run these will be `undefined` and have no effect. On revision runs, they carry the reviewer's feedback.
+The key change is propagating feedback from the config column to the child entity's config. `ReviewableEntity` stores feedback in this entity's config. This entity reads it and forwards it to `ReportGenerationEntity`'s config via `update_config()`. On the first run, the config has no feedback fields and the propagation is skipped. On revision runs, the feedback flows through to the child entity where `FeedbackRunnableEntityMixin` picks it up.
 
 ## Step 2: Add FeedbackRunnableEntityMixin to ReportGenerationEntity
 
-Update `ReportGenerationEntity` to use `FeedbackRunnableEntityMixin`. This mixin automatically reads feedback fields from the entity's DTO data and injects them into the bot request args via the `get_bot_request_args_pre()` hook.
+Update `ReportGenerationEntity` to use `FeedbackRunnableEntityMixin`. This mixin automatically reads feedback fields from the entity's config column and injects them into the bot request args via the `get_bot_request_args_pre()` hook.
 
 **`apps/report-bundle/src/entities/ReportGenerationEntity.ts`**:
 
@@ -140,8 +150,7 @@ import {
   EntityTypeHelper,
   BotRequestArgs,
   Context,
-  FeedbackRunnableEntityMixin,
-  FeedbackRequestArgs
+  FeedbackRunnableEntityMixin
 } from '@firebrandanalytics/ff-agent-sdk';
 import { AddMixins } from '@firebrandanalytics/shared-utils';
 import { UUID, EntityInstanceNodeDTO } from '@firebrandanalytics/shared-types';
@@ -151,9 +160,10 @@ import { ReportBundleConstructors } from '../constructors.js';
 
 /**
  * Data stored in the ReportGenerationEntity.
- * Extends FeedbackRequestArgs so feedback context flows through.
+ * Feedback fields are NOT in data -- FeedbackRunnableEntityMixin
+ * reads them from the config column automatically.
  */
-interface ReportGenerationEntityDTOData extends FeedbackRequestArgs<string> {
+interface ReportGenerationEntityDTOData {
   plain_text: string;
   orientation: 'portrait' | 'landscape';
   user_prompt: string;
@@ -199,7 +209,10 @@ export class ReportGenerationEntity extends AddMixins(
     return {
       input: data.user_prompt,
       context: new Context(),
+      // Feedback fields (_ff_feedback, _ff_previous_result, _ff_version) are
+      // auto-injected by FeedbackRunnableEntityMixin from config column via _preArgs
       args: {
+        ..._preArgs.args,
         plain_text: data.plain_text,
         orientation: data.orientation
       }
@@ -208,7 +221,7 @@ export class ReportGenerationEntity extends AddMixins(
 }
 ```
 
-Notice that `get_bot_request_args_impl` does not need to manually pass feedback fields. The `FeedbackRunnableEntityMixin` handles this in its `get_bot_request_args_pre()` hook, which runs before your `_impl` method. The SDK's pre/impl/post pattern merges both sets of args automatically.
+Notice that `get_bot_request_args_impl` does not manually set feedback fields. Instead, it spreads `_preArgs.args` which contains any feedback fields already injected by `FeedbackRunnableEntityMixin` in its `get_bot_request_args_pre()` hook. The mixin reads `_ff_feedback`, `_ff_previous_result`, and `_ff_version` from the entity's config column (set by the parent via `update_config()`) and merges them into the pre-args. Your `_impl` method just spreads them through.
 
 ## Step 3: Add FeedbackBotMixin to ReportGenerationBot
 
@@ -228,7 +241,8 @@ import {
   PromptGroup,
   PromptInputText,
   FeedbackBotMixin,
-  FeedbackRequestArgs
+  FeedbackRequestArgs,
+  RegisterBot
 } from '@firebrandanalytics/ff-agent-sdk';
 import { ComposeMixins } from '@firebrandanalytics/shared-utils';
 import { ReportGenerationPrompt } from '../prompts/ReportGenerationPrompt.js';
@@ -247,6 +261,7 @@ type REPORT_PROMPT_ARGS = {
 export type REPORT_PTH = PromptTypeHelper<REPORT_PROMPT_INPUT, REPORT_PROMPT_ARGS>;
 export type REPORT_BTH = BotTypeHelper<REPORT_PTH, REPORT_OUTPUT>;
 
+@RegisterBot('ReportGenerationBot')
 export class ReportGenerationBot extends ComposeMixins(
   MixinBot,
   StructuredOutputBotMixin,
@@ -311,11 +326,11 @@ import {
   ReviewableEntity,
   logger,
   WorkingMemoryProvider,
-  getContextServiceClient,
   EntityMixin,
   RunnableEntityTypeHelper,
   EntityNodeTypeHelper
 } from '@firebrandanalytics/ff-agent-sdk';
+import { ContextServiceClient } from '@firebrandanalytics/cs-client';
 import { UUID, EntityInstanceNodeDTO } from '@firebrandanalytics/shared-types';
 import { ReportEntityDTOData } from '@shared/types';
 import { ReportEntity } from './ReportEntity.js';
@@ -376,7 +391,7 @@ export class ReportReviewWorkflowEntity extends ReviewableEntity<
     const CONTEXT_SERVICE_API_KEY =
       process.env.CONTEXT_SERVICE_API_KEY || '';
 
-    const context_client = getContextServiceClient({
+    const context_client = new ContextServiceClient({
       address: CONTEXT_SERVICE_ADDRESS,
       apiKey: CONTEXT_SERVICE_API_KEY,
     });
@@ -479,7 +494,8 @@ ReportReviewWorkflowEntity.process_document_stream()
        v
   ReviewableEntity.run_impl() loop:
   |
-  |-- Step 1: appendOrRetrieveCall(ReportEntity, 'wrapped_0', { ...args, _ff_version: 0 })
+  |-- Step 1: appendOrRetrieveCall(ReportEntity, 'wrapped_0', { ...args })
+  |           update_config({ _ff_version: 0 })
   |           ReportEntity.run_impl()
   |             |-- Stage 1: Extract text
   |             |-- Stage 2: Generate HTML (via ReportGenerationEntity -> ReportGenerationBot)
@@ -501,8 +517,8 @@ ReportReviewWorkflowEntity.process_document_stream()
   |     |-- ReviewStep returns { message: 'feedback', data: 'Make the title bigger' }
   |     |-- currentVersion increments to 1
   |     |-- Loop continues:
-  |         |-- appendOrRetrieveCall(ReportEntity, 'wrapped_1', {
-  |         |     ...args,
+  |         |-- appendOrRetrieveCall(ReportEntity, 'wrapped_1', { ...args })
+  |         |-- update_config({
   |         |     _ff_feedback: 'Make the title bigger',
   |         |     _ff_previous_result: { reasoning, html_content, ... },
   |         |     _ff_version: 1
@@ -613,6 +629,33 @@ ff-eg-read node get <workflow-entity-id> \
 
 You should see the workflow entity with child edges to `wrapped_0`, `review_0`, `wrapped_1`, and `review_1` -- a complete audit trail of every iteration.
 
+### Inspect the Config Column
+
+After a revision cycle, use `ff-eg-read` to verify that feedback was stored in the config column (not data):
+
+```bash
+ff-eg-read node get <wrapped-1-id> --mode=internal --gateway=http://localhost --internal-port=8180
+```
+
+In the response, you should see the user data and system metadata cleanly separated:
+
+```json
+{
+  "data": {
+    "prompt": "Summarize the key findings",
+    "orientation": "portrait",
+    "original_document_wm_id": "wm-abc-..."
+  },
+  "config": {
+    "_ff_feedback": "Make the title larger and add an executive summary section at the top",
+    "_ff_previous_result": { "reasoning": "...", "html_content": "..." },
+    "_ff_version": 1
+  }
+}
+```
+
+This separation is the config column pattern in action -- `data` contains only the user's input, while `config` holds system metadata that drives the feedback loop.
+
 ## What You've Built
 
 You now have:
@@ -626,7 +669,7 @@ You now have:
 1. **ReviewableEntity handles the loop** -- You configure it with a wrapped entity class and a review prompt. It manages the iteration, version tracking, and ReviewStep creation automatically.
 2. **FeedbackBotMixin is conditional** -- It only adds the feedback prompt section when `_ff_feedback` is present. On the first run, the prompt is identical to what you had before.
 3. **FeedbackRunnableEntityMixin uses the pre/impl/post pattern** -- It injects feedback fields in the `pre` hook so your `impl` method does not need to handle them manually.
-4. **FeedbackRequestArgs is the contract** -- Any entity data interface that extends `FeedbackRequestArgs<T>` can participate in the review chain. The three fields (`_ff_feedback`, `_ff_previous_result`, `_ff_version`) are the standard mechanism.
+4. **Feedback flows through the config column** -- `ReviewableEntity` stores `_ff_feedback`, `_ff_previous_result`, and `_ff_version` in the wrapped entity's config (not data). `FeedbackRunnableEntityMixin` reads them from config and injects them into bot request args. Your entity data interfaces stay clean of system metadata.
 5. **process_document_stream belongs on the workflow entity** -- The outermost entity should own the blob upload because it is the entry point clients use. Inner entities receive data references (working memory IDs) rather than raw buffers.
 6. **Named nodes provide idempotency and audit trails** -- `wrapped_0`, `wrapped_1`, `review_0`, `review_1` are all preserved in the entity graph. If a workflow is interrupted and restarted, completed nodes are reused.
 

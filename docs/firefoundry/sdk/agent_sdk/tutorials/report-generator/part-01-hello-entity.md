@@ -23,21 +23,65 @@ ff agent-bundle create report-bundle
 This creates a monorepo with:
 ```
 report-generator/
+├── firefoundry.json              # Application-level config (lists components)
 ├── apps/
-│   └── report-bundle/          # Your agent bundle
+│   └── report-bundle/            # Your agent bundle
+│       ├── firefoundry.json      # Bundle-level config (port, resources, health)
 │       ├── src/
-│       │   ├── index.ts        # Server entry point
-│       │   ├── agent-bundle.ts # Bundle class
-│       │   └── constructors.ts # Entity registry
+│       │   ├── index.ts          # Server entry point
+│       │   ├── agent-bundle.ts   # Bundle class
+│       │   └── constructors.ts   # Entity registry
 │       ├── package.json
 │       ├── tsconfig.json
 │       └── Dockerfile
 ├── packages/
-│   └── shared-types/           # Shared type definitions
+│   └── shared-types/             # Shared type definitions
 ├── package.json
 ├── pnpm-workspace.yaml
 └── turbo.json
 ```
+
+### firefoundry.json Files
+
+FireFoundry uses `firefoundry.json` files at two levels:
+
+**Root level** (`report-generator/firefoundry.json`) -- declares the application and its components:
+
+```json
+{
+  "name": "report-generator",
+  "version": "1.0.0",
+  "type": "application",
+  "components": [
+    { "name": "report-bundle", "path": "apps/report-bundle" }
+  ]
+}
+```
+
+**Bundle level** (`apps/report-bundle/firefoundry.json`) -- configures the agent bundle for deployment:
+
+```json
+{
+  "name": "report-bundle",
+  "version": "1.0.0",
+  "description": "report-bundle agent bundle",
+  "type": "agent-bundle",
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "port": 3000,
+  "health": {
+    "endpoint": "/health",
+    "interval": 30,
+    "timeout": 3
+  },
+  "readiness": {
+    "endpoint": "/ready",
+    "initialDelay": 5
+  }
+}
+```
+
+The `ff ops build` and `ff ops deploy` commands read these files to know how to build and deploy your bundle.
 
 Install dependencies:
 
@@ -173,21 +217,25 @@ export const ReportBundleConstructors = {
 ```typescript
 import {
   FFAgentBundle,
-  app_provider,
+  createEntityClient,
   logger,
 } from "@firebrandanalytics/ff-agent-sdk";
 import { ReportBundleConstructors } from "./constructors.js";
+
+const APP_ID = "1ba3a4a6-4df4-49b5-9291-c0bacfe46201";
 
 export class ReportBundleAgentBundle extends FFAgentBundle<any> {
   constructor() {
     super(
       {
-        id: "1ba3a4a6-4df4-49b5-9291-c0bacfe46201",
+        id: APP_ID,
+        application_id: APP_ID,
         name: "ReportGenerator",
+        type: "agent_bundle",
         description: "Document-to-report generation service"
       },
       ReportBundleConstructors,
-      app_provider
+      createEntityClient(APP_ID)
     );
   }
 
@@ -197,6 +245,10 @@ export class ReportBundleAgentBundle extends FFAgentBundle<any> {
   }
 }
 ```
+
+**Key details:**
+- `application_id` links this bundle to a FireFoundry application. It must match the `id` you assign.
+- `createEntityClient(APP_ID)` creates an entity client scoped to this application for entity graph operations.
 
 **`apps/report-bundle/src/index.ts`**:
 

@@ -91,9 +91,9 @@ import {
   EntityNodeTypeHelper,
   EntityFactory,
   WorkingMemoryProvider,
-  getContextServiceClient,
   logger
 } from '@firebrandanalytics/ff-agent-sdk';
+import { ContextServiceClient } from '@firebrandanalytics/cs-client';
 import { UUID, EntityInstanceNodeDTO } from '@firebrandanalytics/shared-types';
 import { DocProcClient } from '@firebrandanalytics/doc-proc-client';
 
@@ -139,7 +139,7 @@ export class ReportEntity extends RunnableEntity<ReportEntityRETH> {
       'http://firefoundry-core-context-service.ff-dev.svc.cluster.local:50051';
     const CONTEXT_SERVICE_API_KEY = process.env.CONTEXT_SERVICE_API_KEY || '';
 
-    const context_client = getContextServiceClient({
+    const context_client = new ContextServiceClient({
       address: CONTEXT_SERVICE_ADDRESS,
       apiKey: CONTEXT_SERVICE_API_KEY,
     });
@@ -612,6 +612,23 @@ ff-eg-read node get <entity-id> --mode=internal --gateway=http://localhost --int
 ```
 
 You should see `original_document_wm_id`, `extracted_text_wm_id`, and `pdf_working_memory_id` all populated in the entity's data.
+
+### Inspect Progress Envelopes After Completion
+
+After the workflow finishes, you can use `ff-eg-read` to inspect the entity's final state and see what happened during processing:
+
+```bash
+# View the entity's status, data, and metadata
+ff-eg-read node get <entity-id> --mode=internal --gateway=http://localhost --internal-port=8180
+```
+
+Check that:
+- `status` is `Completed`
+- `data.original_document_wm_id` contains the uploaded document's working memory ID
+- `data.extracted_text_wm_id` contains the extracted text's working memory ID
+- `data.pdf_working_memory_id` contains the generated PDF's working memory ID
+
+This is the "after the fact" complement to the real-time progress streaming you saw during `iterator run`. The entity graph is your audit trail -- every piece of state is persisted and inspectable.
 
 ---
 

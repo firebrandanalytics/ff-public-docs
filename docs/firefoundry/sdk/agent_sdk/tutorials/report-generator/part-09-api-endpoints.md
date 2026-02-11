@@ -4,13 +4,14 @@ In this part, you'll add REST API endpoints to your agent bundle. Until now, all
 
 **What you'll learn:**
 - Using the `@ApiEndpoint` decorator to expose methods as HTTP endpoints
-- Creating POST endpoints for entity creation and GET endpoints for status queries
+- Creating POST endpoints with `acceptsBlobs: true` for single-call file upload and entity creation
+- Creating GET endpoints for status queries
 - Input validation patterns for API endpoints
 - Using `entity_factory.create_entity_node` to create entities with initial data
 - Using `entity_client.get_node` to retrieve entity data
-- The two-step pattern: API creates entity, then blob upload starts processing
+- Storing uploaded files in working memory within an API endpoint
 
-**What you'll build:** Two API endpoints -- `POST /api/create-report` to create a report workflow entity and `GET /api/report-status` to check its status.
+**What you'll build:** Two API endpoints -- `POST /api/create-report` to upload a document, create a report workflow entity, and start processing in a single call, and `GET /api/report-status` to check its status.
 
 ## Key Concepts
 
@@ -19,8 +20,8 @@ In this part, you'll add REST API endpoints to your agent bundle. Until now, all
 The `@ApiEndpoint` decorator marks methods on your agent bundle class as HTTP-exposable endpoints. The SDK automatically registers these as Express routes under the `/api/` prefix when the server starts.
 
 ```typescript
-@ApiEndpoint({ method: 'POST', route: 'create-report' })
-// Exposed as: POST /api/create-report
+@ApiEndpoint({ method: 'POST', route: 'create-report', acceptsBlobs: true })
+// Exposed as: POST /api/create-report (multipart form data)
 
 @ApiEndpoint({ method: 'GET', route: 'report-status' })
 // Exposed as: GET /api/report-status
@@ -38,16 +39,25 @@ The decorator accepts a configuration object with these options:
 | `responseType` | `'json' \| 'binary' \| 'iterator'` | `'json'` | Response format |
 | `contentType` | `string` | `'application/octet-stream'` | Content type for binary responses |
 | `filename` | `string` | -- | Filename for binary download responses |
-| `acceptsBlobs` | `boolean` | `false` | Whether endpoint accepts file uploads |
+| `acceptsBlobs` | `boolean` | `false` | Whether endpoint accepts multipart file uploads. When `true`, the SDK parses multipart form data and injects file buffers as the first argument(s), with the JSON body as the next argument. |
 
-### The Two-Step Blob Pattern
+### Single-Call File Upload with acceptsBlobs
 
-The `@ApiEndpoint` decorator handles JSON request/response natively, but binary file uploads require a different mechanism. The pattern for workflows that need file uploads is:
+The `@ApiEndpoint` decorator supports file uploads directly by setting `acceptsBlobs: true`. When enabled, the SDK automatically parses multipart form data and injects file buffers into your method arguments using blob placeholders.
 
-1. **API endpoint creates the entity** with initial configuration (prompt, orientation)
-2. **Client uploads the file** via `invoke_entity_method_with_blobs` (or `ff-sdk-cli iterator start-blob`)
+This means entity creation, file storage, and workflow initiation can all happen in a single API call -- no separate upload step needed.
 
-This separation keeps the API endpoint simple and lets the SDK's blob upload infrastructure handle the file transfer.
+```typescript
+@ApiEndpoint({ method: 'POST', route: 'create-report', acceptsBlobs: true })
+async createReport(
+  document: Buffer,           // Uploaded file, injected automatically
+  body: CreateReportRequest   // Parsed JSON from the form data
+): Promise<CreateReportResponse> {
+  // Create entity, store file in working memory, start workflow
+}
+```
+
+The SDK handles the multipart parsing. Clients send the file as a `file` field and the JSON body as a `data` field in multipart form data.
 
 ### entity_factory and entity_client
 
@@ -95,17 +105,19 @@ export interface ReportStatusResponse {
 
 ## Step 2: Add the Create Report Endpoint
 
-Open the agent bundle class and add a `createReport` method decorated with `@ApiEndpoint`.
+Open the agent bundle class and add a `createReport` method decorated with `@ApiEndpoint`. This endpoint uses `acceptsBlobs: true` to accept a file upload and JSON body in a single multipart request.
 
 **`apps/report-bundle/src/agent-bundle.ts`**:
 
 ```typescript
 import {
   FFAgentBundle,
-  app_provider,
+  createEntityClient,
   ApiEndpoint,
   logger,
+  WorkingMemoryProvider,
 } from "@firebrandanalytics/ff-agent-sdk";
+import { ContextServiceClient } from '@firebrandanalytics/cs-client';
 import { ReportBundleConstructors } from "./constructors.js";
 import type {
   CreateReportRequest,
@@ -113,39 +125,59 @@ import type {
   ReportStatusResponse
 } from '@shared/types';
 
+const APP_ID = "1ba3a4a6-4df4-49b5-9291-c0bacfe46201";
+
 export class ReportBundleAgentBundle extends FFAgentBundle<any> {
+  private working_memory_provider!: WorkingMemoryProvider;
+
   constructor() {
     super(
       {
-        id: "1ba3a4a6-4df4-49b5-9291-c0bacfe46201",
+        id: APP_ID,
+        application_id: APP_ID,
         name: "ReportGenerator",
+        type: "agent_bundle",
         description: "Document-to-report generation service"
       },
       ReportBundleConstructors,
-      app_provider
+      createEntityClient(APP_ID)
     );
   }
 
   override async init() {
     await super.init();
+
+    // Initialize working memory provider for file storage
+    const CONTEXT_SERVICE_ADDRESS = process.env.CONTEXT_SERVICE_ADDRESS ||
+      'http://firefoundry-core-context-service.ff-dev.svc.cluster.local:50051';
+    const CONTEXT_SERVICE_API_KEY = process.env.CONTEXT_SERVICE_API_KEY || '';
+
+    const context_client = new ContextServiceClient({
+      address: CONTEXT_SERVICE_ADDRESS,
+      apiKey: CONTEXT_SERVICE_API_KEY,
+    });
+    this.working_memory_provider = new WorkingMemoryProvider(context_client);
+
     logger.info("ReportGeneratorBundle initialized!");
-    logger.info("API endpoints:");
-    logger.info("   POST /api/create-report - Create report entity");
+    logger.info("API endpoints (single-call pattern with acceptsBlobs):");
+    logger.info("   POST /api/create-report - Upload document and start report workflow");
     logger.info("   GET  /api/report-status - Get report status");
   }
 
   /**
-   * Create a new report workflow entity.
+   * Create a report entity, store the uploaded document in working memory,
+   * and start the workflow -- all in a single API call.
    *
-   * This is step 1 of the two-step pattern:
-   * 1. Create entity via this endpoint (returns entity_id)
-   * 2. Upload document via iterator start-blob (triggers workflow)
+   * Uses acceptsBlobs: true so the SDK automatically parses multipart
+   * form data and injects file buffers into the method arguments.
    */
-  @ApiEndpoint({ method: 'POST', route: 'create-report' })
-  async createReport(body: CreateReportRequest): Promise<CreateReportResponse> {
+  @ApiEndpoint({ method: 'POST', route: 'create-report', acceptsBlobs: true })
+  async createReport(
+    document: Buffer,
+    body: CreateReportRequest
+  ): Promise<CreateReportResponse> {
     const { prompt, orientation = 'portrait' } = body;
 
-    // Validate input
     if (!prompt?.trim()) {
       throw new Error('Prompt is required and cannot be empty');
     }
@@ -154,10 +186,16 @@ export class ReportBundleAgentBundle extends FFAgentBundle<any> {
       throw new Error('Orientation must be "portrait" or "landscape"');
     }
 
-    logger.info('[API] Creating report entity', { prompt, orientation });
+    if (!document || document.length === 0) {
+      throw new Error('A document file is required');
+    }
 
-    // Create the workflow entity with initial data
-    const entityDto = await this.entity_factory.create_entity_node({
+    logger.info('[API] Creating report entity (single-call)', {
+      prompt, orientation, document_size: document.length
+    });
+
+    // 1. Create the workflow entity
+    const entity = await this.entity_factory.create_entity_node({
       app_id: this.get_app_id(),
       name: `report-${Date.now()}`,
       specific_type_name: 'ReportReviewWorkflowEntity',
@@ -171,23 +209,72 @@ export class ReportBundleAgentBundle extends FFAgentBundle<any> {
       }
     });
 
-    logger.info('[API] Report entity created', { entity_id: entityDto.id });
+    const entity_id = entity.id!;
 
-    return {
-      entity_id: entityDto.id
-    };
+    // 2. Store the document in working memory
+    const wmResult = await this.working_memory_provider.add_memory_from_buffer({
+      entityNodeId: entity_id,
+      name: `upload-${Date.now()}.pdf`,
+      description: 'Original document uploaded via single-call API',
+      contentType: 'application/pdf',
+      memoryType: 'file',
+      buffer: document,
+      metadata: {
+        upload_method: 'acceptsBlobs',
+        file_size: document.length,
+        uploaded_at: new Date().toISOString()
+      },
+    });
+
+    // 3. Update the entity's wrappedEntityArgs with the working memory ID
+    const dto = await entity.get_dto();
+    dto.data.wrappedEntityArgs.original_document_wm_id = wmResult.workingMemoryId;
+    await entity.update_data(dto.data);
+
+    // 4. Start the workflow via iterator (fire-and-forget)
+    const iterator = await entity.start();
+    (async () => {
+      try {
+        for await (const _envelope of iterator) {
+          // Workflow progresses in the background
+        }
+        logger.info('[API] Workflow completed', { entity_id });
+      } catch (err) {
+        logger.error('[API] Workflow failed', { entity_id, error: err });
+      }
+    })();
+
+    logger.info('[API] Report entity created and workflow started', { entity_id });
+
+    // 5. Return entity_id immediately
+    return { entity_id };
   }
 }
 ```
 
 **How it works:**
 
-- The `@ApiEndpoint({ method: 'POST', route: 'create-report' })` decorator registers this method as `POST /api/create-report`.
-- For POST endpoints, the SDK passes the parsed JSON request body as the first argument (`body`).
-- `this.entity_factory.create_entity_node()` creates a new `ReportReviewWorkflowEntity` in the entity graph with the user's prompt and orientation stored in `wrappedEntityArgs`.
-- The method returns the entity ID. The client will use this ID in the next step to upload a document.
+- The `@ApiEndpoint({ method: 'POST', route: 'create-report', acceptsBlobs: true })` decorator registers this method as `POST /api/create-report` with multipart support.
+- When `acceptsBlobs` is `true`, the SDK parses multipart form data. The uploaded file is injected as a `Buffer` in the first argument, and the parsed JSON body is injected as the second argument.
+- The method creates the entity, stores the uploaded document in working memory via `WorkingMemoryProvider`, updates the entity's data with the working memory ID, and starts the workflow iterator in the background.
+- The response returns immediately with the `entity_id`. Clients poll the status endpoint to track progress.
 
 Note the `app_id: this.get_app_id()` -- this associates the entity with this agent bundle so it can be found and managed later.
+
+### Working Memory in the Bundle
+
+The bundle initializes a `WorkingMemoryProvider` in `init()` using the same pattern as entity classes. This lets the endpoint store uploaded files before the workflow entity starts running:
+
+```typescript
+// In init()
+const context_client = new ContextServiceClient({
+  address: CONTEXT_SERVICE_ADDRESS,
+  apiKey: CONTEXT_SERVICE_API_KEY,
+});
+this.working_memory_provider = new WorkingMemoryProvider(context_client);
+```
+
+The `add_memory_from_buffer` call stores the file and returns a `workingMemoryId` that downstream workflow stages use to retrieve the document.
 
 ## Step 3: Add the Report Status Endpoint
 
@@ -239,10 +326,12 @@ Here is the complete agent bundle with both endpoints:
 ```typescript
 import {
   FFAgentBundle,
-  app_provider,
+  createEntityClient,
   ApiEndpoint,
   logger,
+  WorkingMemoryProvider,
 } from "@firebrandanalytics/ff-agent-sdk";
+import { ContextServiceClient } from '@firebrandanalytics/cs-client';
 import { ReportBundleConstructors } from "./constructors.js";
 import type {
   CreateReportRequest,
@@ -250,29 +339,49 @@ import type {
   ReportStatusResponse
 } from '@shared/types';
 
+const APP_ID = "1ba3a4a6-4df4-49b5-9291-c0bacfe46201";
+
 export class ReportBundleAgentBundle extends FFAgentBundle<any> {
+  private working_memory_provider!: WorkingMemoryProvider;
+
   constructor() {
     super(
       {
-        id: "1ba3a4a6-4df4-49b5-9291-c0bacfe46201",
+        id: APP_ID,
+        application_id: APP_ID,
         name: "ReportGenerator",
+        type: "agent_bundle",
         description: "Document-to-report generation service"
       },
       ReportBundleConstructors,
-      app_provider
+      createEntityClient(APP_ID)
     );
   }
 
   override async init() {
     await super.init();
+
+    const CONTEXT_SERVICE_ADDRESS = process.env.CONTEXT_SERVICE_ADDRESS ||
+      'http://firefoundry-core-context-service.ff-dev.svc.cluster.local:50051';
+    const CONTEXT_SERVICE_API_KEY = process.env.CONTEXT_SERVICE_API_KEY || '';
+
+    const context_client = new ContextServiceClient({
+      address: CONTEXT_SERVICE_ADDRESS,
+      apiKey: CONTEXT_SERVICE_API_KEY,
+    });
+    this.working_memory_provider = new WorkingMemoryProvider(context_client);
+
     logger.info("ReportGeneratorBundle initialized!");
-    logger.info("API endpoints:");
-    logger.info("   POST /api/create-report - Create report entity");
+    logger.info("API endpoints (single-call pattern with acceptsBlobs):");
+    logger.info("   POST /api/create-report - Upload document and start report workflow");
     logger.info("   GET  /api/report-status - Get report status");
   }
 
-  @ApiEndpoint({ method: 'POST', route: 'create-report' })
-  async createReport(body: CreateReportRequest): Promise<CreateReportResponse> {
+  @ApiEndpoint({ method: 'POST', route: 'create-report', acceptsBlobs: true })
+  async createReport(
+    document: Buffer,
+    body: CreateReportRequest
+  ): Promise<CreateReportResponse> {
     const { prompt, orientation = 'portrait' } = body;
 
     if (!prompt?.trim()) {
@@ -283,9 +392,16 @@ export class ReportBundleAgentBundle extends FFAgentBundle<any> {
       throw new Error('Orientation must be "portrait" or "landscape"');
     }
 
-    logger.info('[API] Creating report entity', { prompt, orientation });
+    if (!document || document.length === 0) {
+      throw new Error('A document file is required');
+    }
 
-    const entityDto = await this.entity_factory.create_entity_node({
+    logger.info('[API] Creating report entity (single-call)', {
+      prompt, orientation, document_size: document.length
+    });
+
+    // 1. Create the workflow entity
+    const entity = await this.entity_factory.create_entity_node({
       app_id: this.get_app_id(),
       name: `report-${Date.now()}`,
       specific_type_name: 'ReportReviewWorkflowEntity',
@@ -299,11 +415,44 @@ export class ReportBundleAgentBundle extends FFAgentBundle<any> {
       }
     });
 
-    logger.info('[API] Report entity created', { entity_id: entityDto.id });
+    const entity_id = entity.id!;
 
-    return {
-      entity_id: entityDto.id
-    };
+    // 2. Store the document in working memory
+    const wmResult = await this.working_memory_provider.add_memory_from_buffer({
+      entityNodeId: entity_id,
+      name: `upload-${Date.now()}.pdf`,
+      description: 'Original document uploaded via single-call API',
+      contentType: 'application/pdf',
+      memoryType: 'file',
+      buffer: document,
+      metadata: {
+        upload_method: 'acceptsBlobs',
+        file_size: document.length,
+        uploaded_at: new Date().toISOString()
+      },
+    });
+
+    // 3. Update the entity's wrappedEntityArgs with the working memory ID
+    const dto = await entity.get_dto();
+    dto.data.wrappedEntityArgs.original_document_wm_id = wmResult.workingMemoryId;
+    await entity.update_data(dto.data);
+
+    // 4. Start the workflow via iterator (fire-and-forget)
+    const iterator = await entity.start();
+    (async () => {
+      try {
+        for await (const _envelope of iterator) {
+          // Workflow progresses in the background
+        }
+        logger.info('[API] Workflow completed', { entity_id });
+      } catch (err) {
+        logger.error('[API] Workflow failed', { entity_id, error: err });
+      }
+    })();
+
+    logger.info('[API] Report entity created and workflow started', { entity_id });
+
+    return { entity_id };
   }
 
   @ApiEndpoint({ method: 'GET', route: 'report-status' })
@@ -343,12 +492,15 @@ ff ops deploy --app-name report-bundle
 
 ## Step 6: Test with ff-sdk-cli
 
-### Test the Create Report Endpoint
+### Test the Single-Call Create Report Endpoint
+
+Use `ff-sdk-cli api call-blob` to send a file and JSON body in one request:
 
 ```bash
-ff-sdk-cli api call create-report \
+ff-sdk-cli api call-blob create-report \
   --method POST \
   --body '{"prompt": "Analyze and summarize the key financial metrics", "orientation": "landscape"}' \
+  --file ./sample-report.pdf \
   --url http://localhost:3001
 ```
 
@@ -360,19 +512,23 @@ Expected response:
 }
 ```
 
+The entity is created, the document is stored in working memory, and the workflow has started -- all from this single call.
+
 ### Test Input Validation
 
 ```bash
 # Missing prompt - should return error
-ff-sdk-cli api call create-report \
+ff-sdk-cli api call-blob create-report \
   --method POST \
   --body '{"orientation": "portrait"}' \
+  --file ./sample-report.pdf \
   --url http://localhost:3001
 
 # Invalid orientation - should return error
-ff-sdk-cli api call create-report \
+ff-sdk-cli api call-blob create-report \
   --method POST \
   --body '{"prompt": "Test", "orientation": "diagonal"}' \
+  --file ./sample-report.pdf \
   --url http://localhost:3001
 ```
 
@@ -394,36 +550,29 @@ Expected response (immediately after creation):
   "data": {
     "wrappedEntityArgs": {
       "prompt": "Analyze and summarize the key financial metrics",
-      "orientation": "landscape"
+      "orientation": "landscape",
+      "original_document_wm_id": "wm-1234-..."
     }
   }
 }
 ```
 
-### Complete Two-Step Flow
+### Complete Single-Call Flow
 
-Now test the full two-step pattern -- create entity via API, then upload document:
+Test the full single-call pattern -- upload document and start the workflow, then poll for progress:
 
 ```bash
-# Step 1: Create entity via API endpoint
-ENTITY_ID=$(ff-sdk-cli api call create-report \
+# Step 1: Upload document and create entity in one call
+ENTITY_ID=$(ff-sdk-cli api call-blob create-report \
   --method POST \
   --body '{"prompt": "Create a summary report", "orientation": "portrait"}' \
+  --file ./sample-report.pdf \
   --url http://localhost:3001 \
   | jq -r '.entity_id')
 
-echo "Created entity: $ENTITY_ID"
+echo "Created entity and started workflow: $ENTITY_ID"
 
-# Step 2: Upload document via blob (starts the workflow)
-ff-sdk-cli iterator start-blob $ENTITY_ID \
-  --method process_document_stream \
-  --file ./sample-report.pdf \
-  --url http://localhost:3001
-
-# Step 3: Poll for progress
-ff-sdk-cli iterator next $ENTITY_ID --url http://localhost:3001
-
-# Step 4: Check status via API endpoint
+# Step 2: Poll for progress
 ff-sdk-cli api call report-status \
   --method GET \
   --query "entity_id=$ENTITY_ID" \
@@ -450,37 +599,50 @@ After the workflow completes (and is approved via the review step), the status r
 
 ### Test with curl (Direct HTTP)
 
-The API endpoints are standard HTTP, so you can also call them with curl:
+The API endpoints are standard HTTP. With `acceptsBlobs: true`, send multipart form data:
 
 ```bash
-# Create report
+# Create report (multipart form data with file + JSON)
 curl -X POST http://localhost:3001/api/create-report \
-  -H 'Content-Type: application/json' \
-  -d '{"prompt": "Summarize findings", "orientation": "portrait"}'
+  -F 'file=@sample-report.pdf' \
+  -F 'data={"prompt": "Summarize findings", "orientation": "portrait"}'
 
 # Check status
 curl "http://localhost:3001/api/report-status?entity_id=<entity-id>"
 ```
 
+> **Note:** The two-step pattern (create entity, then upload blob separately) is still useful when entity creation and file upload happen at different times -- for example, if a user fills out a form first and uploads the file later. For workflows where the file is always part of the initial request, `acceptsBlobs: true` is simpler.
+
 ## Understanding the Request Flow
 
-### POST Endpoints
+### POST Endpoints with acceptsBlobs
 
-For POST endpoints, the SDK:
+For POST endpoints with `acceptsBlobs: true`, the SDK:
 
-1. Parses the JSON request body
-2. Passes it as the first argument to your method
-3. Serializes the return value as the JSON response
-4. If the method throws, returns a 400/500 error with the error message
+1. Parses the multipart form data (file in the `file` field, JSON in the `data` field)
+2. Injects file buffer(s) as the first argument(s) to your method
+3. Injects the parsed JSON body as the next argument
+4. Serializes the return value as the JSON response
+5. If the method throws, returns a 400/500 error with the error message
 
 ```typescript
-@ApiEndpoint({ method: 'POST', route: 'create-report' })
-async createReport(body: CreateReportRequest): Promise<CreateReportResponse> {
-  //                ^^^^ parsed from request JSON body
+@ApiEndpoint({ method: 'POST', route: 'create-report', acceptsBlobs: true })
+async createReport(
+  document: Buffer,              // ← file from multipart 'file' field
+  body: CreateReportRequest      // ← parsed from multipart 'data' field
+): Promise<CreateReportResponse> {
   return { entity_id: '...' };
   //     ^^^^^^^^^^^^^^^^^^^^ serialized as response JSON
 }
 ```
+
+### POST Endpoints (JSON only)
+
+For standard POST endpoints without `acceptsBlobs`, the SDK:
+
+1. Parses the JSON request body
+2. Passes it as the first argument to your method
+3. Serializes the return value as the JSON response
 
 ### GET Endpoints
 
@@ -513,20 +675,21 @@ For production use, you may want to throw errors with specific status codes. The
 ## What You've Built
 
 You now have:
-- A `POST /api/create-report` endpoint that creates report workflow entities with validated input
+- A `POST /api/create-report` endpoint that accepts a file upload and JSON body in a single multipart request, stores the file in working memory, creates the workflow entity, and starts processing
 - A `GET /api/report-status` endpoint that returns entity status and data
-- A clean two-step pattern: API creates the entity, blob upload starts the workflow
-- Input validation that rejects invalid prompts and orientations
+- A single-call pattern: one API request handles file upload, entity creation, and workflow initiation
+- Input validation that rejects invalid prompts, orientations, and missing documents
 - Direct HTTP access to your agent bundle without needing the invoke protocol
 
 ## Key Takeaways
 
 1. **@ApiEndpoint is a simple decorator** -- Add it to any method on your agent bundle class and it becomes an HTTP endpoint under `/api/`. No router configuration needed.
-2. **POST gets the body, GET gets the query** -- The first argument to your method is automatically populated from the right source.
-3. **entity_factory creates, entity_client reads** -- Both are available as `this.entity_factory` and `this.entity_client` on your agent bundle class.
-4. **The two-step pattern separates concerns** -- JSON APIs handle configuration and status. Binary uploads happen through the SDK's blob infrastructure. This keeps each endpoint focused.
-5. **Validation should happen early** -- Throw errors in your endpoint method before creating entities. This prevents orphaned entities from failed requests.
-6. **API endpoints complement, not replace, invoke** -- The invoke protocol handles streaming, blob uploads, and entity method calls. API endpoints are for simple request/response patterns like CRUD operations and status checks.
+2. **acceptsBlobs enables single-call file uploads** -- Set `acceptsBlobs: true` and the SDK handles multipart parsing automatically. File buffers are injected as the first arguments, JSON body as the next.
+3. **POST gets the body, GET gets the query** -- The first argument to your method is automatically populated from the right source (with `acceptsBlobs`, files come first, then the body).
+4. **entity_factory creates, entity_client reads** -- Both are available as `this.entity_factory` and `this.entity_client` on your agent bundle class.
+5. **WorkingMemoryProvider works in the bundle too** -- Initialize it in `init()` with a `ContextServiceClient`, then use `add_memory_from_buffer` to store uploaded files before the workflow starts.
+6. **Validation should happen early** -- Throw errors in your endpoint method before creating entities. This prevents orphaned entities from failed requests.
+7. **API endpoints complement, not replace, invoke** -- The invoke protocol handles streaming, entity method calls, and more advanced patterns. API endpoints are for clean request/response patterns like file upload + entity creation.
 
 ## Next Steps
 
