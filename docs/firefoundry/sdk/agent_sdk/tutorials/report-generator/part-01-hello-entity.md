@@ -409,9 +409,11 @@ ff-eg-read node io <entity-id>
 ff-eg-read node progress <entity-id>
 ```
 
-The `node io` command shows the entity's input arguments and final return value. The `node progress` command shows every envelope the iterator yielded during execution -- the same events you saw in real-time from `ff-sdk-cli iterator run`, but persisted in the entity graph for after-the-fact inspection.
+The `node io` command returns an object with `input` and `output` fields. The `output` is the return value from `run_impl` -- this is what you care about. The `input` field is typically empty; ignore it for now. Entity inputs live in the `data` column (visible via `node get`), not in `input`. The `input` field exists for specialized scenarios where the entity's data is a reference (like a filename) and the actual content is passed separately at start time.
 
-> **Tip:** These two commands are your primary debugging tools whenever a workflow behaves unexpectedly. `node io` tells you what went in and what came out; `node progress` tells you what happened in between.
+The `node progress` command shows every envelope the iterator yielded during execution -- the same events you saw in real-time from `ff-sdk-cli iterator run`, but persisted in the entity graph for after-the-fact inspection.
+
+> **Tip:** These two commands are your primary debugging tools whenever a workflow behaves unexpectedly. `node io` tells you what came out (check the `output` field); `node progress` tells you what happened in between.
 
 ## What You've Built
 
