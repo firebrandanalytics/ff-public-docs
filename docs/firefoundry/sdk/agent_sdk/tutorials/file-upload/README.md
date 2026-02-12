@@ -30,4 +30,7 @@ An agent bundle with a `FileUploadTestEntity` that handles file uploads and stor
 
 ## Related
 
+- [DocumentProcessorEntity Reference](../../reference/document-processor-entity.md) -- API reference for the file upload base class used in this tutorial
+- [Working Memory Guide](../../guides/working-memory.md) -- concepts and SDK integration for Working Memory
+- [File Upload Patterns](../../feature_guides/file-upload-patterns.md) -- comprehensive patterns including retrieval, pipelines, and error handling
 - [Report Generator Tutorial](../report-generator/README.md) -- multi-part tutorial covering entities, bots, prompts, and LLM integration
