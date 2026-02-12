@@ -412,27 +412,62 @@ ff gui add file-upload-gui
 
 This scaffolds a Next.js application in `apps/file-upload-gui/`. You'll modify it to provide a drag-and-drop upload interface.
 
-### API Routes
+### SDK Client Helper
 
-The web UI communicates with the agent bundle through API routes that proxy requests. The bundle exposes two key invoke patterns:
+The web UI communicates with the agent bundle through Next.js API routes using `RemoteAgentBundleClient` from the `@firebrandanalytics/ff-sdk` package. This client handles the HTTP protocol details for you -- entity invocation, file uploads, and custom API endpoints.
 
-- **Standard invoke:** `POST /invoke` with `{ entity_id, method_name, args }` -- for methods like `list_uploads`
-- **Multipart invoke:** `POST /invoke/multipart` with a `payload` form field containing JSON -- for file uploads via `process_document`
+First, add the SDK as a dependency:
 
-Create three API route files.
+```bash
+cd apps/file-upload-gui
+pnpm add @firebrandanalytics/ff-sdk
+```
 
-**`apps/file-upload-gui/src/app/api/entity/route.ts`** -- fetches the test entity ID:
+Then update `next.config.mjs` to transpile the SDK package:
+
+```javascript
+const nextConfig = {
+  output: "standalone",
+  transpilePackages: ["@firebrandanalytics/ff-sdk"],
+};
+
+export default nextConfig;
+```
+
+Create a shared helper that all API routes will use.
+
+**`apps/file-upload-gui/src/lib/api.ts`**:
 
 ```typescript
-import { NextResponse } from "next/server";
+import { RemoteAgentBundleClient } from "@firebrandanalytics/ff-sdk";
 
 const BUNDLE_URL = process.env.BUNDLE_URL || "http://localhost:3001";
 
+export function getClient(): RemoteAgentBundleClient {
+  return new RemoteAgentBundleClient(BUNDLE_URL);
+}
+```
+
+> **CRITICAL**: `RemoteAgentBundleClient` makes HTTP calls to the agent bundle, so it must only be used in server-side code (API routes, Server Components). Never import it in client components.
+
+### API Routes
+
+Create three API route files.
+
+**`apps/file-upload-gui/src/app/api/entity/route.ts`** -- fetches the test entity ID via the custom API endpoint:
+
+```typescript
+import { NextResponse } from "next/server";
+import { getClient } from "@/lib/api";
+
 export async function GET() {
   try {
-    const res = await fetch(`${BUNDLE_URL}/api/test-entity`);
-    const data = await res.json();
-    return NextResponse.json(data);
+    const client = getClient();
+    const result = await client.call_api_endpoint<{ entity_id: string }>(
+      "test-entity",
+      { method: "GET" }
+    );
+    return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(
       { error: "Failed to fetch entity" },
@@ -442,45 +477,34 @@ export async function GET() {
 }
 ```
 
-**`apps/file-upload-gui/src/app/api/upload/route.ts`** -- proxies file uploads to the bundle:
+**`apps/file-upload-gui/src/app/api/upload/route.ts`** -- proxies file uploads to the bundle using `invoke_entity_method_with_blobs`:
 
 ```typescript
 import { NextRequest, NextResponse } from "next/server";
-
-const BUNDLE_URL = process.env.BUNDLE_URL || "http://localhost:3001";
+import { getClient } from "@/lib/api";
 
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const file = formData.get("file") as File;
-    const entityId = formData.get("entity_id") as string;
+    const entityId = formData.get("entityId") as string;
 
     if (!file || !entityId) {
       return NextResponse.json(
-        { error: "Missing file or entity_id" },
+        { error: "Missing file or entityId" },
         { status: 400 }
       );
     }
 
-    // Build multipart payload for the bundle's invoke/multipart endpoint
-    const bundleForm = new FormData();
-    bundleForm.append("file", file);
-    bundleForm.append(
-      "payload",
-      JSON.stringify({
-        entity_id: entityId,
-        method_name: "process_document",
-        args: [file.name],
-      })
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const client = getClient();
+    const result = await client.invoke_entity_method_with_blobs(
+      entityId,
+      "process_document",
+      [{ $blob: 0 }, file.name, {}],
+      [buffer]
     );
-
-    const res = await fetch(`${BUNDLE_URL}/invoke/multipart`, {
-      method: "POST",
-      body: bundleForm,
-    });
-
-    const data = await res.json();
-    return NextResponse.json(data);
+    return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(
       { error: "Upload failed" },
@@ -490,36 +514,31 @@ export async function POST(request: NextRequest) {
 }
 ```
 
-**`apps/file-upload-gui/src/app/api/files/route.ts`** -- lists uploaded files:
+The `{ $blob: 0 }` placeholder tells the SDK to substitute the first buffer from the `files` array. This maps to the `document_buffer` parameter in `process_document(document_buffer, filename, metadata)`.
+
+**`apps/file-upload-gui/src/app/api/files/route.ts`** -- lists uploaded files using `invoke_entity_method`:
 
 ```typescript
 import { NextRequest, NextResponse } from "next/server";
-
-const BUNDLE_URL = process.env.BUNDLE_URL || "http://localhost:3001";
+import { getClient } from "@/lib/api";
 
 export async function GET(request: NextRequest) {
-  const entityId = request.nextUrl.searchParams.get("entity_id");
+  const entityId = request.nextUrl.searchParams.get("entityId");
 
   if (!entityId) {
     return NextResponse.json(
-      { error: "Missing entity_id" },
+      { error: "Missing entityId" },
       { status: 400 }
     );
   }
 
   try {
-    const res = await fetch(`${BUNDLE_URL}/invoke`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        entity_id: entityId,
-        method_name: "list_uploads",
-        args: [],
-      }),
-    });
-
-    const data = await res.json();
-    return NextResponse.json(data);
+    const client = getClient();
+    const result = await client.invoke_entity_method(
+      entityId,
+      "list_uploads"
+    );
+    return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(
       { error: "Failed to list files" },
@@ -550,39 +569,49 @@ interface UploadRecord {
 export default function Home() {
   const [entityId, setEntityId] = useState<string | null>(null);
   const [uploads, setUploads] = useState<UploadRecord[]>([]);
-  const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
 
   // Fetch the test entity ID on mount
-  useEffect(() => {
-    fetch("/api/entity")
-      .then((res) => res.json())
-      .then((data) => {
-        const id = data.result?.entity_id || data.entity_id;
-        setEntityId(id);
-      })
-      .catch(() => setError("Failed to connect to agent bundle"));
+  const fetchEntity = useCallback(async () => {
+    try {
+      const res = await fetch("/api/entity");
+      const data = await res.json();
+      if (data.entity_id) {
+        setEntityId(data.entity_id);
+      } else {
+        setError("Test entity not ready. Is the agent bundle running?");
+      }
+    } catch {
+      setError("Cannot connect to API. Is the server running?");
+    }
   }, []);
 
   // Refresh file list
-  const refreshFiles = useCallback(async () => {
+  const fetchFiles = useCallback(async () => {
     if (!entityId) return;
     try {
-      const res = await fetch(`/api/files?entity_id=${entityId}`);
+      const res = await fetch(`/api/files?entityId=${entityId}`);
       const data = await res.json();
-      setUploads(data.result?.uploads || []);
+      if (data.uploads) {
+        setUploads(data.uploads);
+      }
     } catch {
       // Silently fail on refresh
     }
   }, [entityId]);
 
   useEffect(() => {
-    refreshFiles();
-  }, [refreshFiles]);
+    fetchEntity();
+  }, [fetchEntity]);
+
+  useEffect(() => {
+    if (entityId) fetchFiles();
+  }, [entityId, fetchFiles]);
 
   // Handle file upload
-  const uploadFile = async (file: File) => {
+  async function handleUpload(file: File) {
     if (!entityId) return;
     setUploading(true);
     setError(null);
@@ -590,7 +619,7 @@ export default function Home() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("entity_id", entityId);
+      formData.append("entityId", entityId);
 
       const res = await fetch("/api/upload", {
         method: "POST",
@@ -598,37 +627,17 @@ export default function Home() {
       });
 
       const data = await res.json();
-      if (!res.ok || data.error) {
-        throw new Error(data.error || "Upload failed");
+      if (!res.ok) {
+        setError(data.error || "Upload failed");
+      } else {
+        await fetchFiles();
       }
-
-      await refreshFiles();
-    } catch (err: any) {
-      setError(err.message || "Upload failed");
+    } catch {
+      setError("Upload failed. Check the console for details.");
     } finally {
       setUploading(false);
     }
-  };
-
-  // Drag-and-drop handlers
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(true);
-  };
-
-  const handleDragLeave = () => setDragging(false);
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) uploadFile(file);
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) uploadFile(file);
-  };
+  }
 
   return (
     <main style={{ maxWidth: 600, margin: "2rem auto", fontFamily: "sans-serif" }}>
@@ -646,35 +655,47 @@ export default function Home() {
 
       {/* Drop zone */}
       <div
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
+        onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+        onDragLeave={() => setDragActive(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragActive(false);
+          const file = e.dataTransfer.files?.[0];
+          if (file) handleUpload(file);
+        }}
         style={{
-          border: `2px dashed ${dragging ? "#0070f3" : "#ccc"}`,
+          border: `2px dashed ${dragActive ? "#0070f3" : "#ccc"}`,
           borderRadius: 8,
           padding: "2rem",
           textAlign: "center",
           marginBottom: "2rem",
-          background: dragging ? "#f0f8ff" : "#fafafa",
-          cursor: "pointer",
+          background: dragActive ? "#f0f8ff" : "#fafafa",
         }}
-        onClick={() => document.getElementById("file-input")?.click()}
       >
         {uploading ? (
           <p>Uploading...</p>
         ) : (
-          <p>Drag and drop a file here, or click to select</p>
+          <>
+            <p>Drag and drop a file here, or click to select</p>
+            <label style={{ cursor: "pointer", color: "#0070f3" }}>
+              Choose File
+              <input
+                type="file"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleUpload(file);
+                  e.target.value = "";
+                }}
+                disabled={!entityId}
+              />
+            </label>
+          </>
         )}
-        <input
-          id="file-input"
-          type="file"
-          onChange={handleFileSelect}
-          style={{ display: "none" }}
-        />
       </div>
 
       {/* File list */}
-      <h2>Uploaded Files</h2>
+      <h2>Uploaded Files ({uploads.length})</h2>
       {uploads.length === 0 ? (
         <p style={{ color: "#999" }}>No files uploaded yet.</p>
       ) : (
