@@ -12,13 +12,15 @@ In this part, you'll create a minimal FireFoundry agent bundle with a single ent
 
 ## Step 1: Scaffold the Project
 
-Use `ff-cli` to create a new agent bundle project:
+Use `ff-cli` to create a new application:
 
 ```bash
-ff project create report-generator
+ff application create report-generator
 cd report-generator
 ff agent-bundle create report-bundle
 ```
+
+> **Note:** `ff project create` still works as an alias for `ff application create`.
 
 This creates a monorepo with:
 ```

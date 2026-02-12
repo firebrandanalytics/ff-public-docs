@@ -679,4 +679,4 @@ These patterns recur throughout the series and apply to any FireFoundry applicat
 - **[API Reference](../../api-reference/README.md)** -- Complete reference for all SDK classes and decorators
 - **[Core Concepts](../fire_foundry_core_concepts_glossary_agent_sdk.md)** -- Deeper dive into the Entity-Bot-Prompt architecture
 - **[ff-demo-report-generator](https://github.com/firebrandanalytics/ff-demo-report-generator)** -- The complete source code for this tutorial
-- **Build your own** -- Use `ff project create` and `ff agent-bundle create` to start a new project from scratch
+- **Build your own** -- Use `ff application create` and `ff agent-bundle create` to start a new project from scratch
