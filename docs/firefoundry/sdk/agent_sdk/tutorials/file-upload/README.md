@@ -31,5 +31,3 @@ An agent bundle with a `FileUploadTestEntity` that handles file uploads and stor
 ## Related
 
 - [Report Generator Tutorial](../report-generator/README.md) -- multi-part tutorial covering entities, bots, prompts, and LLM integration
-- [SDK Reference: DocumentProcessorEntity](../../reference/document-processor-entity.md) -- full API reference for the file handling base class
-- [Working Memory Guide](../../guides/working-memory.md) -- how FireFoundry's blob storage system works
