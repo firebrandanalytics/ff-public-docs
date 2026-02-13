@@ -1,6 +1,6 @@
 # Part 4: Pipeline Orchestration & API Endpoints
 
-In this part, you'll build the `StoryPipelineEntity` -- a `RunnableEntity` that orchestrates the full story generation pipeline inside its `run_impl()` generator. You'll also simplify the agent bundle class down to a thin API surface that creates pipeline entities and returns their IDs.
+In this part, you'll build the `StoryPipelineEntity` -- a `RunnableEntity` that orchestrates the full story generation pipeline inside its `run_impl()` generator. You'll also build the agent bundle class with API endpoints that create pipeline entities and return their IDs.
 
 **What you'll learn:**
 - Why orchestration belongs in a `RunnableEntity`, not on the `AgentBundle` class
@@ -9,10 +9,10 @@ In this part, you'll build the `StoryPipelineEntity` -- a `RunnableEntity` that 
 - Using `yield* await child.start()` to delegate execution and forward progress envelopes
 - Yielding `createStatusEnvelope('RUNNING', message)` for consumer-visible progress
 - Updating entity data inside `run_impl()` for polling-based progress
-- The simplified `IllustratedStoryAgentBundle` with just API endpoints and entity creation
+- The `IllustratedStoryAgentBundle` with API endpoints and entity creation
 - The consumer workflow: create an entity via the API, then consume it via the SDK's iterator protocol
 
-**What you'll build:** A `StoryPipelineEntity` that coordinates six stages (safety check, story writing, image generation, HTML assembly, PDF conversion, working memory storage) plus a thin `IllustratedStoryAgentBundle` with two API endpoints.
+**What you'll build:** A `StoryPipelineEntity` that coordinates six stages (safety check, story writing, image generation, HTML assembly, PDF conversion, working memory storage) plus the `IllustratedStoryAgentBundle` with two API endpoints.
 
 **Starting point:** Completed code from [Part 3: Image Generation Service](./part-03-image-generation.md). You should have a working `ImageService`, two bot entities (`ContentSafetyCheckEntity` and `StoryWriterEntity`), and shared type definitions.
 
@@ -20,7 +20,7 @@ In this part, you'll build the `StoryPipelineEntity` -- a `RunnableEntity` that 
 
 ## Concepts: Why Orchestration Belongs in an Entity
 
-The previous version of this tutorial placed orchestration directly on the `AgentBundle` class in a `runPipeline()` method. This is an anti-pattern. Here is why, and what the better approach looks like.
+It might seem natural to put pipeline logic directly on the `AgentBundle` class -- add a `runPipeline()` method that coordinates the stages. This is an anti-pattern. Here is why, and what the correct approach looks like.
 
 ### The Problem with Bundle-Level Orchestration
 
@@ -102,6 +102,22 @@ import type {
   GeneratedImageResult,
   PipelineResult,
 } from '@shared/types';
+
+// ─── Service clients (initialized once, shared across all runs) ──
+
+const imageService = new ImageService();
+
+const DOC_PROC_URL = process.env.DOC_PROC_SERVICE_URL
+  || 'http://firefoundry-core-doc-proc-service.ff-dev.svc.cluster.local:3000';
+const docProcClient = DocProcClient.create({ baseUrl: DOC_PROC_URL });
+
+const CONTEXT_SERVICE_ADDRESS = process.env.CONTEXT_SERVICE_ADDRESS
+  || 'http://firefoundry-core-context-service.ff-dev.svc.cluster.local:50051';
+const contextClient = new ContextServiceClient({
+  address: CONTEXT_SERVICE_ADDRESS,
+  apiKey: process.env.CONTEXT_SERVICE_API_KEY || '',
+});
+const wmProvider = new WorkingMemoryProvider(contextClient);
 
 @EntityMixin({
   specificType: 'StoryPipelineEntity',
@@ -196,8 +212,6 @@ protected override async *run_impl() {
 
   logger.info('[Pipeline] Starting story pipeline', { entityId: this.id, topic });
 
-  // ... service initialization (Step 3) ...
-
   // ... Stage 1: Content safety check (Step 4) ...
   // ... Stage 2: Story writing (Step 4) ...
   // ... Stage 3: Image generation (Step 5) ...
@@ -209,7 +223,7 @@ protected override async *run_impl() {
 }
 ```
 
-The first thing `run_impl()` does is read the entity's stored data to get the `topic`. This data was set when the entity was created by the API endpoint.
+The first thing `run_impl()` does is read the entity's stored data to get the `topic`. This data was set when the entity was created by the API endpoint. The service clients (`imageService`, `docProcClient`, `wmProvider`) are available as module-level variables (Step 3).
 
 Three key mechanisms are used inside the generator:
 
@@ -221,12 +235,13 @@ Three key mechanisms are used inside the generator:
 
 ---
 
-## Step 3: Service Initialization Inside run_impl()
+## Step 3: Module-Level Service Clients
 
-Services are initialized at the top of `run_impl()` rather than in a constructor or `init()` method:
+Service clients are initialized at module level, outside the entity class. These clients are stateless and their configuration does not change between runs, so there is no reason to recreate them on each invocation:
 
 ```typescript
-// Initialize services
+// ─── Service clients (initialized once, shared across all runs) ──
+
 const imageService = new ImageService();
 
 const DOC_PROC_URL = process.env.DOC_PROC_SERVICE_URL
@@ -242,7 +257,7 @@ const contextClient = new ContextServiceClient({
 const wmProvider = new WorkingMemoryProvider(contextClient);
 ```
 
-Why initialize here instead of in the constructor? Entities are instantiated by the framework when they are retrieved from the entity graph, not just when they are first created. Putting service initialization in `run_impl()` means the services are only created when the entity actually runs, not on every retrieval. This keeps entity construction lightweight and avoids unnecessary connections to external services.
+These are placed above the class declaration. Every `StoryPipelineEntity` instance in the process shares the same clients. This is the correct pattern for service clients that read their configuration from environment variables at startup -- the values do not change during the process lifetime, so creating new instances per run would be wasteful.
 
 | Service | Client | Purpose |
 |---------|--------|---------|
@@ -428,7 +443,7 @@ for await (const envelope of imageService.generateAllImagesParallel(storyResult.
 
 The `ImageService.generateAllImagesParallel()` method (from Part 3) returns an async generator of task envelopes. Each `FINAL` envelope contains a `GeneratedImageResult` (the base64-encoded image). Each `ERROR` envelope contains an error for a failed image generation. The pipeline yields a status envelope after each successful image, so the consumer sees incremental progress.
 
-> **Note:** Parallel image generation using `HierarchicalTaskPoolRunner` is covered in detail in [Part 5](./part-05-testing-and-deployment.md). For now, understand that the `for await...of` loop receives images as they complete, regardless of the order they were started.
+> **Note:** Parallel image generation using `HierarchicalTaskPoolRunner` is covered in detail in [Part 5](./part-05-parallel-image-generation.md). For now, understand that the `for await...of` loop receives images as they complete, regardless of the order they were started.
 
 ### Stages 4-6: Assembly, PDF, and Storage
 
@@ -558,9 +573,9 @@ The `return` statement delivers the result as a `VALUE` envelope to the consumer
 
 ---
 
-## Step 8: The Simplified Agent Bundle
+## Step 8: The Agent Bundle
 
-With orchestration in the `StoryPipelineEntity`, the agent bundle becomes thin -- just API endpoints and entity creation.
+With orchestration in the `StoryPipelineEntity`, the agent bundle is just API endpoints and entity creation.
 
 **`apps/story-bundle/src/agent-bundle.ts`**:
 
@@ -640,20 +655,7 @@ export class IllustratedStoryAgentBundle extends FFAgentBundle<any> {
 }
 ```
 
-### What Changed
-
-Compare this to the previous version of the bundle:
-
-| Previous (Anti-pattern) | New (Entity-based) |
-|------------------------|-------------------|
-| ~200 lines with `runPipeline()`, `runBotEntity()`, `runSafetyCheck()`, `runStoryWriter()`, `updateStage()` | ~60 lines with two API endpoints |
-| Initialized `WorkingMemoryProvider`, `ImageService`, `DocProcClient` on the bundle | Services initialized inside `StoryPipelineEntity.run_impl()` |
-| Created entities with `specific_type_name: 'EntityNode'` (generic tracking entity) | Creates a `StoryPipelineEntity` (the orchestrator itself) |
-| Called `this.runPipeline().catch(...)` in the background | Returns entity ID; consumer starts the pipeline via iterator |
-| Manual iterator consumption with `runBotEntity<T>()` helper | `yield* await child.start()` handles delegation naturally |
-| Progress only via entity data polling | Both real-time envelopes and entity data polling |
-
-The bundle no longer imports `WorkingMemoryProvider`, `ContextServiceClient`, `DocProcClient`, or `ImageService`. It does not know how the pipeline works -- only that creating a `StoryPipelineEntity` with a topic is enough to start one.
+The bundle does not import `WorkingMemoryProvider`, `ContextServiceClient`, `DocProcClient`, or `ImageService`. It does not know how the pipeline works -- only that creating a `StoryPipelineEntity` with a topic is enough to start one.
 
 ### The create-story Endpoint
 
@@ -873,7 +875,7 @@ ff-wm-read download <pdf-working-memory-id> --output ./story.pdf
 You now have:
 - A `StoryPipelineEntity` that orchestrates six stages inside a `run_impl()` generator, using `appendCall()` for child entities and `yield*` for delegation
 - Real-time progress via `createStatusEnvelope()` and polling progress via `updateEntityData()`
-- A thin `IllustratedStoryAgentBundle` with just two API endpoints and no orchestration logic
+- An `IllustratedStoryAgentBundle` with two API endpoints and no orchestration logic
 - An updated constructor map with all three entity types
 - A consumer workflow using `ff-sdk-cli iterator run` for real-time streaming or `GET /api/story-status` for polling
 
@@ -882,7 +884,7 @@ The final project structure:
 ```
 apps/story-bundle/src/
 +-- index.ts                     # Server entry point
-+-- agent-bundle.ts              # Thin API surface (create-story, story-status)
++-- agent-bundle.ts              # API endpoints (create-story, story-status)
 +-- constructors.ts              # Entity registry (3 entities)
 +-- schemas.ts                   # Zod schemas (safety + story output)
 +-- bots/
@@ -911,11 +913,11 @@ apps/story-bundle/src/
 
 4. **`yield createStatusEnvelope('RUNNING', message)` produces consumer-visible progress.** Use it at each stage transition so consumers connected via `ff-sdk-cli iterator run` see real-time updates. Combine with `updateEntityData()` for polling-based consumers.
 
-5. **The agent bundle should be thin.** Its job is to define API endpoints and create entities. It should not contain workflow logic, service client initialization, or multi-stage orchestration. If your bundle class is growing past 100 lines, the orchestration should probably move to an entity.
+5. **The agent bundle defines API endpoints and creates entities.** It should not contain workflow logic or multi-stage orchestration. If your bundle class is growing past 100 lines, the orchestration should move to an entity.
 
 6. **Entity data updates are for polling; status envelopes are for streaming.** Use both at each stage transition to support both consumer patterns. Entity data updates are best-effort (wrapped in try/catch) because they are not critical to the pipeline's execution.
 
-7. **Services are initialized inside `run_impl()`, not in the entity constructor.** Entity constructors run on every retrieval from the graph. Deferring service initialization to `run_impl()` keeps construction lightweight and avoids unnecessary connections.
+7. **Service clients are module-level, not per-run.** These clients are stateless and configured from environment variables that do not change. Initialize them once at module level and share them across all entity instances in the process.
 
 8. **Non-critical stages should fail gracefully.** PDF generation and working memory storage are each wrapped in their own `try/catch`. The pipeline's primary output is the assembled HTML; auxiliary outputs should not cause the pipeline to fail.
 
@@ -923,4 +925,4 @@ apps/story-bundle/src/
 
 ## Next Steps
 
-In [Part 5: Parallel Image Generation](./part-05-testing-and-deployment.md), you'll revisit the image generation stage to add parallelism using `HierarchicalTaskPoolRunner` and hierarchical `CapacitySource`. You'll learn how to limit concurrent image requests both per-story (3) and globally (10), feed tasks via `SourceBufferObj`, and consume `TaskProgressEnvelope` results as images complete.
+In [Part 5: Parallel Image Generation](./part-05-parallel-image-generation.md), you'll revisit the image generation stage to add parallelism using `HierarchicalTaskPoolRunner` and hierarchical `CapacitySource`. You'll learn how to limit concurrent image requests both per-story (3) and globally (10), feed tasks via `SourceBufferObj`, and consume `TaskProgressEnvelope` results as images complete.

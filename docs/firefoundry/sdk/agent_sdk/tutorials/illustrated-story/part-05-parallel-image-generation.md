@@ -482,28 +482,13 @@ The pipeline entity consumes the parallel generator with a `for await...of` loop
     }
 ```
 
-### How This Differs from the Part 3 Integration
+### Advantages Over Sequential Generation
 
-In Part 4 (using the sequential method from Part 3), the pipeline called `generateAllImages()` with a callback:
+Compared to calling `generateImage()` in a sequential loop (one `await` per image), the parallel approach changes two things:
 
-```typescript
-// Part 4's sequential approach:
-const images = await this.image_service.generateAllImages(
-  imagePrompts,
-  async (generated, total) => {
-    await this.updateStage(storyEntity, 'generating_images', {
-      images_generated: generated,
-      images_total: total,
-    });
-  },
-);
-```
+1. **Results arrive one at a time via `for await`** instead of all at once after `await`. This lets the pipeline yield progress envelopes as each image completes, giving the consumer real-time feedback.
 
-The parallel approach changes two things:
-
-1. **Results arrive one at a time via `for await`** instead of all at once after `await`. This lets the pipeline yield progress envelopes to the entity graph as each image completes, rather than only when the callback fires.
-
-2. **Errors are per-task, not per-batch.** If Image 3 fails but Images 1, 2, 4, and 5 succeed, you get 4 images and 1 error envelope. The sequential approach would have thrown on Image 3 and never attempted Images 4 and 5.
+2. **Errors are per-task, not per-batch.** If Image 3 fails but Images 1, 2, 4, and 5 succeed, you get 4 images and 1 error envelope. A sequential loop would have thrown on Image 3 and never attempted Images 4 and 5.
 
 ### Handling the Envelope Types
 
