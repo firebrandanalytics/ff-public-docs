@@ -90,8 +90,8 @@ The FireFoundry SDK uses a **mixin-based composition architecture** that allows 
 **Example Mixin Composition**:
 
 ```typescript
-import { ComposeMixins, MixinBot } from '@firebrandanalytics/ff-agent-sdk/bot';
-import { StructuredOutputBotMixin, WorkingMemoryBotMixin } from '@firebrandanalytics/ff-agent-sdk/bot';
+import { ComposeMixins } from '@firebrandanalytics/shared-utils';
+import { MixinBot, StructuredOutputBotMixin, WorkingMemoryBotMixin } from '@firebrandanalytics/ff-agent-sdk/bot';
 
 // Compose a bot with structured output and working memory support
 export class AdvancedBot<BTH extends BotTypeHelper<...>> extends ComposeMixins(
@@ -178,15 +178,15 @@ Creating a basic bot involves implementing the core components required for LLM 
 To create a simple bot, extend the `Bot` class and implement the required methods:
 
 ```typescript
-import { 
-    Bot, 
-    BotPostprocessGenerator, 
-    BotRequest, 
-    BotTryRequest, 
-    BrokerTextContent, 
-    BotTypeHelper, 
-    PromptGroup 
-} from "@firebrandanalytics/ff_sdk";
+import {
+    Bot,
+    BotPostprocessGenerator,
+    BotRequest,
+    BotTryRequest,
+    BrokerTextContent,
+    BotTypeHelper,
+} from "@firebrandanalytics/ff-agent-sdk/bot";
+import { PromptGroup } from "@firebrandanalytics/ff-agent-sdk/prompts";
 
 // Define the prompt type helper for type safety
 export type SIMPLE_PTH = PromptTypeHelper<string, {
@@ -247,34 +247,55 @@ export default class SimpleBot extends Bot<SIMPLE_BTH> {
 Prompt groups organize the content sent to LLMs. They combine multiple prompts into a coherent structure:
 
 ```typescript
-import { PromptGroup, PromptText, PromptInputText } from "@firebrandanalytics/ff_sdk";
+import {
+    Prompt,
+    PromptGroup,
+    PromptTemplateTextNode,
+    StructuredPromptGroup,
+} from "@firebrandanalytics/ff-agent-sdk/prompts";
 
-// Create a prompt group with system instructions and user input
-const simple_prompt_group = new PromptGroup<SIMPLE_PTH>([
-    {
-        name: 'system_instructions',
-        prompt: new PromptText<SIMPLE_PTH>(
-            'system',
-            {},
-            (request) => `You are an assistant for ${request.args.static.company}.
-            Answer questions clearly and concisely.`
-        )
-    },
-    {
-        name: 'user_input',
-        prompt: new PromptInputText<SIMPLE_PTH>({})
-    }
-]);
+// Create a system prompt with dynamic content
+const systemPrompt = new Prompt<SIMPLE_PTH>({
+    role: 'system',
+    static_args: { company: 'FinanceIQ' },
+});
+systemPrompt.add_section(
+    new PromptTemplateTextNode<SIMPLE_PTH>({
+        content: (request) => `You are an assistant for ${request.args.static.company}.
+        Answer questions clearly and concisely.`,
+    })
+);
+
+// Create a user input prompt that forwards the request input
+const inputPrompt = new Prompt<SIMPLE_PTH>({
+    role: 'user',
+    static_args: {} as SIMPLE_PTH['args']['static'],
+});
+inputPrompt.add_section(
+    new PromptTemplateTextNode<SIMPLE_PTH>({
+        content: (request) => request.input as string,
+    })
+);
+
+// Assemble into a StructuredPromptGroup (organizes prompts into phases)
+const simple_prompt_group = new StructuredPromptGroup<SIMPLE_PTH>({
+    base: new PromptGroup<SIMPLE_PTH>([
+        { name: 'system_instructions', prompt: systemPrompt },
+    ]),
+    input: new PromptGroup<SIMPLE_PTH>([
+        { name: 'user_input', prompt: inputPrompt },
+    ]),
+});
 ```
 
 For more complex prompts, you can create custom prompt classes:
 
 ```typescript
-import { Prompt, PromptTemplateSectionNode } from "@firebrandanalytics/ff_sdk";
+import { Prompt, PromptTemplateSectionNode } from "@firebrandanalytics/ff-agent-sdk/prompts";
 
 export class CustomPrompt extends Prompt<CUSTOM_PTH> {
     constructor(args: CUSTOM_PTH['args']['static']) {
-        super('system', args);
+        super({ role: 'system', static_args: args });
         this.add_section(this.get_Context_Section());
         this.add_section(this.get_Rules_Section());
         // Add more sections as needed
@@ -345,18 +366,21 @@ while (tries < max_tries) {
 For more specialized error handling, you can add error-specific prompt groups:
 
 ```typescript
+const errorPrompt = new Prompt<ERROR_PTH>({
+    role: 'system',
+    static_args: {} as ERROR_PTH['args']['static'],
+});
+errorPrompt.add_section(
+    new PromptTemplateTextNode<ERROR_PTH>({
+        content: (request) => `There was an error in the previous response:
+        ${request.input.message}
+
+        Please fix the error and try again.`,
+    })
+);
+
 const error_prompt_group = new PromptGroup<ERROR_PTH>([
-    {
-        name: 'error_instructions',
-        prompt: new PromptText<ERROR_PTH>(
-            'system',
-            {},
-            (request) => `There was an error in the previous response: 
-            ${request.input.message}
-            
-            Please fix the error and try again.`
-        )
-    }
+    { name: 'error_instructions', prompt: errorPrompt }
 ]);
 ```
 
@@ -369,7 +393,7 @@ The bot framework supports tool calls through dispatch tables, allowing LLMs to 
 Tool functions are registered in the bot's dispatch table:
 
 ```typescript
-import { DispatchTable, ToolCallFunc } from "@firebrandanalytics/ff_sdk";
+import { DispatchTable, ToolCallFunc } from "@firebrandanalytics/ff-agent-sdk/bot";
 
 // Define tool function types
 type CalculateArgs = { a: number; b: number; };
@@ -500,8 +524,8 @@ The FireFoundry SDK includes several bot mixins for common patterns and needs.
 Use the `StructuredOutputBotMixin` to extract structured data from LLM responses with automatic schema validation:
 
 ```typescript
-import { ComposeMixins, MixinBot } from '@firebrandanalytics/ff-agent-sdk/bot';
-import { StructuredOutputBotMixin } from '@firebrandanalytics/ff-agent-sdk/bot';
+import { ComposeMixins } from '@firebrandanalytics/shared-utils';
+import { MixinBot, StructuredOutputBotMixin } from '@firebrandanalytics/ff-agent-sdk/bot';
 import { z } from "zod";
 
 // Define your output schema with Zod
@@ -520,15 +544,21 @@ export type MY_BTH = BotTypeHelper<MY_PTH, z.infer<typeof MyOutputSchema>>;
 export default class MyStructuredBot extends ComposeMixins(
     MixinBot,
     StructuredOutputBotMixin
-) {
+)<[
+    MixinBot<MY_BTH, [StructuredOutputBotMixin<MY_BTH, typeof MyOutputSchema>]>,
+    [StructuredOutputBotMixin<MY_BTH, typeof MyOutputSchema>]
+]> {
     constructor() {
-        super({
-            name: "MyStructuredBot",
-            schema: MyOutputSchema,
-            schema_description: "Output with result and metadata",
-            base_prompt_group: my_prompt_group,
-            model_pool_name: "azure_completion_4o",
-        });
+        // super() uses array-per-mixin: [MixinBot config], [StructuredOutput config]
+        super(
+            [{
+                name: "MyStructuredBot",
+                base_prompt_group: my_prompt_group,
+                model_pool_name: "azure_completion_4o",
+                static_args: {} as MY_PTH['args']['static'],
+            }],
+            [{ schema: MyOutputSchema }]
+        );
     }
 
     override get_semantic_label_impl(request: BotTryRequest<MY_BTH>): string {
@@ -554,8 +584,8 @@ The `StructuredOutputBotMixin` handles JSON extraction and schema validation aut
 Add schema validation to any bot using the `DataValidationBotMixin`:
 
 ```typescript
-import { ComposeMixins, MixinBot } from '@firebrandanalytics/ff-agent-sdk/bot';
-import { DataValidationBotMixin } from '@firebrandanalytics/ff-agent-sdk/bot';
+import { ComposeMixins } from '@firebrandanalytics/shared-utils';
+import { MixinBot, DataValidationBotMixin } from '@firebrandanalytics/ff-agent-sdk/bot';
 
 export class ValidatingBot extends ComposeMixins(
     MixinBot,
@@ -570,7 +600,7 @@ export class ValidatingBot extends ComposeMixins(
 For specialized needs, you can create custom bot implementations:
 
 ```typescript
-import { Bot, BotPostprocessGenerator } from "@firebrandanalytics/ff_sdk";
+import { Bot, BotPostprocessGenerator } from "@firebrandanalytics/ff-agent-sdk/bot";
 
 export default class SpecializedBot extends Bot<SPECIALIZED_BTH> {
     constructor() {
@@ -619,14 +649,14 @@ The FireFoundry bot framework includes several advanced features for complex sce
 The `BotCustomErrorHandling` class provides specialized error handling capabilities with automatic error classification:
 
 ```typescript
-import { 
-    BotCustomErrorHandling, 
+import {
+    BotCustomErrorHandling,
     BotCustomErrorHandlingDispatchTry,
     CompilerError,
     RuntimeError,
     SQLError,
     InternalError
-} from "@firebrandanalytics/ff_sdk";
+} from "@firebrandanalytics/ff-agent-sdk/bot";
 
 // Define error handling bot for compiler errors
 export class CompilerErrorBot extends BotCustomErrorHandling<
@@ -1257,13 +1287,16 @@ Let's examine several real-world examples from the FinanceIQ application to unde
 The FactSheetBot generates user-friendly explanations of AI query processing. It demonstrates how to structure a bot that produces formatted explanations using structured output composition.
 
 ```typescript
-import { ComposeMixins, MixinBot } from '@firebrandanalytics/ff-agent-sdk/bot';
-import { StructuredOutputBotMixin } from '@firebrandanalytics/ff-agent-sdk/bot';
+import { ComposeMixins } from '@firebrandanalytics/shared-utils';
+import { MixinBot, StructuredOutputBotMixin, type MixinBotConfig } from '@firebrandanalytics/ff-agent-sdk/bot';
 
 export default class FactSheetBot extends ComposeMixins(
   MixinBot,
   StructuredOutputBotMixin
-) {
+)<[
+  MixinBot<FACT_SHEET_BTH, [StructuredOutputBotMixin<FACT_SHEET_BTH, typeof FactSheetOutputSchema>]>,
+  [StructuredOutputBotMixin<FACT_SHEET_BTH, typeof FactSheetOutputSchema>]
+]> {
   constructor() {
     // Create the WMPromptGroup configuration
     const klookup_files: Record<string, string> = {
@@ -1303,11 +1336,16 @@ export default class FactSheetBot extends ComposeMixins(
       },
       {
         name: 'user_instruction',
-        prompt: new PromptText<FACT_SHEET_PROMPT_TYPE>(
-          'user',
-          {},
-          "Generate the fact sheet."
-        )
+        prompt: (() => {
+          const p = new Prompt<FACT_SHEET_PROMPT_TYPE>({
+            role: 'user',
+            static_args: {} as FACT_SHEET_PROMPT_TYPE['args']['static'],
+          });
+          p.add_section(new PromptTemplateTextNode<FACT_SHEET_PROMPT_TYPE>({
+            content: "Generate the fact sheet.",
+          }));
+          return p;
+        })()
       },
     ];
 
@@ -1317,13 +1355,16 @@ export default class FactSheetBot extends ComposeMixins(
       wmConfig
     );
 
-    super({
-      name: "FactSheetBot",
-      schema: FactSheetOutputSchema,
-      schema_description: "A structured explanation of how the AI processed a query",
-      app_name: "FinanceIQ Business Analyzer",
-      base_prompt_group: prompt_group
-    });
+    // super() uses array-per-mixin: [MixinBot config], [StructuredOutput config]
+    super(
+      [{
+        name: "FactSheetBot",
+        base_prompt_group: prompt_group,
+        model_pool_name: "azure_completion_4o",
+        static_args: { app_name: "FinanceIQ Business Analyzer" },
+      } as MixinBotConfig<FACT_SHEET_BTH>],
+      [{ schema: FactSheetOutputSchema }]
+    );
 
     logger.detail('[FactSheetBot] Initialized with schema and prompt group');
   }

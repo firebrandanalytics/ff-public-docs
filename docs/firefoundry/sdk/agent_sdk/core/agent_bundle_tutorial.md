@@ -28,35 +28,39 @@ Let's start by creating the simplest possible agent bundle.
 
 ### Step 1: Define Your Bundle Class
 
-Every agent bundle extends `FFAgentBundle` and provides three key pieces of information: identity, entity constructors, and provider configuration.
+Every agent bundle extends `FFAgentBundle` and provides three key pieces of information: identity, entity constructors, and an entity client.
 
 ```typescript
 import {
   FFAgentBundle,
-  app_provider,
+  createEntityClient,
   logger,
 } from '@firebrandanalytics/ff-agent-sdk';
 import { NewsAnalysisConstructors } from './constructors.js';
+
+const APP_ID = 'b5bcb46b-5d7d-4a83-8088-639562f77bf6';
 
 export class NewsAnalysisAgentBundle extends FFAgentBundle<any> {
   constructor() {
     super(
       {
-        id: 'b5bcb46b-5d7d-4a83-8088-639562f77bf6',  // Unique UUID for this bundle
-        name: 'NewsAnalysis',                         // Human-readable name
+        id: APP_ID,
+        application_id: APP_ID,                        // Required in v4
+        name: 'NewsAnalysis',
+        type: 'agent_bundle',                          // Component type
         description: 'News impact analysis agent bundle',
       },
-      NewsAnalysisConstructors,  // Registry of entity types
-      app_provider               // Platform service provider
+      NewsAnalysisConstructors,       // Registry of entity types
+      createEntityClient(APP_ID)      // Entity client for this app
     );
   }
 }
 ```
 
 **Key Elements:**
-- **Identity**: A unique UUID and name that identifies this bundle in the platform
+- **Identity**: A unique UUID, `application_id`, name, and `type` that identifies this bundle in the platform
 - **Constructors**: A registry object that maps entity type names to their constructor classes (covered in the entity tutorial)
-- **Provider**: The `app_provider` gives access to platform services (Context Service, Broker, etc.)
+- **Entity Client**: `createEntityClient(APP_ID)` provides access to the entity graph for this application
 
 ### Step 2: The Constructors Registry
 
@@ -86,12 +90,14 @@ export class NewsAnalysisAgentBundle extends FFAgentBundle<any> {
   constructor() {
     super(
       {
-        id: 'b5bcb46b-5d7d-4a83-8088-639562f77bf6',
+        id: APP_ID,
+        application_id: APP_ID,
         name: 'NewsAnalysis',
+        type: 'agent_bundle',
         description: 'News impact analysis agent bundle',
       },
       NewsAnalysisConstructors,
-      app_provider
+      createEntityClient(APP_ID)
     );
   }
 
@@ -774,5 +780,5 @@ You've now learned how to:
 - **Advanced Patterns**: Explore workflow orchestration, cross-bundle communication, and human-in-the-loop patterns
 - **Production Best Practices**: Authentication, rate limiting, monitoring, and error handling strategies
 
-Your agent bundle is the entry point to your AI application. With the patterns you've learned here, you can build sophisticated, production-ready services that expose your AI capabilities to the world. Happy building! 🚀
+Your agent bundle is the entry point to your AI application. With the patterns you've learned here, you can build sophisticated, production-ready services that expose your AI capabilities to the world.
 
