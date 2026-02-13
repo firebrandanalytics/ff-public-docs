@@ -45,7 +45,7 @@ By the end of this series, you'll have a complete **Illustrated Children's Story
 | [2](./part-02-story-writer.md) | Story Writer Bot & Prompts | Bot that generates an illustrated HTML story with image prompts | Complex prompt engineering, HTML output with `{{IMAGE_N}}` placeholders, prompt composition |
 | [3](./part-03-image-generation.md) | Image Generation Service | Service that generates images and embeds them into HTML | Broker client `generateImage()`, blob storage retrieval, base64 encoding, HTML assembly |
 | [4](./part-04-pipeline-and-api.md) | Pipeline Orchestration & API Endpoints | `StoryPipelineEntity` orchestrator with REST endpoints | `RunnableEntity` with custom `run_impl()`, `appendCall()` + `yield*`, `@ApiEndpoint` decorator |
-| [5](./part-05-parallel-image-generation.md) | Parallel Image Generation | Concurrent image generation with capacity management | `HierarchicalTaskPoolRunner`, hierarchical `CapacitySource`, `SourceBufferObj`, `TaskProgressEnvelope` |
+| [5](./part-05-parallel-image-generation.md) | Parallel Image Generation | Entity-based concurrent image generation with capacity management | `ImageGenerationEntity`, `appendOrRetrieveCall()`, `parallelCalls()`, `SourceFromIterable`, `HierarchicalTaskPoolRunner`, hierarchical `CapacitySource` |
 
 ## Architecture Overview
 
@@ -69,8 +69,9 @@ StoryPipelineEntity.run_impl() — yields progress via iterator
        |-- Stage 2: Story Writing
        |     appendCall(StoryWriterEntity) -> yield* start()
        |
-       |-- Stage 3: Parallel Image Generation
-       |     HierarchicalTaskPoolRunner + CapacitySource
+       |-- Stage 3: Parallel Image Generation (entity-based)
+       |     parallelCalls(ImageGenerationEntity) + CapacitySource
+       |     appendOrRetrieveCall() for idempotent child creation
        |     (global: 10, per-story: 3)
        |
        |-- Stage 4: HTML Assembly

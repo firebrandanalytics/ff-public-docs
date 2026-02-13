@@ -1,17 +1,17 @@
-# Part 5: Parallel Image Generation
+# Part 5: Parallel Image Generation with Entity-Based Parallelism
 
-In Part 3, you built an `ImageService` that generates images sequentially -- one at a time, waiting for each to complete before starting the next. That works, but it is slow. A story with 5 images at ~10 seconds each takes 50 seconds of wall time. In this part, you'll replace the sequential approach with parallel generation using the SDK's `CapacitySource`, `HierarchicalTaskPoolRunner`, and `SourceBufferObj` utilities. The result: those same 5 images complete in ~20 seconds, and the system stays safe even when multiple stories run concurrently.
+In Part 4, you built a `StoryPipelineEntity` that orchestrates the full story pipeline. Image generation runs sequentially -- one image at a time. A story with 5 images at ~10 seconds each takes 50 seconds of wall time. In this part, you'll replace the sequential approach with **entity-based parallelism** -- each image becomes its own `RunnableEntity` child, and a `HierarchicalTaskPoolRunner` executes them concurrently with capacity control. The result: those same 5 images complete in ~20 seconds, each image is visible in the entity graph, and the pipeline can resume where it left off if interrupted.
 
 **What you'll learn:**
-- Why sequential image generation is a bottleneck and why naive parallelism is dangerous
-- `CapacitySource` for hierarchical concurrency limits (parent/child capacity chains)
-- `HierarchicalTaskPoolRunner` for concurrent task execution with capacity control
-- `SourceBufferObj` for feeding tasks to the runner
-- `TaskProgressEnvelope` for streaming individual task results as they complete
-- Two-level capacity: global limit (10 concurrent across all stories) + per-story limit (3 concurrent per story)
-- How the parallel implementation integrates with the pipeline entity from Part 4
+- Why each parallel task should be a `RunnableEntity` (observability, idempotency, resumability)
+- `ImageGenerationEntity` -- a small entity that generates one image
+- `appendOrRetrieveCall()` for deterministic, idempotent child entity creation
+- `parallelCalls()` helper to create child entities and yield task lambdas
+- `SourceFromIterable` to bridge an async generator to the task runner
+- `HierarchicalTaskPoolRunner` for concurrent execution with capacity control
+- Two-level capacity: global limit (10 concurrent across all stories) + per-story limit (3)
 
-**What you'll build:** An updated `ImageService` with a `generateAllImagesParallel()` async generator that replaces the sequential `generateAllImages()` method, plus the pipeline integration code that consumes it.
+**What you'll build:** An `ImageGenerationEntity` for single-image generation and an updated `StoryPipelineEntity` Stage 3 that generates all images in parallel using entity-based tasks.
 
 **Starting point:** Completed code from [Part 4: Pipeline Orchestration & API Endpoints](./part-04-pipeline-and-api.md). You should have a working pipeline with sequential image generation.
 
@@ -19,28 +19,16 @@ In Part 3, you built an `ImageService` that generates images sequentially -- one
 
 ## The Problem with Sequential Generation
 
-Look at the `generateAllImages` method from Part 3:
+In Part 4, the pipeline generates images one at a time in a `for` loop:
 
 ```typescript
-async generateAllImages(
-  imagePrompts: ImagePrompt[],
-  onProgress?: (generated: number, total: number) => void,
-  modelPool?: string,
-): Promise<GeneratedImageResult[]> {
-  const results: GeneratedImageResult[] = [];
-  const total = imagePrompts.length;
-
-  for (let i = 0; i < imagePrompts.length; i++) {
-    const result = await this.generateImage(imagePrompts[i], modelPool);
-    results.push(result);
-    onProgress?.(i + 1, total);
-  }
-
-  return results;
+for (const imagePrompt of storyResult.image_prompts) {
+  const result = await imageService.generateImage(imagePrompt);
+  images.push(result);
 }
 ```
 
-Each image waits for the previous one to finish. The timeline for a 5-image story looks like this:
+The timeline for a 5-image story looks like this:
 
 ```
 Time:   0s         10s        20s        30s        40s        50s
@@ -66,19 +54,276 @@ IMG 5:             [=========]
                               ^ Done at ~20s
 ```
 
-That is a 60% reduction in wall time. But naive parallelism creates a new problem: if you launch 5 stories at once, each with 5 images, that is 25 concurrent image generation requests hitting the backend simultaneously. The image generation model has throughput limits, and exceeding them causes timeouts, rate-limit errors, or degraded quality for everyone.
+That is a 60% reduction in wall time. But naive parallelism creates problems:
 
-You need **controlled parallelism** -- concurrency that is bounded at two levels:
-1. **Per story**: No single story hogs all available capacity
-2. **Globally**: Total concurrent requests across all stories stays within backend limits
+1. **Throughput limits**: 5 stories at once, each with 5 images = 25 concurrent image requests. The backend has capacity limits.
+2. **No visibility**: Bare `Promise` tasks don't appear in the entity graph. You can't inspect progress per-image via `ff-eg-read`.
+3. **No resumability**: If the process crashes after generating 3 of 5 images, all work is lost. The pipeline restarts from scratch.
 
-This is what `CapacitySource` and `HierarchicalTaskPoolRunner` solve.
+Entity-based parallelism solves all three.
 
 ---
 
-## Concepts: Hierarchical Capacity
+## Why Entities Instead of Bare Tasks
 
-The capacity model has two layers. Each layer is a `CapacitySource` instance, and the child links to its parent:
+The key insight is: each parallel task should be a `RunnableEntity`, not a bare function. Here's why:
+
+| Concern | Bare `() => Promise<T>` | `RunnableEntity` child |
+|---------|------------------------|----------------------|
+| **Observability** | Invisible -- only the parent entity exists in the graph | Each image is a named entity visible in `ff-eg-read` with status and data |
+| **Idempotency** | Create-and-forget -- duplicates if retried | `appendOrRetrieveCall()` returns the existing entity if already created |
+| **Resumability** | Lost on crash | Completed children are already done; only remaining images re-execute |
+| **Progress** | Only the parent can report progress | Each child yields its own status envelopes |
+| **Error isolation** | Error metadata is ephemeral | Error details persist in the child entity's data |
+
+After running a 5-image story, the entity graph looks like this:
+
+```
+StoryPipelineEntity (story-pipeline-brave-kitten)
+  ├── ContentSafetyCheckEntity (safety-check)
+  ├── StoryWriterEntity (story-writer)
+  ├── ImageGenerationEntity (image-{{IMAGE_1}})    ✓ Complete
+  ├── ImageGenerationEntity (image-{{IMAGE_2}})    ✓ Complete
+  ├── ImageGenerationEntity (image-{{IMAGE_3}})    ✗ Failed
+  ├── ImageGenerationEntity (image-{{IMAGE_4}})    ✓ Complete
+  └── ImageGenerationEntity (image-{{IMAGE_5}})    ✓ Complete
+```
+
+Every entity is individually inspectable: `ff-eg-read node <entity-id>` shows its data, status, and relationship to the parent pipeline.
+
+---
+
+## Step 1: ImageGenerationEntity -- One Image Per Entity
+
+Create an entity that generates a single image. It reads its configuration from entity data (set by the parent at creation time), calls the broker, retrieves from blob storage, and returns a `GeneratedImageResult`.
+
+**`apps/story-bundle/src/entities/ImageGenerationEntity.ts`**:
+
+```typescript
+import {
+  RunnableEntity,
+  EntityFactory,
+  EntityMixin,
+  logger,
+} from '@firebrandanalytics/ff-agent-sdk';
+import {
+  SimplifiedBrokerClient,
+  AspectRatio,
+  ImageQuality,
+} from '@firebrandanalytics/ff_broker_client';
+import { createBlobStorage } from '@firebrandanalytics/shared-utils/storage';
+import type {
+  GeneratedImageResult,
+  ImageQualityLevel,
+  AspectRatioOption,
+} from '@shared/types';
+
+// ─── Module-level service clients ───────────────────────────
+
+const brokerClient = new SimplifiedBrokerClient({
+  host: process.env.LLM_BROKER_HOST || 'localhost',
+  port: parseInt(process.env.LLM_BROKER_PORT || '50052'),
+});
+
+// ─── Quality/aspect ratio mapping ───────────────────────────
+
+const QUALITY_MAP: Record<ImageQualityLevel, ImageQuality> = {
+  low: ImageQuality.IMAGE_QUALITY_LOW,
+  medium: ImageQuality.IMAGE_QUALITY_MEDIUM,
+  high: ImageQuality.IMAGE_QUALITY_HIGH,
+};
+
+const ASPECT_RATIO_MAP: Record<AspectRatioOption, AspectRatio> = {
+  '1:1': AspectRatio.ASPECT_RATIO_1_1,
+  '3:2': AspectRatio.ASPECT_RATIO_3_2,
+  '2:3': AspectRatio.ASPECT_RATIO_2_3,
+  '4:3': AspectRatio.ASPECT_RATIO_4_3,
+  '16:9': AspectRatio.ASPECT_RATIO_16_9,
+};
+
+@EntityMixin({
+  specificType: 'ImageGenerationEntity',
+  generalType: 'ImageGenerationEntity',
+  allowedConnections: {},
+})
+export class ImageGenerationEntity extends RunnableEntity<any> {
+  constructor(factory: EntityFactory<any>, idOrDto: string | any) {
+    super(factory, idOrDto);
+  }
+
+  protected override async *run_impl() {
+    const dto = await this.get_dto();
+    const {
+      placeholder,
+      prompt,
+      alt_text,
+      model_pool,
+      image_quality,
+      aspect_ratio,
+    } = dto.data;
+
+    // Yield status so the parent (and any SSE consumer) sees progress
+    yield await this.createStatusEnvelope(
+      'RUNNING',
+      `Generating image for ${placeholder}`,
+    );
+
+    const quality = QUALITY_MAP[image_quality as ImageQualityLevel]
+      ?? ImageQuality.IMAGE_QUALITY_MEDIUM;
+    const ratio = ASPECT_RATIO_MAP[aspect_ratio as AspectRatioOption]
+      ?? AspectRatio.ASPECT_RATIO_3_2;
+
+    // Generate via broker
+    const result = await brokerClient.generateImage({
+      modelPool: model_pool || 'fb-image-gen',
+      prompt,
+      semanticLabel: 'illustrated-story-image',
+      quality,
+      aspectRatio: ratio,
+    });
+
+    if (!result.images || result.images.length === 0) {
+      throw new Error(`No images generated for ${placeholder}`);
+    }
+
+    const image = result.images[0];
+
+    yield await this.createStatusEnvelope(
+      'RUNNING',
+      `Retrieving ${placeholder} from storage`,
+    );
+
+    // Retrieve image bytes from blob storage
+    const blobStorage = createBlobStorage();
+    const { readableStream } = await blobStorage.getBlob(image.objectKey);
+    const chunks: Buffer[] = [];
+    for await (const chunk of readableStream as AsyncIterable<Buffer>) {
+      chunks.push(Buffer.from(chunk));
+    }
+    const base64 = Buffer.concat(chunks).toString('base64');
+    const contentType = image.format === 'png' ? 'image/png' : 'image/jpeg';
+
+    const imageResult: GeneratedImageResult = {
+      placeholder,
+      base64,
+      content_type: contentType,
+      alt_text,
+    };
+
+    return imageResult;
+  }
+}
+```
+
+### Key Design Points
+
+**Single responsibility:** Each entity handles exactly one image. All configuration (prompt, quality, aspect ratio) comes from entity data, set by the parent at creation time.
+
+**Status envelopes:** The entity yields two status updates -- one when generation starts and one when retrieval starts. These flow up to any SSE consumer watching the pipeline.
+
+**No service class needed:** In Part 3, we used an `ImageService` class. That class is no longer necessary. The entity *is* the unit of work, and the broker client is a module-level singleton shared by all instances.
+
+**Quality/aspect ratio mapping:** User-facing strings like `'medium'` and `'3:2'` are mapped to protobuf enums (`ImageQuality.IMAGE_QUALITY_MEDIUM`, `AspectRatio.ASPECT_RATIO_3_2`) at the entity level.
+
+---
+
+## Step 2: Register the Entity
+
+Add `ImageGenerationEntity` to the constructors registry so the SDK can instantiate it:
+
+**`apps/story-bundle/src/constructors.ts`** (updated):
+
+```typescript
+import { ImageGenerationEntity } from './entities/ImageGenerationEntity.js';
+
+export const StoryBundleConstructors = {
+  // ... existing entries ...
+  ImageGenerationEntity,
+};
+```
+
+---
+
+## Step 3: `appendOrRetrieveCall` -- Deterministic Child Creation
+
+When the pipeline creates child image entities, it uses `appendOrRetrieveCall()` instead of `appendCall()`. The difference is critical for idempotency:
+
+| Method | Behavior |
+|--------|----------|
+| `appendCall(EntityClass, name, data)` | Always creates a new entity. Throws if the name already exists. |
+| `appendOrRetrieveCall(EntityClass, name, data)` | Creates the entity if it doesn't exist. Returns the existing entity if it does. |
+
+This enables **resumable pipelines**. If the process crashes after creating `image-{{IMAGE_1}}` and `image-{{IMAGE_2}}`, resuming the pipeline calls `appendOrRetrieveCall` again for all 5 images. The first two return their existing entities (already completed), and the remaining three are created fresh.
+
+### Deterministic Naming
+
+The child entity name must be deterministic -- the same inputs always produce the same name. The pipeline uses the placeholder name:
+
+```typescript
+const taskItems = imagePrompts.map((ip) => ({
+  name: `image-${ip.placeholder}`,    // e.g., "image-{{IMAGE_1}}"
+  data: {
+    placeholder: ip.placeholder,
+    prompt: ip.prompt,
+    alt_text: ip.alt_text,
+    model_pool: 'fb-image-gen',
+    image_quality: 'medium',
+    aspect_ratio: '3:2',
+  },
+}));
+```
+
+Each task item specifies:
+- **`name`**: A stable, deterministic identifier. Combined with the parent entity's context, this uniquely identifies the child in the entity graph.
+- **`data`**: The entity data passed to the child entity at creation time.
+
+> **Important:** Never use `Date.now()`, random UUIDs, or loop indices as part of the entity name. These make resumption impossible -- the pipeline would create new entities instead of finding the existing ones.
+
+---
+
+## Step 4: `parallelCalls()` -- Creating Child Entities as Tasks
+
+The `parallelCalls()` method is a helper on `RunnableEntity` that creates child entities from a list of task items and yields task lambdas (functions the runner can invoke):
+
+```typescript
+const taskSource = new SourceFromIterable(
+  this.parallelCalls(ImageGenerationEntity, taskItems)
+);
+```
+
+Under the hood, `parallelCalls()` does this for each task item:
+
+1. Calls `appendOrRetrieveCall(ImageGenerationEntity, item.name, item.data)` to create (or retrieve) the child entity
+2. Yields a lambda: `() => childEntity.start()` that, when called by the runner, executes the child entity's `run_impl()`
+
+Because `parallelCalls()` is an async generator, child entities are created one at a time as the runner pulls tasks. This is important: it means the pipeline doesn't create all 5 entities up front. If the runner has capacity for 3, it creates 3 initially, then creates the 4th when one completes.
+
+---
+
+## Step 5: `SourceFromIterable` -- Bridging Generators to the Runner
+
+`HierarchicalTaskPoolRunner` consumes tasks from a source that implements `PullObj & Peekable`. In Part 3's sequential approach, you might have used `SourceBufferObj` to wrap an array. With entity-based parallelism, the tasks come from an async generator, not an array. `SourceFromIterable` bridges this gap:
+
+```typescript
+import { SourceFromIterable } from '@firebrandanalytics/shared-utils';
+
+const taskSource = new SourceFromIterable(
+  this.parallelCalls(ImageGenerationEntity, taskItems)
+);
+```
+
+| Source Class | Input | Use Case |
+|-------------|-------|----------|
+| `SourceBufferObj` | `Array<() => Promise<T>>` | All tasks known up front, loaded into memory |
+| `SourceFromIterable` | `AsyncIterable<() => Promise<T>>` | Tasks created lazily from a generator |
+
+`SourceFromIterable` pulls from the generator on demand. When the runner asks for the next task, the source advances the generator by one step, which creates the next child entity. When the generator is exhausted, the source signals completion.
+
+---
+
+## Step 6: Capacity Management
+
+The capacity model has two layers, each a `CapacitySource` instance. The child links to its parent:
 
 ```
                     ┌──────────────────────────┐
@@ -86,8 +331,8 @@ The capacity model has two layers. Each layer is a `CapacitySource` instance, an
                     │  CapacitySource(10)       │
                     │                          │
                     │  Shared across ALL        │
-                    │  ImageService instances   │
-                    │  (module-level constant)  │
+                    │  StoryPipelineEntity      │
+                    │  instances (module-level) │
                     └────────┬────────┬────────┘
                              │        │
                 ┌────────────┘        └────────────┐
@@ -97,380 +342,110 @@ The capacity model has two layers. Each layer is a `CapacitySource` instance, an
      │  CapacitySource(3,   │          │  CapacitySource(3,       │
      │    GLOBAL_CAPACITY)  │          │    GLOBAL_CAPACITY)      │
      │                      │          │                          │
-     │  Created per call to │          │  Created per call to     │
-     │  generateAllImages   │          │  generateAllImages       │
-     │  Parallel()          │          │  Parallel()              │
+     │  Created per pipeline│          │  Created per pipeline    │
+     │  execution           │          │  execution               │
      └─────────────────────┘          └──────────────────────────┘
 ```
-
-When Story A acquires a capacity unit, **both** the per-story count and the global count decrement. This enforces two invariants simultaneously:
-
-- No single story exceeds 3 concurrent images
-- The process never exceeds 10 concurrent images total, regardless of how many stories are running
-
----
-
-## Step 1: CapacitySource -- Hierarchical Concurrency Limits
-
-`CapacitySource` is a concurrency primitive from `@firebrandanalytics/shared-utils`. It tracks a count of available capacity units and supports parent-child chaining.
-
-### Creating Capacity Sources
 
 ```typescript
 import { CapacitySource } from '@firebrandanalytics/shared-utils';
 
-// Standalone capacity: 10 concurrent operations max
-const globalCapacity = new CapacitySource(10);
+// Module-level: shared across all pipeline instances in the process
+const GLOBAL_IMAGE_CAPACITY = new CapacitySource(10);
 
-// Child capacity: 3 max, but ALSO checks parent before granting
-const storyCapacity = new CapacitySource(3, globalCapacity);
+// Inside run_impl(): per-story, linked to global
+const storyCapacity = new CapacitySource(3, GLOBAL_IMAGE_CAPACITY);
 ```
 
-The first argument is the maximum concurrent units. The optional second argument is the parent `CapacitySource`. When a child is constructed with a parent, every acquire/release operation cascades up the chain.
-
-### Key Methods
-
-| Method | Behavior |
-|--------|----------|
-| `peek()` | Returns `true` if capacity is available (checks self AND parent). Does not modify state. |
-| `acquire()` | Takes one unit. If none available, returns a `Promise` that resolves when capacity frees up. Decrements both self and parent. |
-| `release()` | Returns one unit. Increments both self and parent. |
-
-### Acquire and Release Cascade
+### How Capacity Cascades
 
 When `storyCapacity.acquire()` is called:
-
-1. Check if `storyCapacity` has units available (count > 0)
-2. Check if `globalCapacity` has units available (count > 0)
+1. Check `storyCapacity` has units available (count > 0)
+2. Check `GLOBAL_IMAGE_CAPACITY` has units available (count > 0)
 3. If both have capacity: decrement both, return immediately
 4. If either is exhausted: block until both have capacity
 
 When `storyCapacity.release()` is called:
-
 1. Increment `storyCapacity` count
-2. Increment `globalCapacity` count
-3. Wake up any blocked `acquire()` calls that now have capacity
+2. Increment `GLOBAL_IMAGE_CAPACITY` count
+3. Wake up any blocked `acquire()` calls
 
-This means:
-- A story can never run more than 3 images at once (its own limit)
-- Even if 10 stories each want 3 concurrent images, only 10 total will run (global limit)
-- The 11th request blocks until one of the 10 in-flight requests completes
-
-### Module-Level Global State
-
-The global capacity is declared at module level:
-
-```typescript
-const GLOBAL_IMAGE_CAPACITY = new CapacitySource(10);
-```
-
-This is intentional. The `ImageService` class may be instantiated multiple times (once per pipeline entity, or once in the agent bundle), but all instances share the same module-level constant. The global limit applies to the entire process, not to a single `ImageService` instance.
-
-Each call to `generateAllImagesParallel()` creates a **new** per-story `CapacitySource(3, GLOBAL_IMAGE_CAPACITY)`. When the generator completes and the per-story source is garbage collected, the global capacity is unaffected -- all acquired units were released during the generator's execution.
+This enforces two invariants simultaneously:
+- No single story exceeds 3 concurrent images
+- The process never exceeds 10 concurrent images total
 
 ---
 
-## Step 2: Task Runners and SourceBufferObj
+## Step 7: Putting It Together -- The Updated Pipeline
 
-`HierarchicalTaskPoolRunner` does not accept an array of promises or an array of tasks directly. It consumes tasks from a **source** -- an object that implements `PullObj & Peekable`. The `SourceBufferObj` class wraps an array into this interface.
+Here is the complete Stage 3 from `StoryPipelineEntity.run_impl()`, replacing the sequential loop with entity-based parallelism:
 
-### Converting Prompts to Task Functions
-
-Each task is a zero-argument function that returns a `Promise`. Map your image prompts into these functions:
+**`apps/story-bundle/src/entities/StoryPipelineEntity.ts`** (Stage 3):
 
 ```typescript
-const taskRunners = imagePrompts.map(
-  (prompt) => () => this.generateImage(prompt, modelPool)
-);
-```
-
-Each function, when called, starts one image generation request. The runner decides *when* to call each function based on available capacity.
-
-### Wrapping with SourceBufferObj
-
-```typescript
-import { SourceBufferObj } from '@firebrandanalytics/shared-utils';
-
-const taskSource = new SourceBufferObj(taskRunners, true);
-```
-
-| Argument | Type | Description |
-|----------|------|-------------|
-| `taskRunners` | `Array<() => Promise<T>>` | The array of task functions to execute |
-| `true` | `boolean` | One-shot mode: the source closes automatically when the buffer is empty |
-
-`SourceBufferObj` implements `PullObj` (the runner can pull the next task) and `Peekable` (the runner can check if more tasks are available without consuming them). The one-shot flag (`true`) means: once all tasks have been pulled from the buffer, the source signals completion. The runner uses this signal to know when to stop pulling and wait for in-flight tasks to finish.
-
----
-
-## Step 3: HierarchicalTaskPoolRunner -- The Execution Engine
-
-The runner coordinates task execution against the capacity source. It pulls tasks from the source, acquires capacity before launching each one, and yields results as they complete.
-
-```typescript
-import { HierarchicalTaskPoolRunner } from '@firebrandanalytics/shared-utils';
-
-const runner = new HierarchicalTaskPoolRunner<GeneratedImageResult, GeneratedImageResult>(
-  'image-gen',       // label for logging
-  taskSource,        // PullObj & Peekable source of task functions
-  storyCapacity,     // CapacitySource that governs concurrency
-);
-```
-
-| Argument | Description |
-|----------|-------------|
-| `'image-gen'` | A string label used in log messages. Helps distinguish runner instances in multi-runner scenarios. |
-| `taskSource` | The `SourceBufferObj` that feeds task functions to the runner. |
-| `storyCapacity` | The `CapacitySource` that controls how many tasks can run concurrently. Since `storyCapacity` has `GLOBAL_IMAGE_CAPACITY` as its parent, both limits are enforced. |
-
-The two type parameters `<GeneratedImageResult, GeneratedImageResult>` are the intermediate and final result types. For image generation, tasks do not produce intermediate results -- each task is a single `Promise` that resolves to a `GeneratedImageResult`. Both type parameters are the same.
-
-### Running Tasks and Consuming Results
-
-```typescript
-for await (const envelope of runner.runTasks()) {
-  // Handle each result as it arrives
-}
-```
-
-`runTasks()` returns an `AsyncGenerator` that yields a `TaskProgressEnvelope` each time a task completes (or fails). The runner manages the concurrency internally:
-
-1. Pull a task from the source
-2. Acquire capacity (blocks if limits reached)
-3. Launch the task
-4. When the task completes, release capacity and yield the result
-5. Repeat until the source is empty and all in-flight tasks have finished
-
-Results arrive in **completion order**, not submission order. If Image 3 finishes before Image 1, you receive Image 3's envelope first.
-
----
-
-## Step 4: TaskProgressEnvelope -- Streaming Results
-
-Each yielded value from `runner.runTasks()` is an envelope that wraps the result of a single task:
-
-```typescript
-type TaskProgressEnvelope<I, O> = {
-  taskId: number;
-  type: 'INTERMEDIATE' | 'FINAL' | 'ERROR';
-  value?: I | O;
-  error?: any;
-};
-```
-
-| Field | Description |
-|-------|-------------|
-| `taskId` | Zero-based index of the task in the order it was submitted (not completed). |
-| `type` | Discriminator for what happened. |
-| `value` | The task result (present when `type` is `'FINAL'`). |
-| `error` | The error details (present when `type` is `'ERROR'`). |
-
-The three envelope types:
-
-| Type | Meaning | When It Occurs |
-|------|---------|----------------|
-| `FINAL` | Task completed successfully | The promise returned by the task function resolved |
-| `ERROR` | Task failed | The promise rejected |
-| `INTERMEDIATE` | Task produced a partial result | For streaming tasks that yield intermediate values (not used in image generation) |
-
-For image generation, you will only see `FINAL` and `ERROR` envelopes. Each image generation call is a single promise -- there are no intermediate results. The `INTERMEDIATE` type exists for tasks that use streaming (e.g., token-by-token LLM responses), which is not the case here.
-
-The `ImageService` re-exports a narrowed type alias for clarity:
-
-```typescript
-export type ImageTaskEnvelope = {
-  taskId: number;
-  type: 'INTERMEDIATE' | 'FINAL' | 'ERROR';
-  value?: GeneratedImageResult;
-  error?: any;
-};
-```
-
----
-
-## Step 5: The Updated ImageService
-
-Here is the complete `generateAllImagesParallel()` method that replaces the sequential `generateAllImages()`:
-
-**`apps/story-bundle/src/services/image-service.ts`** (updated):
-
-```typescript
-import { logger } from '@firebrandanalytics/ff-agent-sdk';
-import {
-  SimplifiedBrokerClient,
-  AspectRatio,
-  ImageQuality,
-} from '@firebrandanalytics/ff_broker_client';
 import {
   CapacitySource,
   HierarchicalTaskPoolRunner,
-  SourceBufferObj,
+  SourceFromIterable,
 } from '@firebrandanalytics/shared-utils';
-import { createBlobStorage } from '@firebrandanalytics/shared-utils/storage';
-import type { ImagePrompt, GeneratedImageResult } from '@shared/types';
+import { ImageGenerationEntity } from './ImageGenerationEntity.js';
+import type { GeneratedImageResult } from '@shared/types';
 
-/** Progress envelope from HierarchicalTaskPoolRunner */
-export type ImageTaskEnvelope = {
-  taskId: number;
-  type: 'INTERMEDIATE' | 'FINAL' | 'ERROR';
-  value?: GeneratedImageResult;
-  error?: any;
-};
-
-/**
- * Global capacity — limits total concurrent image requests across all stories.
- * This is process-level state: all StoryPipelineEntity instances share it.
- */
 const GLOBAL_IMAGE_CAPACITY = new CapacitySource(10);
 
-export class ImageService {
-  private brokerClient: SimplifiedBrokerClient;
+// ... inside run_impl() or runApprovedPipeline() ...
 
-  constructor() {
-    this.brokerClient = new SimplifiedBrokerClient({
-      host: process.env.LLM_BROKER_HOST || 'localhost',
-      port: parseInt(process.env.LLM_BROKER_PORT || '50052'),
-    });
-  }
+    // ─── Stage 3: Parallel image generation (entity-based) ──────
 
-  async generateImage(
-    imagePrompt: ImagePrompt,
-    modelPool: string = 'fb-image-gen'
-  ): Promise<GeneratedImageResult> {
-    logger.info('[ImageService] Generating image', {
-      placeholder: imagePrompt.placeholder,
-      prompt_preview: imagePrompt.prompt.substring(0, 80),
+    const imagePrompts = storyResult.image_prompts;
+
+    yield await this.createStatusEnvelope(
+      'RUNNING',
+      `Generating ${imagePrompts.length} images`,
+    );
+    await this.updateEntityData({
+      stage: 'generating_images',
+      images_total: imagePrompts.length,
+      images_generated: 0,
     });
 
-    const result = await this.brokerClient.generateImage({
-      modelPool,
-      prompt: imagePrompt.prompt,
-      semanticLabel: 'illustrated-story-image',
-      quality: ImageQuality.IMAGE_QUALITY_MEDIUM,
-      aspectRatio: AspectRatio.ASPECT_RATIO_3_2,
-    });
+    // 1. Define task items: name + data for each child entity
+    const taskItems = imagePrompts.map((ip) => ({
+      name: `image-${ip.placeholder}`,
+      data: {
+        placeholder: ip.placeholder,
+        prompt: ip.prompt,
+        alt_text: ip.alt_text,
+        model_pool: process.env.IMAGE_MODEL_POOL || 'fb-image-gen',
+        image_quality: customization?.image_quality || 'medium',
+        aspect_ratio: customization?.aspect_ratio || '3:2',
+      },
+    }));
 
-    if (!result.images || result.images.length === 0) {
-      throw new Error(`No images generated for ${imagePrompt.placeholder}`);
-    }
-
-    const image = result.images[0];
-    const base64 = await this.retrieveImageAsBase64(image.objectKey);
-    const contentType = image.format === 'png' ? 'image/png' : 'image/jpeg';
-
-    return {
-      placeholder: imagePrompt.placeholder,
-      base64,
-      content_type: contentType,
-      alt_text: imagePrompt.alt_text,
-    };
-  }
-
-  /**
-   * Generate all images in parallel with hierarchical capacity management.
-   *
-   * Uses HierarchicalTaskPoolRunner with a two-level CapacitySource:
-   * - Global: max 10 concurrent image requests across all stories
-   * - Per-story: max 3 concurrent images per story
-   *
-   * Yields TaskProgressEnvelope for each completed/failed image.
-   */
-  async *generateAllImagesParallel(
-    imagePrompts: ImagePrompt[],
-    modelPool?: string,
-  ): AsyncGenerator<ImageTaskEnvelope> {
-    if (imagePrompts.length === 0) return;
-
-    // Per-story capacity, linked to global capacity.
-    // A story can run at most 3 images concurrently, but only if
-    // the global pool has capacity available too.
-    const storyCapacity = new CapacitySource(3, GLOBAL_IMAGE_CAPACITY);
-
-    // Create task runners — one per image prompt
-    const taskRunners = imagePrompts.map(
-      (prompt) => () => this.generateImage(prompt, modelPool)
+    // 2. Create task source from entity-based parallel calls
+    const taskSource = new SourceFromIterable(
+      this.parallelCalls(ImageGenerationEntity, taskItems)
     );
 
-    // SourceBufferObj provides PullObj & Peekable — feeds tasks to the runner
-    const taskSource = new SourceBufferObj(taskRunners, true);
+    // 3. Per-story capacity, linked to global capacity
+    const storyCapacity = new CapacitySource(3, GLOBAL_IMAGE_CAPACITY);
 
-    const runner = new HierarchicalTaskPoolRunner<GeneratedImageResult, GeneratedImageResult>(
+    // 4. Create runner
+    const runner = new HierarchicalTaskPoolRunner<any, GeneratedImageResult>(
       'image-gen',
       taskSource,
       storyCapacity,
     );
 
-    yield* runner.runTasks();
-  }
-
-  assembleHtml(htmlTemplate: string, images: GeneratedImageResult[]): string {
-    let html = htmlTemplate;
-    for (const img of images) {
-      const imgTag = `<img src="data:${img.content_type};base64,${img.base64}" alt="${img.alt_text}" style="max-width:100%; border-radius:8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);" />`;
-      html = html.replace(img.placeholder, imgTag);
-    }
-    return html;
-  }
-
-  private async retrieveImageAsBase64(objectKey: string): Promise<string> {
-    const blobStorage = createBlobStorage();
-    const { readableStream } = await blobStorage.getBlob(objectKey);
-
-    const chunks: Buffer[] = [];
-    for await (const chunk of readableStream as AsyncIterable<Buffer>) {
-      chunks.push(Buffer.from(chunk));
-    }
-    const buffer = Buffer.concat(chunks);
-    return buffer.toString('base64');
-  }
-}
-```
-
-### What Changed from Part 3
-
-| Aspect | Part 3 (Sequential) | Part 5 (Parallel) |
-|--------|---------------------|-------------------|
-| **New imports** | None | `CapacitySource`, `HierarchicalTaskPoolRunner`, `SourceBufferObj` |
-| **Module-level state** | None | `GLOBAL_IMAGE_CAPACITY = new CapacitySource(10)` |
-| **Method name** | `generateAllImages()` | `generateAllImagesParallel()` |
-| **Return type** | `Promise<GeneratedImageResult[]>` (all at once) | `AsyncGenerator<ImageTaskEnvelope>` (one at a time) |
-| **Progress mechanism** | `onProgress` callback | `TaskProgressEnvelope` yielded per task |
-| **Concurrency** | 1 (sequential `for` loop with `await`) | Up to 3 per story, 10 globally |
-| **Error handling** | First error aborts entire batch | Errors reported per-task; other tasks continue |
-
-The `generateImage()` method is unchanged. It is still the unit of work -- one prompt in, one image out. The difference is in *how many* of these run at the same time and *how* results are delivered to the caller.
-
-Note that the old `generateAllImages()` method can be removed entirely, or kept as a simpler alternative for cases where parallelism is unnecessary (e.g., unit testing with a single image). The pipeline entity now uses `generateAllImagesParallel()` exclusively.
-
----
-
-## Step 6: Pipeline Integration
-
-The pipeline entity consumes the parallel generator with a `for await...of` loop over the envelopes. Here is the updated Stage 3 from `StoryPipelineEntity.run_impl()`:
-
-**`apps/story-bundle/src/entities/StoryPipelineEntity.ts`** (Stage 3 excerpt):
-
-```typescript
-    // ─── Stage 3: Parallel image generation ───────────────────────
-
-    yield await this.createStatusEnvelope(
-      'RUNNING',
-      `Generating ${storyResult.image_prompts.length} images`,
-    );
-    await this.updateEntityData({
-      stage: 'generating_images',
-      images_total: storyResult.image_prompts.length,
-      images_generated: 0,
-    });
-
+    // 5. Consume results as they complete
     const images: GeneratedImageResult[] = [];
-    for await (const envelope of imageService.generateAllImagesParallel(storyResult.image_prompts)) {
+    for await (const envelope of runner.runTasks()) {
       if (envelope.type === 'FINAL' && envelope.value) {
         images.push(envelope.value);
         await this.updateEntityData({ images_generated: images.length });
         yield await this.createStatusEnvelope(
           'RUNNING',
-          `Generated ${images.length}/${storyResult.image_prompts.length} images`,
+          `Generated ${images.length}/${imagePrompts.length} images`,
         );
       } else if (envelope.type === 'ERROR') {
         logger.warn('[Pipeline] Image generation error', {
@@ -482,40 +457,50 @@ The pipeline entity consumes the parallel generator with a `for await...of` loop
     }
 ```
 
-### Advantages Over Sequential Generation
+### What Changed from Part 4
 
-Compared to calling `generateImage()` in a sequential loop (one `await` per image), the parallel approach changes two things:
+| Aspect | Part 4 (Sequential) | Part 5 (Entity-Based Parallel) |
+|--------|---------------------|-------------------------------|
+| **Image generation** | `ImageService.generateImage()` in a `for` loop | `ImageGenerationEntity` -- one entity per image |
+| **Child creation** | N/A (service method, not an entity) | `appendOrRetrieveCall()` via `parallelCalls()` |
+| **Task source** | N/A | `SourceFromIterable` wrapping `parallelCalls()` generator |
+| **Concurrency** | 1 (sequential `await`) | Up to 3 per story, 10 globally |
+| **Resumability** | None -- restart from scratch | Deterministic names enable resumption |
+| **Entity graph** | Only pipeline + safety + writer entities | Pipeline + safety + writer + N image entities |
+| **Progress** | After all images complete | Per-image as each completes |
+| **Error handling** | First error aborts batch | Per-entity errors; other images continue |
 
-1. **Results arrive one at a time via `for await`** instead of all at once after `await`. This lets the pipeline yield progress envelopes as each image completes, giving the consumer real-time feedback.
+### Handling Envelope Types
 
-2. **Errors are per-task, not per-batch.** If Image 3 fails but Images 1, 2, 4, and 5 succeed, you get 4 images and 1 error envelope. A sequential loop would have thrown on Image 3 and never attempted Images 4 and 5.
-
-### Handling the Envelope Types
-
-The `for await` loop inspects `envelope.type` to decide what to do:
+Results arrive in **completion order**, not submission order. The `for await` loop inspects `envelope.type`:
 
 ```typescript
 if (envelope.type === 'FINAL' && envelope.value) {
-  // Success: collect the image, update progress
+  // Success: collect the image and report progress
   images.push(envelope.value);
-  await this.updateEntityData({ images_generated: images.length });
   yield await this.createStatusEnvelope(
     'RUNNING',
-    `Generated ${images.length}/${storyResult.image_prompts.length} images`,
+    `Generated ${images.length}/${imagePrompts.length} images`,
   );
 } else if (envelope.type === 'ERROR') {
   // Failure: log but continue — other images may still succeed
-  logger.warn('[Pipeline] Image generation error', {
-    entityId: this.id,
-    taskId: envelope.taskId,
-    error: envelope.error,
-  });
+  logger.warn('[Pipeline] Image generation error', { ... });
 }
 ```
 
-There is no `INTERMEDIATE` handler because image generation tasks produce a single result. If you later add a task type that streams intermediate values (e.g., a progress percentage from a long-running render), you would add an `else if (envelope.type === 'INTERMEDIATE')` branch.
+After the loop, `images` contains all successfully generated results. Failed images leave their `{{IMAGE_N}}` placeholders in the HTML -- a visible indicator that something went wrong, which is better than silently dropping content.
 
-After the loop, the `images` array contains all successfully generated images. The subsequent `assembleHtml()` step replaces only the placeholders for which images were generated. Any failed images leave their `{{IMAGE_N}}` placeholders in the HTML as-is -- a visible indicator that something went wrong, which is better than silently dropping content.
+---
+
+## Step 8: Delete the ImageService
+
+The `ImageService` class from Part 3 is no longer needed. All image generation logic lives in `ImageGenerationEntity`. Delete the file:
+
+```bash
+rm apps/story-bundle/src/services/image-service.ts
+```
+
+Remove any imports of `ImageService` from the pipeline entity. The pipeline now creates child entities directly via `parallelCalls()`.
 
 ---
 
@@ -528,55 +513,73 @@ Walk through a concrete scenario: two stories are submitted simultaneously, each
 | Time | Story A | Story B | Global Used | Notes |
 |------|---------|---------|-------------|-------|
 | 0s | Launch IMG 1, 2, 3 | Launch IMG 1, 2, 3 | 6 / 10 | Both stories fill their per-story capacity (3 each) |
-| ~10s | IMG 1 done; launch IMG 4 | IMG 2 done; launch IMG 4 | 6 / 10 | Releases cascade: story releases 1, global releases 1; then re-acquires for next task |
+| ~10s | IMG 1 done; launch IMG 4 | IMG 2 done; launch IMG 4 | 6 / 10 | Release + re-acquire cascades through both levels |
 | ~12s | IMG 2 done; launch IMG 5 | IMG 1 done; launch IMG 5 | 6 / 10 | Steady state: 3 per story, 6 global |
-| ~20s | IMG 3 done | IMG 3 done | 4 / 10 | Both stories are winding down |
-| ~22s | IMG 4 done | IMG 4 done | 2 / 10 | |
-| ~24s | IMG 5 done | IMG 5 done | 0 / 10 | Both stories complete |
-
-At no point does either story exceed 3 concurrent images, and the global count stays at or below 6 (well under the limit of 10). The global limit becomes relevant when more stories are running -- with 4 concurrent stories each trying 3 images, the global limit of 10 means one story must wait for capacity.
+| ~20s | IMG 3 done | IMG 3 done | 4 / 10 | Winding down |
+| ~24s | All done | All done | 0 / 10 | Both stories complete |
 
 ### When Global Limits Kick In
 
-Now consider 5 stories at once, each with 5 images:
+With 5 stories at once:
 
 | Time | Active per Story A-E | Total Active | What Happens |
 |------|---------------------|-------------|-------------|
 | 0s | A:3, B:3, C:3, D:1, E:0 | 10 / 10 | Global full. Stories D and E are throttled. |
 | ~10s | A:3, B:3, C:2, D:1, E:1 | 10 / 10 | As C finishes one, E gets capacity |
-| ~15s | A:2, B:3, C:3, D:1, E:1 | 10 / 10 | Capacity shifts between stories as images complete |
 
-Story D only gets 1 concurrent slot (not its full 3) because the global pool is exhausted. As other stories finish images and release global capacity, Story D picks up more slots. The per-story limit of 3 prevents any single story from monopolizing the global pool.
+Story D only gets 1 concurrent slot (not its full 3) because the global pool is exhausted. As other stories finish images, capacity shifts between stories automatically.
+
+### Entity Graph After Completion
+
+Inspect with `ff-eg-read`:
+
+```bash
+ff-eg-read tree <pipeline-entity-id>
+```
+
+```
+StoryPipelineEntity (story-pipeline-brave-kitten)     Status: Complete
+  ├── ContentSafetyCheckEntity (safety-check)          Status: Complete
+  ├── StoryWriterEntity (story-writer)                 Status: Complete
+  ├── ImageGenerationEntity (image-{{IMAGE_1}})        Status: Complete
+  ├── ImageGenerationEntity (image-{{IMAGE_2}})        Status: Complete
+  ├── ImageGenerationEntity (image-{{IMAGE_3}})        Status: Complete
+  ├── ImageGenerationEntity (image-{{IMAGE_4}})        Status: Complete
+  └── ImageGenerationEntity (image-{{IMAGE_5}})        Status: Complete
+```
+
+Each child entity's data contains its prompt, quality settings, and (after completion) the generated image metadata. This is invaluable for debugging: if one image looks wrong, inspect its entity to see the exact prompt that was sent to the broker.
 
 ---
 
 ## Key Takeaways
 
-1. **Sequential generation is a latency bottleneck.** Five images at 10 seconds each costs 50 seconds sequentially but only ~20 seconds with 3-way concurrency. For pipelines that generate multiple images, parallelism directly improves user-facing response time.
+1. **Each parallel task should be a `RunnableEntity`.** Entities provide observability (visible in entity graph), idempotency (deterministic names), resumability (existing entities are reused), and progress isolation (each child reports its own status).
 
-2. **`CapacitySource` provides hierarchical concurrency control.** A child `CapacitySource` links to a parent. Every `acquire()` decrements both; every `release()` increments both. This enforces limits at multiple levels with a single mechanism.
+2. **`appendOrRetrieveCall()` enables resumable pipelines.** By using deterministic names like `image-{{IMAGE_1}}`, the pipeline can restart without creating duplicate entities. Already-completed children are returned as-is.
 
-3. **Module-level `GLOBAL_IMAGE_CAPACITY` is shared across all requests.** Because it is a module-level constant, all `ImageService` instances in the process share the same global limit. Per-story limits are scoped to individual `generateAllImagesParallel()` calls.
+3. **`parallelCalls()` creates child entities lazily.** The helper is an async generator -- it creates each child entity as the runner requests it, not all at once. This plays well with capacity limits: entities are only created when the runner has capacity to execute them.
 
-4. **`SourceBufferObj` bridges arrays to the runner's pull-based interface.** The runner does not accept arrays directly. `SourceBufferObj` wraps an array into a `PullObj & Peekable` source. The `true` argument enables one-shot mode: the source closes when empty.
+4. **`SourceFromIterable` bridges generators to the runner.** While `SourceBufferObj` works for arrays, `SourceFromIterable` works for async generators. Since `parallelCalls()` is a generator, `SourceFromIterable` is the right choice.
 
-5. **`HierarchicalTaskPoolRunner.runTasks()` returns an async generator.** Each yielded `TaskProgressEnvelope` represents one task completing or failing. The runner handles capacity acquisition, task launching, and capacity release internally.
+5. **`CapacitySource` provides hierarchical concurrency control.** A child links to a parent. `acquire()` decrements both; `release()` increments both. This enforces per-story and global limits with a single mechanism.
 
-6. **Results arrive in completion order, not submission order.** The `for await` loop receives whichever image finishes first. The `taskId` field tells you which original task it corresponds to. The pipeline collects all successful results into an array regardless of order.
+6. **`HierarchicalTaskPoolRunner.runTasks()` streams results as they complete.** Each `TaskProgressEnvelope` represents one child entity finishing (or failing). Results arrive in completion order. The pipeline yields progress envelopes for real-time client feedback.
 
-7. **Per-task error isolation is a key advantage over sequential.** In the sequential approach, one failed image aborts the entire batch. With the runner, a failed image produces an `ERROR` envelope, and the remaining tasks continue. The pipeline decides how to handle partial results.
+7. **Per-entity error isolation.** If Image 3 fails but Images 1, 2, 4, and 5 succeed, you get 4 images and 1 error envelope. The failed image's entity persists in the graph with error details for debugging.
 
-8. **The `async *` generator signature enables `yield*` delegation.** The `generateAllImagesParallel()` method is an `AsyncGenerator`, and it delegates to `runner.runTasks()` with `yield*`. The pipeline entity's `run_impl()` consumes this with `for await...of`, which is the standard pattern for streaming results through the entity system.
+8. **No `ImageService` class needed.** The entity is the unit of work. Service clients are module-level singletons shared across all entity instances.
 
 ---
 
 ## Next Steps
 
-The parallel image generation system handles throughput efficiently, but there are further improvements that could enhance the quality and flexibility of the illustrated storybook:
+The parallel image generation system handles throughput efficiently with full observability. There are further improvements that could enhance the illustrated storybook:
 
-- **Reference images for character consistency** -- passing a reference image to the broker's `generateImage()` call so that the same character looks consistent across all illustrations in a story
-- **Style selection with prompt dispatch** -- letting users choose an art style (watercolor, digital art, pencil sketch) and dispatching to different model pools or prompt prefixes based on the selection
-- **User-configurable quality** -- exposing `ImageQuality` as a parameter on the `create-story` API endpoint so users can trade generation speed for image fidelity
+- **Reference images for character consistency** -- generating a reference character sheet before scene images, so the same character looks consistent across all illustrations
+- **Style selection** -- letting users choose an art style (watercolor, digital art, pencil sketch) and dynamically adjusting image generation prompts
+- **User-configurable quality** -- exposing image quality and aspect ratio as parameters on the `create-story` API endpoint
+- **Web GUI** -- a Next.js frontend for topic input, real-time progress streaming via SSE, and PDF download
 
 ---
 
