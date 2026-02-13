@@ -194,28 +194,34 @@ export class ImpactAnalysisPrompt extends StructuredDataPrompt {
 }
 ```
 
-The prompt is organized into clear sections that guide the LLM through the analysis process. Note that we **don't** embed the article text in the Task section - that will be sent as a separate user message via `PromptInputText` in the bot's prompt group.
+The prompt is organized into clear sections that guide the LLM through the analysis process. Note that we **don't** embed the article text in the Task section - that will be sent as a separate user message via the input prompt in the bot's `StructuredPromptGroup`.
 
 ## Building the Analysis Bot
 
-Now we create the bot that wraps our prompt. The key pattern here is to have a prompt group that ends with `PromptInputText` - this ensures the article text is sent as a user message rather than being embedded in the system prompt:
+Now we create the bot that wraps our prompt. The key pattern is to use `ComposeMixins(MixinBot, StructuredOutputBotMixin)` for structured output bots, and a `StructuredPromptGroup` that separates system instructions (base) from user input:
 
 ```typescript
+import { ComposeMixins } from '@firebrandanalytics/shared-utils';
 import {
-  StructuredDataBot,
-  StructuredDataBotConfig,
+  MixinBot,
+  StructuredOutputBotMixin,
+  type MixinBotConfig,
   BotTypeHelper,
-  PromptTypeHelper,
   BotTryRequest,
+} from '@firebrandanalytics/ff-agent-sdk/bot';
+import type { PromptTypeHelper } from '@firebrandanalytics/ff-agent-sdk/prompts';
+import {
+  Prompt,
   PromptGroup,
-  PromptInputText
-} from '@firebrandanalytics/ff-agent-sdk';
+  PromptTemplateTextNode,
+  StructuredPromptGroup,
+} from '@firebrandanalytics/ff-agent-sdk/prompts';
 import { ImpactAnalysisPrompt } from '../prompts/ImpactAnalysisPrompt.js';
 
 // Define type helpers for type safety
 type IMPACT_PROMPT_INPUT = string; // The news article text
 type IMPACT_PROMPT_ARGS = {
-  static: { 
+  static: {
     app_name?: string;
   };
   request: {};
@@ -224,59 +230,69 @@ type IMPACT_PROMPT_ARGS = {
 type IMPACT_PTH = PromptTypeHelper<IMPACT_PROMPT_INPUT, IMPACT_PROMPT_ARGS>;
 type IMPACT_BTH = BotTypeHelper<IMPACT_PTH, IMPACT_ANALYSIS_OUTPUT>;
 
-export class ImpactAnalysisBot extends StructuredDataBot<
-  typeof ImpactAnalysisSchema,
-  IMPACT_BTH,
-  IMPACT_PTH
-> {
+export class ImpactAnalysisBot extends ComposeMixins(
+  MixinBot,
+  StructuredOutputBotMixin
+)<[
+  MixinBot<IMPACT_BTH, [StructuredOutputBotMixin<IMPACT_BTH, typeof ImpactAnalysisSchema>]>,
+  [StructuredOutputBotMixin<IMPACT_BTH, typeof ImpactAnalysisSchema>]
+]> {
   constructor() {
-    const prompt_group = new PromptGroup([
-      { 
-        name: "impact_analysis_system", 
-        prompt: new ImpactAnalysisPrompt({}, {}) as any
-      },
-      {
-        name: "user_input",
-        prompt: new PromptInputText<IMPACT_PTH>({})
-      }
-    ]);
+    // User input prompt — forwards the article text as a user message
+    const inputPrompt = new Prompt<IMPACT_PTH>({
+      role: 'user',
+      static_args: {} as IMPACT_PTH['args']['static'],
+    });
+    inputPrompt.add_section(
+      new PromptTemplateTextNode<IMPACT_PTH>({
+        content: (request) => request.input as string,
+      })
+    );
 
-    const config: StructuredDataBotConfig<typeof ImpactAnalysisSchema, IMPACT_PTH> = {
+    // Assemble prompts into a StructuredPromptGroup
+    const structuredPromptGroup = new StructuredPromptGroup<IMPACT_PTH>({
+      base: new PromptGroup<IMPACT_PTH>([
+        { name: "impact_analysis_system", prompt: new ImpactAnalysisPrompt({}) },
+      ]),
+      input: new PromptGroup<IMPACT_PTH>([
+        { name: "user_input", prompt: inputPrompt },
+      ]),
+    });
+
+    const config: MixinBotConfig<IMPACT_BTH> = {
       name: "ImpactAnalysisBot",
-      schema: ImpactAnalysisSchema,
-      schema_description: "Analyzes news articles for business impact across verticals",
-      base_prompt_group: prompt_group,
-      model_pool_name: "firebrand_completion_default"
+      base_prompt_group: structuredPromptGroup,
+      model_pool_name: "firebrand_completion_default",
+      static_args: {} as IMPACT_PTH['args']['static'],
     };
-    
-    super(config);
+
+    // super() uses array-per-mixin: [MixinBot config], [StructuredOutput config]
+    super([config], [{ schema: ImpactAnalysisSchema }]);
   }
 
-  override get_semantic_label_impl(_request: BotTryRequest<IMPACT_BTH>): string {
+  get_semantic_label_impl(): string {
     return "ImpactAnalysisBotSemanticLabel";
   }
 }
 ```
 
-The `StructuredDataBot` automatically handles:
+The `StructuredOutputBotMixin` automatically handles:
 - Sending the prompt to the LLM
 - Extracting JSON from the response
-- Validating the output against our schema
+- Validating the output against your Zod schema
 - Retrying on errors
 
-**Key Pattern: PromptInputText**
+**Key Pattern: StructuredPromptGroup**
 
-Notice the prompt group has two entries:
-1. **System prompt** (`ImpactAnalysisPrompt`) - Contains instructions, rules, and schema
-2. **User input** (`PromptInputText`) - Sends the article text as a user message
+Notice the `StructuredPromptGroup` separates prompts into phases:
+1. **Base** (`ImpactAnalysisPrompt`) - System-role prompts with instructions, rules, and schema
+2. **Input** (user prompt with `PromptTemplateTextNode`) - Sends the article text as a user message
 
 This follows the correct chat model pattern where:
 - System prompts contain **instructions**
 - User messages contain **content to analyze**
 
-Never embed the input directly in the system prompt using `request.input` - always use `PromptInputText` as the final entry in your prompt group.
-
-**Note on Type Casting:** The `as any` cast is a temporary workaround for type compatibility between `StructuredDataPrompt` and the bot's type helpers. This will be resolved in future SDK versions.
+Always use the `input` phase of `StructuredPromptGroup` for user content rather than embedding `request.input` directly in the system prompt.
 
 ## Creating the Article Entity
 
@@ -477,8 +493,8 @@ Finally, let's create the main Agent Bundle that ties everything together. The a
 ```typescript
 import {
   FFAgentBundle,
+  createEntityClient,
   logger,
-  app_provider,
   ApiEndpoint,
   FFConstructors
 } from '@firebrandanalytics/ff-agent-sdk';
@@ -492,21 +508,24 @@ export const NewsAnalysisConstructors = {
   'NewsCollection': NewsCollection
 } as const;
 
+// Note: This ID is randomly generated by ff-cli when creating a new agent bundle.
+// Each bundle must have a unique UUID within your FireFoundry cluster.
+const APP_ID = "c0000000-0000-0000-0001-000000000000";
+
 export class NewsAnalysisAgentBundle extends FFAgentBundle<any> {
   private collectionId?: string;
 
   constructor() {
     super(
       {
-        // Note: This ID is randomly generated by ff-cli when creating a new agent bundle.
-        // Each bundle must have a unique UUID within your FireFoundry cluster.
-        // The ID shown here is just an example - your actual ID will be different.
-        id: "c0000000-0000-0000-0001-000000000000",
+        id: APP_ID,
+        application_id: APP_ID,
         name: "NewsAnalysisService",
+        type: "agent_bundle",
         description: "News article impact analysis service using FireFoundry"
       },
       NewsAnalysisConstructors,
-      app_provider
+      createEntityClient(APP_ID)
     );
   }
 
@@ -1139,7 +1158,7 @@ This architecture excels when you need:
 In this tutorial, you've:
 1. ✅ Created a **Zod schema** for structured LLM output
 2. ✅ Built a **Prompt** with clear AI instructions
-3. ✅ Implemented a **Bot** using `StructuredDataBot`
+3. ✅ Implemented a **Bot** using `ComposeMixins(MixinBot, StructuredOutputBotMixin)`
 4. ✅ Created **Entities** for state management
 5. ✅ Assembled an **Agent Bundle** with API endpoints
 6. ✅ **Deployed** your bundle to Kubernetes using ff-cli
