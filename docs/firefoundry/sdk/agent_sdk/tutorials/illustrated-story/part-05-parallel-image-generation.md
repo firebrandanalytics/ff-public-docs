@@ -574,13 +574,8 @@ Each child entity's data contains its prompt, quality settings, and (after compl
 
 ## Next Steps
 
-The parallel image generation system handles throughput efficiently with full observability. There are further improvements that could enhance the illustrated storybook:
-
-- **Reference images for character consistency** -- generating a reference character sheet before scene images, so the same character looks consistent across all illustrations
-- **Style selection** -- letting users choose an art style (watercolor, digital art, pencil sketch) and dynamically adjusting image generation prompts
-- **User-configurable quality** -- exposing image quality and aspect ratio as parameters on the `create-story` API endpoint
-- **Web GUI** -- a Next.js frontend for topic input, real-time progress streaming via SSE, and PDF download
+The parallel image generation system handles throughput efficiently with full observability. In [Part 6: Customization Types & Style Selection](./part-06-customization-and-styles.md), you'll add user-configurable options -- illustration style, image quality, aspect ratio, and illustration count -- threading them through the entire pipeline from API endpoint to prompt to image generation.
 
 ---
 
-**Previous:** [Part 4: Pipeline Orchestration & API Endpoints](./part-04-pipeline-and-api.md) | **Start over:** [Part 1: Project Setup & Content Safety Bot](./part-01-setup-and-safety.md)
+**Previous:** [Part 4: Pipeline Orchestration & API Endpoints](./part-04-pipeline-and-api.md) | **Next:** [Part 6: Customization Types & Style Selection](./part-06-customization-and-styles.md)
