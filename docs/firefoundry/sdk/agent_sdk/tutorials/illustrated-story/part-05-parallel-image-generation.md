@@ -417,8 +417,8 @@ const GLOBAL_IMAGE_CAPACITY = new CapacitySource(10);
         prompt: ip.prompt,
         alt_text: ip.alt_text,
         model_pool: process.env.IMAGE_MODEL_POOL || 'fb-image-gen',
-        image_quality: customization?.image_quality || 'medium',
-        aspect_ratio: customization?.aspect_ratio || '3:2',
+        image_quality: 'medium',   // Hardcoded for now; Part 6 threads customization through
+        aspect_ratio: '3:2',       // Hardcoded for now; Part 6 makes these configurable
       },
     }));
 

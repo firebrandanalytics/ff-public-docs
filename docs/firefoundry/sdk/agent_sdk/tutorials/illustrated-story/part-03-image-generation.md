@@ -53,7 +53,7 @@ The broker acts as an intermediary. Your code never communicates directly with t
 
 The `ImageService` works with two key types shared across the pipeline. These were introduced in Part 2 as part of the Story Writer Bot's output, and now the `ImageService` consumes and produces them.
 
-**`packages/shared/src/types.ts`** (relevant additions):
+**`packages/shared-types/src/index.ts`** (relevant additions):
 
 ```typescript
 export interface ImagePrompt {
@@ -372,16 +372,14 @@ The optional `onProgress` callback lets callers track generation progress withou
 onProgress?.(i + 1, total);  // e.g., onProgress(3, 5) = "3 of 5 images done"
 ```
 
-In Part 5, this sequential method is replaced with `generateAllImagesParallel()`, which uses `HierarchicalTaskPoolRunner` to generate images concurrently with capacity limits. The pipeline entity consumes the parallel generator and yields progress envelopes as each image completes:
+In Part 5, the `ImageService` is replaced entirely with entity-based parallel image generation. Instead of a service class, each image becomes its own `ImageGenerationEntity` child entity, and the pipeline uses `parallelCalls()` with `HierarchicalTaskPoolRunner` for controlled concurrency:
 
 ```typescript
-// Preview: parallel image generation (covered in Part 5)
-const images: GeneratedImageResult[] = [];
-for await (const envelope of imageService.generateAllImagesParallel(prompts)) {
-  if (envelope.type === 'FINAL' && envelope.value) {
-    images.push(envelope.value);
-    yield await this.createStatusEnvelope('RUNNING', `Generated ${images.length}/${total}`);
-  }
+// Preview: entity-based parallel generation (covered in Part 5)
+const taskSource = new SourceFromIterable(
+  this.parallelCalls(ImageGenerationEntity, taskItems)
+);
+const runner = new HierarchicalTaskPoolRunner(taskSource, storyCapacity);
 }
 ```
 

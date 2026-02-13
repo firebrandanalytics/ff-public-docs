@@ -205,7 +205,7 @@ export class StoryWriterPrompt extends Prompt<STORY_PTH> {
     this.add_section(this.get_Task_Section());
     this.add_section(this.get_Format_Section());
     this.add_section(this.get_ImagePrompt_Section());
-    this.add_section(this.get_ReferenceImage_Section());
+    // In Part 7, a get_ReferenceImage_Section() is added here
     this.add_section(this.get_Rules_Section());
   }
 
@@ -281,26 +281,7 @@ export class StoryWriterPrompt extends Prompt<STORY_PTH> {
     });
   }
 
-  protected get_ReferenceImage_Section(): PromptTemplateNode<STORY_PTH> {
-    return new PromptTemplateSectionNode<STORY_PTH>({
-      semantic_type: 'rule',
-      content: 'Character Consistency:',
-      children: [
-        (request) => {
-          const hasRefImage = !!request.args?.customization?.reference_image_base64;
-          if (hasRefImage) {
-            return 'A reference image has been provided for the main character. Match the character\'s appearance exactly in all scene prompts. Do NOT set needs_reference_image to true — a reference is already provided.';
-          }
-          return [
-            'If the story features a recurring main character who appears in 3 or more illustrations, set needs_reference_image to true.',
-            'Provide a reference_image_description with a detailed visual description: physical build, hair color/style, skin tone, clothing, distinctive features.',
-            'This reference will be used to generate a character sheet before the scene illustrations, ensuring visual consistency.',
-            'If the story does not have a strong recurring character (e.g., nature scenes, different animals), set needs_reference_image to false.',
-          ].join(' ');
-        },
-      ]
-    });
-  }
+  // get_ReferenceImage_Section() is added in Part 7
 
   protected get_Rules_Section(): PromptTemplateNode<STORY_PTH> {
     return new PromptTemplateSectionNode<STORY_PTH>({
@@ -637,50 +618,9 @@ The structural skeleton is identical -- only three specific values change. This 
 
 ---
 
-## Step 3: Update the StoryOutputSchema
+## Step 3: Verify the StoryOutputSchema
 
-The output schema needs two new fields to prepare for reference image support in Part 7. Add them alongside the existing fields.
-
-**`apps/story-bundle/src/schemas.ts`** (update the `StoryOutputSchema`):
-
-```typescript
-export const StoryOutputSchema = withSchemaMetadata(
-  z.object({
-    title: z.string()
-      .describe('The story title'),
-    html_content: z.string()
-      .describe('Complete HTML story with {{IMAGE_1}}, {{IMAGE_2}} etc. placeholders where illustrations should appear. Include embedded CSS for storybook styling.'),
-    image_prompts: z.array(z.object({
-      placeholder: z.string()
-        .describe('The placeholder string used in the HTML, e.g. {{IMAGE_1}}'),
-      prompt: z.string()
-        .describe('Detailed image generation prompt for this scene illustration'),
-      alt_text: z.string().optional().default('Story illustration')
-        .describe('Short alt text describing the illustration'),
-    }))
-      .describe('Image generation prompts for each placeholder in the HTML'),
-    moral: z.string()
-      .describe('The moral or lesson of the story'),
-    age_range: z.string()
-      .describe('Target age range, e.g. "3-7 years"'),
-    needs_reference_image: z.boolean().optional().default(false)
-      .describe('Whether a reference character sheet should be generated first for visual consistency. Set to true when the story has a recurring main character who appears in multiple illustrations.'),
-    reference_image_description: z.string().optional()
-      .describe('If needs_reference_image is true, a detailed visual description of the main character to use as a reference sheet prompt. Include physical appearance, clothing, distinctive features, and coloring.'),
-  }),
-  'StoryOutput',
-  'An illustrated children\'s story with image placeholders and generation prompts'
-);
-```
-
-### What Changed
-
-Two new fields were added as top-level fields of the schema (not inside each image prompt):
-
-| Field | Type | Default | Purpose |
-|-------|------|---------|---------|
-| `needs_reference_image` | `boolean` (optional) | `false` | Tells the pipeline whether a character reference sheet should be generated before scene illustrations |
-| `reference_image_description` | `string` (optional) | `undefined` | A detailed visual description of the main character for generating a reference sheet |
+No schema changes are needed in this part. The schema from Part 2 already has the fields the pipeline needs (`title`, `html_content`, `image_prompts`, `moral`, `age_range`). In Part 7, you'll add `needs_reference_image` and `reference_image_description` fields when implementing reference image support.
 
 The `needs_reference_image` field uses `.optional().default(false)`, following the defensive pattern from Part 2. The LLM may or may not produce these fields depending on whether a reference image was mentioned in the prompt. By defaulting `needs_reference_image` to `false`, existing stories (without reference images) work without any changes to downstream code.
 

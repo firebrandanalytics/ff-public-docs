@@ -337,7 +337,7 @@ export function useStoryGeneration() {
         const createRes = await fetch('/api/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ topic, ...customization }),
+          body: JSON.stringify({ topic, customization }),
           signal: controller.signal,
         });
 
@@ -796,7 +796,7 @@ After the pipeline finishes, the full progress log is available behind a toggle.
 
 ## Step 5: Main Page Composition
 
-The page component ties everything together. It delegates all state management to the hook and renders the appropriate component for each stage.
+In Part 9, `page.tsx` was a client component with a simple `handleSubmit` that called `createStory` directly. Now it needs to use the `useStoryGeneration` hook for full lifecycle management, and render different components based on the generation stage. Replace the Part 9 version entirely.
 
 **`apps/story-gui/src/app/page.tsx`**:
 
@@ -987,4 +987,4 @@ You have completed the illustrated storybook tutorial series. Here are direction
 
 ---
 
-**Previous:** [Part 9: Web UI Setup & Story Form](./part-09-web-ui.md) | **Start over:** [Part 1: Project Setup & Content Safety Bot](./part-01-setup-and-safety.md)
+**Previous:** [Part 9: Building the Web UI](./part-09-web-ui.md) | **Start over:** [Part 1: Project Setup & Content Safety Bot](./part-01-setup-and-safety.md)

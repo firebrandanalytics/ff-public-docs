@@ -423,7 +423,7 @@ await this.updateEntityData({
 });
 
 const images: GeneratedImageResult[] = [];
-for await (const envelope of imageService.generateAllImagesParallel(storyResult.image_prompts)) {
+for await (const envelope of imageService.generateAllImages(storyResult.image_prompts)) {
   if (envelope.type === 'FINAL' && envelope.value) {
     images.push(envelope.value);
     await this.updateEntityData({ images_generated: images.length });
@@ -441,9 +441,9 @@ for await (const envelope of imageService.generateAllImagesParallel(storyResult.
 }
 ```
 
-The `ImageService.generateAllImagesParallel()` method (from Part 3) returns an async generator of task envelopes. Each `FINAL` envelope contains a `GeneratedImageResult` (the base64-encoded image). Each `ERROR` envelope contains an error for a failed image generation. The pipeline yields a status envelope after each successful image, so the consumer sees incremental progress.
+The `ImageService.generateAllImages()` method (from Part 3) generates images sequentially. Each iteration yields a `GeneratedImageResult` (the base64-encoded image). The pipeline yields a status envelope after each successful image, so the consumer sees incremental progress.
 
-> **Note:** Parallel image generation using `HierarchicalTaskPoolRunner` is covered in detail in [Part 5](./part-05-parallel-image-generation.md). For now, understand that the `for await...of` loop receives images as they complete, regardless of the order they were started.
+> **Note:** In [Part 5](./part-05-parallel-image-generation.md), the `ImageService` is replaced entirely with entity-based parallel image generation using `ImageGenerationEntity` children and `HierarchicalTaskPoolRunner`.
 
 ### Stages 4-6: Assembly, PDF, and Storage
 
