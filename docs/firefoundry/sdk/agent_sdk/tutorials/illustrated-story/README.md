@@ -11,9 +11,9 @@ A tutorial that builds a complete AI-powered illustrated storybook pipeline. You
 - Blob storage retrieval and base64 encoding for inline images
 - HTML assembly by replacing template placeholders with generated content
 - PDF generation using the doc-proc service
-- Multi-stage pipeline orchestration with entity state management
-- Bot result extraction patterns for passing data between pipeline stages
-- Custom API endpoints for triggering pipelines and polling progress
+- Multi-stage pipeline orchestration in a `RunnableEntity` with `appendCall()` and `yield*`
+- Parallel image generation with `HierarchicalTaskPoolRunner` and hierarchical `CapacitySource`
+- Custom API endpoints for triggering pipelines and consuming progress via iterators
 
 ## What You'll Build
 
@@ -44,8 +44,8 @@ By the end of this series, you'll have a complete **Illustrated Children's Story
 | [1](./part-01-setup-and-safety.md) | Project Setup & Content Safety Bot | Scaffolded project with a content safety bot that validates topics | Project scaffolding, `StructuredOutputBotMixin`, Zod schema validation |
 | [2](./part-02-story-writer.md) | Story Writer Bot & Prompts | Bot that generates an illustrated HTML story with image prompts | Complex prompt engineering, HTML output with `{{IMAGE_N}}` placeholders, prompt composition |
 | [3](./part-03-image-generation.md) | Image Generation Service | Service that generates images and embeds them into HTML | Broker client `generateImage()`, blob storage retrieval, base64 encoding, HTML assembly |
-| [4](./part-04-pipeline-orchestration.md) | Pipeline Orchestration & API Endpoints | Multi-stage pipeline with REST endpoints | Multi-stage orchestration, entity state management, bot result extraction, `@ApiEndpoint` decorator |
-| [5](./part-05-testing-and-deployment.md) | Testing & Deployment | Deployed and verified storybook generator | Local testing with port forwarding, `ff-sdk-cli` verification, `ff ops build`, `ff ops deploy` |
+| [4](./part-04-pipeline-and-api.md) | Pipeline Orchestration & API Endpoints | `StoryPipelineEntity` orchestrator with REST endpoints | `RunnableEntity` with custom `run_impl()`, `appendCall()` + `yield*`, `@ApiEndpoint` decorator |
+| [5](./part-05-testing-and-deployment.md) | Parallel Image Generation | Concurrent image generation with capacity management | `HierarchicalTaskPoolRunner`, hierarchical `CapacitySource`, `SourceBufferObj`, `TaskProgressEnvelope` |
 
 ## Architecture Overview
 
@@ -58,19 +58,20 @@ User sends topic
 POST /api/create-story
        |
        v
-IllustratedStoryAgentBundle.runPipeline()
+IllustratedStoryAgentBundle creates StoryPipelineEntity
+       |
+       v
+StoryPipelineEntity.run_impl() — yields progress via iterator
        |
        |-- Stage 1: Content Safety Check
-       |     ContentSafetyCheckEntity -> ContentSafetyBot
-       |     (StructuredOutputBotMixin + Zod validation)
+       |     appendCall(ContentSafetyCheckEntity) -> yield* start()
        |
        |-- Stage 2: Story Writing
-       |     StoryWriterEntity -> StoryWriterBot
-       |     (HTML with {{IMAGE_N}} placeholders + image prompts)
+       |     appendCall(StoryWriterEntity) -> yield* start()
        |
-       |-- Stage 3: Image Generation
-       |     ImageService -> Broker generateImage()
-       |     -> Blob Storage retrieval -> base64 encoding
+       |-- Stage 3: Parallel Image Generation
+       |     HierarchicalTaskPoolRunner + CapacitySource
+       |     (global: 10, per-story: 3)
        |
        |-- Stage 4: HTML Assembly
        |     Replace {{IMAGE_N}} with <img src="data:...">
@@ -81,7 +82,8 @@ IllustratedStoryAgentBundle.runPipeline()
        |-- Stage 6: Store in Working Memory
        |
        v
-GET /api/story-status -> poll for progress
+ff-sdk-cli iterator run <entity_id> — consume progress
+GET /api/story-status — poll for progress
 ```
 
 ## Source Code

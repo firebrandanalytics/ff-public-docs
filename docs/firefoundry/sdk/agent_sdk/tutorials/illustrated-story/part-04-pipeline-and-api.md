@@ -1,57 +1,566 @@
 # Part 4: Pipeline Orchestration & API Endpoints
 
-In this part, you'll build the agent bundle class that ties everything together. It orchestrates the full story generation pipeline -- content safety, story writing, image generation, HTML assembly, PDF conversion, and working memory storage -- and exposes REST API endpoints so clients can trigger stories and poll for progress.
+In this part, you'll build the `StoryPipelineEntity` -- a `RunnableEntity` that orchestrates the full story generation pipeline inside its `run_impl()` generator. You'll also simplify the agent bundle class down to a thin API surface that creates pipeline entities and returns their IDs.
 
 **What you'll learn:**
-- Extending `FFAgentBundle` with constructor arguments and `createEntityClient`
-- Overriding `init()` to initialize platform service clients
-- Using the `@ApiEndpoint` decorator to expose HTTP endpoints
-- The background pipeline pattern: return immediately, process asynchronously
-- Entity state management for client-side progress polling
-- The `runBotEntity<T>()` pattern for extracting structured output from bot entities
-- Creating child entities by `specific_type_name` and running them
-- Storing large outputs in working memory instead of entity data
-- Wiring up the server entry point with `createStandaloneAgentBundle`
+- Why orchestration belongs in a `RunnableEntity`, not on the `AgentBundle` class
+- Creating a `StoryPipelineEntity` that extends `RunnableEntity` with a custom `run_impl()`
+- Using `appendCall()` to create child entities connected via edges in the entity graph
+- Using `yield* await child.start()` to delegate execution and forward progress envelopes
+- Yielding `createStatusEnvelope('RUNNING', message)` for consumer-visible progress
+- Updating entity data inside `run_impl()` for polling-based progress
+- The simplified `IllustratedStoryAgentBundle` with just API endpoints and entity creation
+- The consumer workflow: create an entity via the API, then consume it via the SDK's iterator protocol
 
-**What you'll build:** The `IllustratedStoryAgentBundle` class with two API endpoints (`POST /api/create-story` and `GET /api/story-status`) and a six-stage background pipeline, plus the `index.ts` entry point that starts the HTTP server.
+**What you'll build:** A `StoryPipelineEntity` that coordinates six stages (safety check, story writing, image generation, HTML assembly, PDF conversion, working memory storage) plus a thin `IllustratedStoryAgentBundle` with two API endpoints.
 
 **Starting point:** Completed code from [Part 3: Image Generation Service](./part-03-image-generation.md). You should have a working `ImageService`, two bot entities (`ContentSafetyCheckEntity` and `StoryWriterEntity`), and shared type definitions.
 
 ---
 
-## Concepts: The Agent Bundle as Orchestrator
+## Concepts: Why Orchestration Belongs in an Entity
 
-In the report-generator tutorial, orchestration happened inside a parent entity's `run_impl()` using `appendOrRetrieveCall` and `yield*`. That pattern works well when the orchestrator is itself an entity that needs persistence and resumability.
+The previous version of this tutorial placed orchestration directly on the `AgentBundle` class in a `runPipeline()` method. This is an anti-pattern. Here is why, and what the better approach looks like.
 
-The illustrated story demo takes a different approach: the **agent bundle class itself** is the orchestrator. The pipeline runs as a plain async method (`runPipeline`), creating child entities for the bot steps and calling services directly for image generation and PDF conversion. Entity data tracks progress so clients can poll for status.
+### The Problem with Bundle-Level Orchestration
 
-This pattern is simpler for fire-and-forget workflows where the API endpoint needs to return immediately. The tradeoff is that the pipeline is not resumable across server restarts (a crashed pipeline must be re-triggered). For production use cases that need resumability, use the entity-based orchestration pattern from the report-generator tutorial.
+When the agent bundle class itself runs the pipeline, several things go wrong:
+
+| Problem | Explanation |
+|---------|-------------|
+| **Not resumable** | If the server restarts mid-pipeline, the work is lost. The bundle's `runPipeline()` is an in-memory async function with no persistence. |
+| **Not an entity** | The pipeline execution has no node in the entity graph. You cannot inspect it with `ff-eg-read`, query its edges, or see its relationship to the child entities it creates. |
+| **Not consumable via iterators** | The SDK's iterator protocol (`ff-sdk-cli iterator run`) works with entities, not with bundle methods. Bundle-level orchestration forces you to invent a separate progress mechanism (polling entity data) rather than using the built-in streaming protocol. |
+| **Mixed concerns** | The bundle class becomes responsible for both API routing and multi-stage workflow logic. This makes it harder to test, harder to read, and harder to extend. |
+
+### The Entity-Based Approach
+
+The correct pattern is to put orchestration in a `RunnableEntity` subclass with a custom `run_impl()` generator:
 
 ```
 POST /api/create-story
        |
        v
-createStory() --> create entity, return entity_id immediately
+AgentBundle.createStory()
+  --> creates a StoryPipelineEntity with { topic }
+  --> returns entity_id immediately
        |
-       v (background)
-runPipeline()
-       |
-       |-- Stage 1: Content safety check (ContentSafetyCheckEntity)
-       |-- Stage 2: Story writing (StoryWriterEntity)
-       |-- Stage 3: Image generation (ImageService)
-       |-- Stage 4: HTML assembly (ImageService.assembleHtml)
-       |-- Stage 5: PDF conversion (DocProcClient)
-       |-- Stage 6: Store in working memory
+       v (consumer starts the entity)
+ff-sdk-cli iterator run <entity_id>
        |
        v
-GET /api/story-status --> poll entity data for progress
+StoryPipelineEntity.run_impl()
+       |
+       |-- yield createStatusEnvelope('RUNNING', 'Running safety check')
+       |-- const safetyEntity = await this.appendCall(ContentSafetyCheckEntity, ...)
+       |-- const safetyResult = yield* await safetyEntity.start()
+       |
+       |-- yield createStatusEnvelope('RUNNING', 'Writing story')
+       |-- const writerEntity = await this.appendCall(StoryWriterEntity, ...)
+       |-- const storyResult = yield* await writerEntity.start()
+       |
+       |-- yield createStatusEnvelope('RUNNING', 'Generating images')
+       |-- ... image generation, HTML assembly, PDF, working memory ...
+       |
+       |-- return PipelineResult
+       |
+       v
+Consumer sees STATUS, BOT_PROGRESS, VALUE, and COMPLETED envelopes in real time
 ```
+
+This approach gives you:
+
+- **Persistence** -- the pipeline entity exists in the entity graph. If the server restarts, the entity's state is recoverable.
+- **Observability** -- `ff-eg-read node get <pipeline-entity-id>` shows the pipeline's current data. Edge queries show its child entities.
+- **Iterator protocol** -- consumers use the same `ff-sdk-cli iterator run` command they use for any entity. Progress envelopes stream in real time.
+- **Separation of concerns** -- the bundle handles API routing; the entity handles workflow logic.
 
 ---
 
-## Step 1: The Agent Bundle Class
+## Step 1: The StoryPipelineEntity Class
 
-Create the main agent bundle file. This class extends `FFAgentBundle`, initializes all service clients, and defines the API endpoints and pipeline logic.
+Create the pipeline entity. This is a `RunnableEntity` subclass with an `@EntityMixin` decorator -- the same pattern you used for `ContentSafetyCheckEntity` and `StoryWriterEntity`, but without a bot. The pipeline entity does not delegate to a bot; it implements `run_impl()` directly to coordinate multiple child entities and services.
+
+**`apps/story-bundle/src/entities/StoryPipelineEntity.ts`**:
+
+```typescript
+import {
+  RunnableEntity,
+  EntityFactory,
+  EntityMixin,
+  logger,
+  WorkingMemoryProvider,
+} from '@firebrandanalytics/ff-agent-sdk';
+import { ContextServiceClient } from '@firebrandanalytics/cs-client';
+import { DocProcClient } from '@firebrandanalytics/doc-proc-client';
+import { ImageService } from '../services/image-service.js';
+import { ContentSafetyCheckEntity } from './ContentSafetyCheckEntity.js';
+import { StoryWriterEntity } from './StoryWriterEntity.js';
+import type {
+  ContentSafetyResult,
+  StoryResult,
+  GeneratedImageResult,
+  PipelineResult,
+} from '@shared/types';
+
+@EntityMixin({
+  specificType: 'StoryPipelineEntity',
+  generalType: 'StoryPipelineEntity',
+  allowedConnections: {},
+})
+export class StoryPipelineEntity extends RunnableEntity<any> {
+  constructor(factory: EntityFactory<any>, idOrDto: string | any) {
+    super(factory, idOrDto);
+  }
+
+  protected override async *run_impl() {
+    // ... pipeline stages go here (Steps 2-7 below)
+  }
+
+  private async updateEntityData(updates: Record<string, any>): Promise<void> {
+    try {
+      const dto = await this.get_dto();
+      const currentData = dto.data || {};
+      await this.update_data({ ...currentData, ...updates });
+    } catch (err) {
+      logger.warn('[Pipeline] Failed to update entity data', {
+        entityId: this.id,
+        error: err,
+      });
+    }
+  }
+}
+```
+
+### Comparing to Bot Entities
+
+In Parts 1 and 2, your entities used `AddMixins(RunnableEntity, BotRunnableEntityMixin)` and delegated to a bot via `get_bot_request_args_impl()`. The pipeline entity takes a different approach:
+
+| Aspect | Bot Entity (Parts 1-2) | Pipeline Entity (this part) |
+|--------|------------------------|----------------------------|
+| **Base class** | `AddMixins(RunnableEntity, BotRunnableEntityMixin)` | `RunnableEntity` directly |
+| **Bot** | Has one (ContentSafetyBot or StoryWriterBot) | Has none |
+| **run_impl()** | Provided by `BotRunnableEntityMixin` (calls the bot) | Overridden directly to implement pipeline logic |
+| **Output** | The bot's validated Zod result | A `PipelineResult` returned at the end of `run_impl()` |
+| **Type helpers** | Full chain: PTH -> BTH -> ENH -> RETH | Simplified: `RunnableEntity<any>` |
+
+The pipeline entity extends `RunnableEntity<any>` directly because it does not need the full type helper chain. It coordinates other entities rather than running a bot, so the bot-related type information is not relevant. The `any` type parameter is a pragmatic choice for orchestration entities.
+
+### The `@EntityMixin` Decorator
+
+```typescript
+@EntityMixin({
+  specificType: 'StoryPipelineEntity',
+  generalType: 'StoryPipelineEntity',
+  allowedConnections: {},
+})
+```
+
+This is identical in structure to the bot entity decorators from Parts 1 and 2. The `specificType` must match the key used in the constructor map and the `specific_type_name` passed when creating the entity via `entity_factory.create_entity_node()`.
+
+### The `updateEntityData` Helper
+
+This private method merges new fields into the entity's existing data, using a read-then-write pattern for progress tracking:
+
+```typescript
+private async updateEntityData(updates: Record<string, any>): Promise<void> {
+  try {
+    const dto = await this.get_dto();
+    const currentData = dto.data || {};
+    await this.update_data({ ...currentData, ...updates });
+  } catch (err) {
+    logger.warn('[Pipeline] Failed to update entity data', {
+      entityId: this.id,
+      error: err,
+    });
+  }
+}
+```
+
+Key details:
+
+- **Merge, don't replace** -- `{ ...currentData, ...updates }` preserves existing data fields while adding new ones. The entity accumulates data as the pipeline progresses.
+- **Wrapped in try/catch** -- entity data updates are best-effort. If the entity service is temporarily slow, the pipeline should not crash just because it could not update progress.
+- **Read-then-write** -- reads the current data with `get_dto()` before writing, avoiding accidental overwrites of fields set by earlier stages.
+
+---
+
+## Step 2: The run_impl() Generator Structure
+
+The `run_impl()` method is an async generator function (`async *`). This is the same generator protocol that bot entities use internally, but here you write it directly. The generator can `yield` progress envelopes, `yield*` to delegate to child entities, and `return` a final result.
+
+```typescript
+protected override async *run_impl() {
+  const dto = await this.get_dto();
+  const { topic } = dto.data;
+
+  logger.info('[Pipeline] Starting story pipeline', { entityId: this.id, topic });
+
+  // ... service initialization (Step 3) ...
+
+  // ... Stage 1: Content safety check (Step 4) ...
+  // ... Stage 2: Story writing (Step 4) ...
+  // ... Stage 3: Image generation (Step 5) ...
+  // ... Stage 4: HTML assembly (Step 6) ...
+  // ... Stage 5: PDF generation (Step 6) ...
+  // ... Stage 6: Store in working memory (Step 6) ...
+
+  return result;  // PipelineResult
+}
+```
+
+The first thing `run_impl()` does is read the entity's stored data to get the `topic`. This data was set when the entity was created by the API endpoint.
+
+Three key mechanisms are used inside the generator:
+
+| Mechanism | Syntax | What It Does |
+|-----------|--------|--------------|
+| **yield** | `yield await this.createStatusEnvelope(...)` | Emits a progress envelope that consumers see in real time |
+| **yield*** | `yield* await childEntity.start()` | Delegates execution to a child entity, forwarding all of its progress envelopes to the consumer |
+| **return** | `return result` | Produces the final value, delivered as a `VALUE` envelope when the generator completes |
+
+---
+
+## Step 3: Service Initialization Inside run_impl()
+
+Services are initialized at the top of `run_impl()` rather than in a constructor or `init()` method:
+
+```typescript
+// Initialize services
+const imageService = new ImageService();
+
+const DOC_PROC_URL = process.env.DOC_PROC_SERVICE_URL
+  || 'http://firefoundry-core-doc-proc-service.ff-dev.svc.cluster.local:3000';
+const docProcClient = DocProcClient.create({ baseUrl: DOC_PROC_URL });
+
+const CONTEXT_SERVICE_ADDRESS = process.env.CONTEXT_SERVICE_ADDRESS
+  || 'http://firefoundry-core-context-service.ff-dev.svc.cluster.local:50051';
+const contextClient = new ContextServiceClient({
+  address: CONTEXT_SERVICE_ADDRESS,
+  apiKey: process.env.CONTEXT_SERVICE_API_KEY || '',
+});
+const wmProvider = new WorkingMemoryProvider(contextClient);
+```
+
+Why initialize here instead of in the constructor? Entities are instantiated by the framework when they are retrieved from the entity graph, not just when they are first created. Putting service initialization in `run_impl()` means the services are only created when the entity actually runs, not on every retrieval. This keeps entity construction lightweight and avoids unnecessary connections to external services.
+
+| Service | Client | Purpose |
+|---------|--------|---------|
+| **Image generation** | `ImageService` (wraps `SimplifiedBrokerClient`) | Generates images from text prompts, retrieves from blob storage |
+| **PDF conversion** | `DocProcClient` | Converts assembled HTML to PDF |
+| **Working memory** | `WorkingMemoryProvider` (wraps `ContextServiceClient`) | Stores final PDF and HTML for retrieval |
+
+---
+
+## Step 4: Using appendCall() and yield* for Child Entities
+
+This is the core pattern for entity-based orchestration. The pipeline creates child entities with `appendCall()` and delegates to them with `yield* await`.
+
+### Stage 1: Content Safety Check
+
+```typescript
+// Stage 1: Content safety check
+yield await this.createStatusEnvelope('RUNNING', 'Running content safety check');
+await this.updateEntityData({ stage: 'safety_check' });
+
+const safetyEntity = await this.appendCall(
+  ContentSafetyCheckEntity,
+  `safety-check-${Date.now()}`,
+  { topic },
+);
+const safetyResult: ContentSafetyResult = yield* await safetyEntity.start();
+
+if (!safetyResult.is_safe) {
+  logger.warn('[Pipeline] Content rejected', { entityId: this.id, safetyResult });
+  await this.updateEntityData({ stage: 'rejected', safety_result: safetyResult });
+  return { stage: 'rejected', safety_result: safetyResult } as PipelineResult;
+}
+
+await this.updateEntityData({ stage: 'safety_passed', safety_result: safetyResult });
+```
+
+### Stage 2: Story Writing
+
+```typescript
+// Stage 2: Story writing
+yield await this.createStatusEnvelope('RUNNING', 'Writing story');
+await this.updateEntityData({ stage: 'writing' });
+
+const writerEntity = await this.appendCall(
+  StoryWriterEntity,
+  `story-writer-${Date.now()}`,
+  { topic },
+);
+const storyResult: StoryResult = yield* await writerEntity.start();
+
+await this.updateEntityData({
+  stage: 'writing_complete',
+  story_result: {
+    title: storyResult.title,
+    moral: storyResult.moral,
+    age_range: storyResult.age_range,
+    html_content: '',
+    image_prompts: storyResult.image_prompts,
+  },
+});
+```
+
+### Understanding appendCall()
+
+`appendCall()` is the entity-graph-aware way to create child entities. It does three things:
+
+1. **Creates a new entity node** in the entity graph with the specified type, name, and initial data
+2. **Creates an edge** from the parent (pipeline entity) to the child, recording the relationship in the entity graph
+3. **Returns a typed entity instance** ready to be started
+
+```typescript
+const safetyEntity = await this.appendCall(
+  ContentSafetyCheckEntity,    // Entity class (must be in constructor map)
+  `safety-check-${Date.now()}`, // Unique name for this entity
+  { topic },                    // Initial data (becomes dto.data)
+);
+```
+
+Compare this to the previous approach where the bundle called `entity_factory.create_entity_node()` directly. That approach created entities with no graph relationship to the pipeline -- they were orphaned nodes. With `appendCall()`, you get a proper parent-child edge that tools like `ff-eg-read` can traverse.
+
+### Understanding yield* await child.start()
+
+The `yield* await` combination does two things in sequence:
+
+1. `await safetyEntity.start()` -- starts the child entity and returns an async iterator
+2. `yield*` -- delegates to that iterator, forwarding every envelope the child produces (STATUS, BOT_PROGRESS, VALUE) to the pipeline's consumer
+
+This means the consumer sees a unified stream of progress events from both the pipeline and its children:
+
+```
+Pipeline:  STATUS { "RUNNING", "Running content safety check" }
+  Child:     STATUS { "STARTED" }
+  Child:     BOT_PROGRESS { ... tokens ... }
+  Child:     VALUE { is_safe: true, safety_score: 95, ... }
+  Child:     STATUS { "COMPLETED" }
+Pipeline:  STATUS { "RUNNING", "Writing story" }
+  Child:     STATUS { "STARTED" }
+  Child:     BOT_PROGRESS { ... tokens ... }
+  ...
+```
+
+The critical detail: `yield*` returns the child generator's **return value**. When `ContentSafetyCheckEntity` finishes, its `run_impl()` returns a `ContentSafetyResult` (the validated Zod output from the bot). The `yield*` expression evaluates to that return value, which you capture in `safetyResult`. This is the correct way to extract structured output from child entities -- no manual iterator consumption or fallback parsing needed.
+
+### Early Return on Rejection
+
+If the safety check returns `is_safe: false`, the pipeline returns early:
+
+```typescript
+if (!safetyResult.is_safe) {
+  await this.updateEntityData({ stage: 'rejected', safety_result: safetyResult });
+  return { stage: 'rejected', safety_result: safetyResult } as PipelineResult;
+}
+```
+
+The `return` statement inside `run_impl()` produces the generator's final value, delivered to the consumer as a `VALUE` envelope followed by a `COMPLETED` status. The pipeline entity's status transitions to `Completed` in the entity graph.
+
+---
+
+## Step 5: Yielding Status Envelopes for Consumer-Visible Progress
+
+Each pipeline stage begins by yielding a status envelope:
+
+```typescript
+yield await this.createStatusEnvelope('RUNNING', 'Writing story');
+```
+
+`createStatusEnvelope()` is a method inherited from `RunnableEntity`. It creates a progress envelope of type `STATUS` with the given status and message. When the consumer is connected via `ff-sdk-cli iterator run`, they see this envelope in real time:
+
+```json
+{ "type": "STATUS", "status": "RUNNING", "message": "Writing story" }
+```
+
+The `yield` keyword sends this envelope out through the generator protocol to whoever is consuming the entity's iterator. Without `yield`, the envelope would be created but never delivered.
+
+### Status Envelopes vs. Entity Data Updates
+
+The pipeline uses two complementary progress mechanisms:
+
+| Mechanism | Who Sees It | When |
+|-----------|-------------|------|
+| **`yield createStatusEnvelope(...)`** | Consumers connected via the iterator protocol (`ff-sdk-cli iterator run`) | Real-time streaming |
+| **`await this.updateEntityData(...)`** | Anyone who queries the entity's data (`GET /api/story-status` or `ff-eg-read node get`) | Polling at any time |
+
+Both are used at each stage transition because different consumers prefer different access patterns. A connected client sees status envelopes instantly. A dashboard that checks status periodically reads entity data via the polling endpoint.
+
+---
+
+## Step 6: Image Generation, Assembly, and Storage
+
+After the two bot entity stages, the pipeline continues with direct service calls for image generation, HTML assembly, PDF conversion, and working memory storage.
+
+### Stage 3: Image Generation
+
+```typescript
+yield await this.createStatusEnvelope(
+  'RUNNING',
+  `Generating ${storyResult.image_prompts.length} images`,
+);
+await this.updateEntityData({
+  stage: 'generating_images',
+  images_total: storyResult.image_prompts.length,
+  images_generated: 0,
+});
+
+const images: GeneratedImageResult[] = [];
+for await (const envelope of imageService.generateAllImagesParallel(storyResult.image_prompts)) {
+  if (envelope.type === 'FINAL' && envelope.value) {
+    images.push(envelope.value);
+    await this.updateEntityData({ images_generated: images.length });
+    yield await this.createStatusEnvelope(
+      'RUNNING',
+      `Generated ${images.length}/${storyResult.image_prompts.length} images`,
+    );
+  } else if (envelope.type === 'ERROR') {
+    logger.warn('[Pipeline] Image generation error', {
+      entityId: this.id,
+      taskId: envelope.taskId,
+      error: envelope.error,
+    });
+  }
+}
+```
+
+The `ImageService.generateAllImagesParallel()` method (from Part 3) returns an async generator of task envelopes. Each `FINAL` envelope contains a `GeneratedImageResult` (the base64-encoded image). Each `ERROR` envelope contains an error for a failed image generation. The pipeline yields a status envelope after each successful image, so the consumer sees incremental progress.
+
+> **Note:** Parallel image generation using `HierarchicalTaskPoolRunner` is covered in detail in [Part 5](./part-05-testing-and-deployment.md). For now, understand that the `for await...of` loop receives images as they complete, regardless of the order they were started.
+
+### Stages 4-6: Assembly, PDF, and Storage
+
+```typescript
+// Stage 4: HTML assembly
+yield await this.createStatusEnvelope('RUNNING', 'Assembling HTML with images');
+await this.updateEntityData({ stage: 'assembling' });
+const finalHtml = imageService.assembleHtml(storyResult.html_content, images);
+
+// Stage 5: PDF generation
+yield await this.createStatusEnvelope('RUNNING', 'Generating PDF');
+await this.updateEntityData({ stage: 'creating_pdf' });
+let pdfWmId: string | undefined;
+try {
+  const pdfResponse = await docProcClient.htmlToPdf(Buffer.from(finalHtml, 'utf-8'));
+  if (pdfResponse.success && pdfResponse.data) {
+    const pdfBuffer = typeof pdfResponse.data === 'string'
+      ? Buffer.from(pdfResponse.data, 'base64')
+      : Buffer.from(pdfResponse.data);
+    const wmResult = await wmProvider.add_memory_from_buffer({
+      entityNodeId: this.id!,
+      name: `${storyResult.title || 'story'}.pdf`,
+      description: `Illustrated storybook PDF: ${storyResult.title}`,
+      contentType: 'application/pdf',
+      memoryType: 'file',
+      buffer: pdfBuffer,
+      metadata: {
+        title: storyResult.title,
+        moral: storyResult.moral,
+        image_count: images.length,
+        generated_at: new Date().toISOString(),
+      },
+    });
+    pdfWmId = wmResult.workingMemoryId;
+  }
+} catch (err) {
+  logger.warn('[Pipeline] PDF generation failed, continuing without PDF', {
+    entityId: this.id,
+    error: err instanceof Error ? err.message : String(err),
+  });
+}
+
+// Stage 6: Store HTML in working memory
+yield await this.createStatusEnvelope('RUNNING', 'Storing results');
+await this.updateEntityData({ stage: 'storing_results' });
+let htmlWmId: string | undefined;
+try {
+  const wmResult = await wmProvider.add_memory_from_buffer({
+    entityNodeId: this.id!,
+    name: `${storyResult.title || 'story'}.html`,
+    description: `Illustrated storybook HTML: ${storyResult.title}`,
+    contentType: 'text/html',
+    memoryType: 'file',
+    buffer: Buffer.from(finalHtml, 'utf-8'),
+    metadata: { title: storyResult.title, image_count: images.length },
+  });
+  htmlWmId = wmResult.workingMemoryId;
+} catch (err) {
+  logger.warn('[Pipeline] HTML storage failed', { entityId: this.id, error: err });
+}
+```
+
+### Graceful Error Handling
+
+Stages 5 and 6 are each wrapped in their own `try/catch`. This is intentional. PDF generation is a nice-to-have -- the story content (HTML with embedded images) is the primary output. If the doc-proc service is down, the pipeline still completes successfully with the HTML result. The same applies to the HTML working memory storage: if the context service is temporarily unavailable, the pipeline logs a warning but does not fail.
+
+### Large Data and Working Memory
+
+A critical design decision: the assembled HTML is stored in working memory, not in entity data. The final HTML contains base64-encoded images and can easily be 5-10 MB or more. Entity data is stored in PostgreSQL and should remain lightweight (metadata, IDs, stage names).
+
+Notice the `html_content: ''` in the entity data update at the `writing_complete` stage:
+
+```typescript
+story_result: {
+  title: storyResult.title,
+  moral: storyResult.moral,
+  age_range: storyResult.age_range,
+  html_content: '',              // Empty! Not stored in entity data
+  image_prompts: storyResult.image_prompts,
+},
+```
+
+The actual HTML lives in working memory. Clients use the `html_wm_id` and `pdf_wm_id` stored in entity data to download the files through the working memory API.
+
+---
+
+## Step 7: Returning the Final Result
+
+After all stages complete, the generator returns a `PipelineResult`:
+
+```typescript
+const result: PipelineResult = {
+  stage: 'completed',
+  title: storyResult.title,
+  moral: storyResult.moral,
+  age_range: storyResult.age_range,
+  image_count: images.length,
+  pdf_wm_id: pdfWmId,
+  html_wm_id: htmlWmId,
+};
+
+await this.updateEntityData({
+  stage: 'completed',
+  pdf_wm_id: pdfWmId,
+  html_wm_id: htmlWmId,
+  image_count: images.length,
+});
+
+return result;
+```
+
+The `return` statement delivers the result as a `VALUE` envelope to the consumer, followed by a `COMPLETED` status. The entity data is also updated so that the polling endpoint reflects the final state.
+
+### Pipeline Stage Summary
+
+| Stage | What Happens | Entity Data Updated |
+|-------|-------------|-------------------|
+| `safety_check` | Creates `ContentSafetyCheckEntity` via `appendCall()`, delegates with `yield*` | `stage: 'safety_check'` |
+| `safety_passed` / `rejected` | Records the safety result; early return if rejected | `safety_result: { ... }` |
+| `writing` | Creates `StoryWriterEntity` via `appendCall()`, delegates with `yield*` | `stage: 'writing'` |
+| `writing_complete` | Records story metadata (title, moral, age range, image prompts) | `story_result: { ... }` |
+| `generating_images` | Generates images in parallel, yields progress per image | `images_generated: N, images_total: M` |
+| `assembling` | Replaces `{{IMAGE_N}}` placeholders with base64 `<img>` tags | `stage: 'assembling'` |
+| `creating_pdf` | Converts HTML to PDF, stores in working memory | `pdf_wm_id: '...'` |
+| `storing_results` | Stores HTML in working memory | `html_wm_id: '...'` |
+| `completed` | Pipeline finished | `stage: 'completed'`, all IDs |
+
+---
+
+## Step 8: The Simplified Agent Bundle
+
+With orchestration in the `StoryPipelineEntity`, the agent bundle becomes thin -- just API endpoints and entity creation.
 
 **`apps/story-bundle/src/agent-bundle.ts`**:
 
@@ -61,55 +570,19 @@ import {
   createEntityClient,
   ApiEndpoint,
   logger,
-  WorkingMemoryProvider,
 } from "@firebrandanalytics/ff-agent-sdk";
-import { ContextServiceClient } from '@firebrandanalytics/cs-client';
-import { DocProcClient } from '@firebrandanalytics/doc-proc-client';
 import { StoryBundleConstructors } from "./constructors.js";
-import { ImageService } from "./services/image-service.js";
 import type {
   CreateStoryRequest,
   CreateStoryResponse,
   StoryStatusResponse,
   StoryEntityData,
-  ContentSafetyResult,
-  StoryResult,
 } from '@shared/types';
 
 const APPLICATION_ID = process.env.FF_APPLICATION_ID || "e7a95bcc-7ef9-432e-9713-f040db078b14";
 const AGENT_BUNDLE_ID = process.env.FF_AGENT_BUNDLE_ID || "3f78cd56-4ac4-4503-816d-01a0e61fd2cf";
-```
 
-Let's break down the imports before continuing:
-
-| Import | From | Purpose |
-|--------|------|---------|
-| `FFAgentBundle` | `ff-agent-sdk` | Base class for agent bundles. Provides `entity_factory`, `entity_client`, `get_app_id()`, and the API endpoint registration system. |
-| `createEntityClient` | `ff-agent-sdk` | Factory function that creates an entity client connected to the entity service. Takes the application ID. |
-| `ApiEndpoint` | `ff-agent-sdk` | Decorator that registers a method as an HTTP endpoint under `/api/`. |
-| `logger` | `ff-agent-sdk` | Structured logger for bundle-level and pipeline logging. |
-| `WorkingMemoryProvider` | `ff-agent-sdk` | High-level wrapper around the context service for file storage. |
-| `ContextServiceClient` | `cs-client` | Low-level client for the context service (manages working memory records). |
-| `DocProcClient` | `doc-proc-client` | Client for the document processing service (HTML-to-PDF conversion). |
-| `StoryBundleConstructors` | `./constructors.js` | Constructor map that registers all entity types (from Part 1 and Part 2). |
-| `ImageService` | `./services/image-service.js` | Image generation and HTML assembly service (from Part 3). |
-
-The two ID constants identify this bundle in the FireFoundry platform:
-- **`APPLICATION_ID`** -- the application this bundle belongs to
-- **`AGENT_BUNDLE_ID`** -- the unique ID for this specific agent bundle instance
-
-These are typically set via environment variables in production. The hardcoded defaults are for local development.
-
----
-
-## Step 2: The Constructor
-
-```typescript
 export class IllustratedStoryAgentBundle extends FFAgentBundle<any> {
-  private working_memory_provider!: WorkingMemoryProvider;
-  private image_service!: ImageService;
-  private doc_proc_client!: DocProcClient;
-
   constructor() {
     super(
       {
@@ -123,547 +596,137 @@ export class IllustratedStoryAgentBundle extends FFAgentBundle<any> {
       createEntityClient(APPLICATION_ID)
     );
   }
-```
 
-The `FFAgentBundle` constructor takes three arguments:
-
-1. **Bundle descriptor** -- an object with `id`, `application_id`, `name`, `type`, and `description`. The `id` is the agent bundle's own unique ID. The `application_id` links it to the parent application.
-
-2. **Constructor map** -- the `StoryBundleConstructors` object from Part 1 that maps entity type names to their classes. The framework uses this to instantiate entities from persisted state (e.g., when retrieving an entity by ID, the framework looks up the type name in this map to know which class to construct).
-
-3. **Entity client** -- created by `createEntityClient(APPLICATION_ID)`. This connects to the entity service and scopes all operations to the given application. The bundle inherits `this.entity_client` (for reading entities) and `this.entity_factory` (for creating entities) from this client.
-
-The service clients (`working_memory_provider`, `image_service`, `doc_proc_client`) use the definite assignment assertion (`!`) because they are initialized in `init()` rather than the constructor. This is the standard pattern -- the constructor runs synchronously, but service clients often need async initialization.
-
----
-
-## Step 3: The init() Override
-
-```typescript
   override async init() {
     await super.init();
-
-    const CONTEXT_SERVICE_ADDRESS = process.env.CONTEXT_SERVICE_ADDRESS
-      || 'http://firefoundry-core-context-service.ff-dev.svc.cluster.local:50051';
-    const CONTEXT_SERVICE_API_KEY = process.env.CONTEXT_SERVICE_API_KEY || '';
-
-    const context_client = new ContextServiceClient({
-      address: CONTEXT_SERVICE_ADDRESS,
-      apiKey: CONTEXT_SERVICE_API_KEY,
-    });
-    this.working_memory_provider = new WorkingMemoryProvider(context_client);
-
-    this.image_service = new ImageService();
-
-    const DOC_PROC_URL = process.env.DOC_PROC_SERVICE_URL
-      || 'http://firefoundry-core-doc-proc-service.ff-dev.svc.cluster.local:3000';
-    this.doc_proc_client = DocProcClient.create({ baseUrl: DOC_PROC_URL });
-
     logger.info("IllustratedStory bundle initialized!");
+    logger.info("API endpoints:");
+    logger.info("   POST /api/create-story   - Create a story pipeline entity");
+    logger.info("   GET  /api/story-status   - Get generation progress");
+    logger.info("");
+    logger.info("Usage: POST /api/create-story -> get entity_id");
+    logger.info("       ff-sdk-cli iterator run <entity_id> --url <url>");
   }
-```
 
-The `init()` method is called by `createStandaloneAgentBundle` after construction but before the HTTP server starts accepting requests. Always call `super.init()` first -- it initializes the base bundle's internal state.
-
-Three service clients are initialized here:
-
-| Client | Service | Purpose |
-|--------|---------|---------|
-| `WorkingMemoryProvider` | Context service | Store generated PDF and HTML files |
-| `ImageService` | Broker service (via `BrokerClient` internally) | Generate images from text prompts |
-| `DocProcClient` | Doc-proc service | Convert assembled HTML to PDF |
-
-The service addresses default to in-cluster Kubernetes DNS names. For local development with port-forwarding, override them via environment variables:
-
-```bash
-export CONTEXT_SERVICE_ADDRESS=http://localhost:50051
-export DOC_PROC_SERVICE_URL=http://localhost:3002
-```
-
----
-
-## Step 4: The @ApiEndpoint Decorator
-
-The `@ApiEndpoint` decorator transforms a method on the agent bundle class into an HTTP endpoint. The SDK registers these as Express routes under the `/api/` prefix when the server starts.
-
-### POST Endpoint: Create Story
-
-```typescript
   @ApiEndpoint({ method: 'POST', route: 'create-story' })
   async createStory(body: CreateStoryRequest): Promise<CreateStoryResponse> {
     const { topic } = body;
-    if (!topic?.trim()) {
-      throw new Error('Topic is required');
-    }
+    if (!topic?.trim()) throw new Error('Topic is required');
+    logger.info('[API] Creating story pipeline', { topic });
 
-    logger.info('[API] Creating illustrated story', { topic });
-
-    const storyEntity = await this.entity_factory.create_entity_node({
+    const entity = await this.entity_factory.create_entity_node({
       app_id: this.get_app_id(),
-      name: `story-${Date.now()}`,
-      specific_type_name: 'EntityNode',
-      general_type_name: 'EntityNode',
+      name: `story-pipeline-${Date.now()}`,
+      specific_type_name: 'StoryPipelineEntity',
+      general_type_name: 'StoryPipelineEntity',
       status: 'Pending',
-      data: {
-        topic,
-        stage: 'created',
-      } as StoryEntityData,
+      data: { topic } as StoryEntityData,
     });
 
-    const entity_id = storyEntity.id!;
-
-    // Run pipeline in background
-    this.runPipeline(storyEntity, topic).catch(err => {
-      logger.error('[Pipeline] Fatal error', { entity_id, error: err });
-    });
-
-    return { entity_id };
+    return { entity_id: entity.id! };
   }
-```
 
-**How `@ApiEndpoint` maps to HTTP:**
-
-```
-@ApiEndpoint({ method: 'POST', route: 'create-story' })
-                  |                    |
-                  v                    v
-            POST method          /api/create-story
-```
-
-For POST endpoints, the SDK parses the JSON request body and passes it as the first argument to the method. The return value is serialized as the JSON response. Throwing an error returns an HTTP error response.
-
-**What this endpoint does:**
-
-1. **Validates input** -- checks that `topic` is present and non-empty
-2. **Creates a tracking entity** -- uses `entity_factory.create_entity_node()` to create an `EntityNode` in the entity graph with initial data including the topic and stage
-3. **Starts the pipeline in the background** -- calls `this.runPipeline()` without awaiting it, using `.catch()` to log fatal errors
-4. **Returns immediately** -- the client gets the `entity_id` right away and can poll for progress
-
-Note that the story entity uses `specific_type_name: 'EntityNode'` rather than a custom entity type. This is because the story entity is a plain data holder for tracking progress -- it does not need a custom class with `run_impl()`. The pipeline logic lives in the bundle, not in the entity.
-
-### GET Endpoint: Story Status
-
-```typescript
   @ApiEndpoint({ method: 'GET', route: 'story-status' })
   async getStoryStatus(query: { entity_id?: string }): Promise<StoryStatusResponse> {
     const { entity_id } = query;
-    if (!entity_id) {
-      throw new Error('entity_id query parameter is required');
-    }
+    if (!entity_id) throw new Error('entity_id query parameter is required');
 
     const dto = await this.entity_client.get_node(entity_id);
-    if (!dto) {
-      throw new Error(`Story ${entity_id} not found`);
-    }
+    if (!dto) throw new Error(`Story ${entity_id} not found`);
 
     const data = (dto as any).data || {};
-    return {
-      entity_id: dto.id!,
-      status: dto.status!,
-      stage: data.stage || 'unknown',
-      data,
-    };
+    return { entity_id: dto.id!, status: dto.status!, stage: data.stage || 'unknown', data };
   }
+}
 ```
 
-For GET endpoints, the SDK parses URL query parameters into an object and passes it as the first argument. All query parameter values are strings.
+### What Changed
 
-This endpoint reads the entity's current state using `this.entity_client.get_node(entity_id)`. The `stage` field in entity data is updated by the pipeline as it progresses, so the client can show meaningful status:
+Compare this to the previous version of the bundle:
 
-```
-created --> safety_check --> safety_passed --> writing --> writing_complete
-         --> generating_images --> assembling --> creating_pdf --> completed
-```
+| Previous (Anti-pattern) | New (Entity-based) |
+|------------------------|-------------------|
+| ~200 lines with `runPipeline()`, `runBotEntity()`, `runSafetyCheck()`, `runStoryWriter()`, `updateStage()` | ~60 lines with two API endpoints |
+| Initialized `WorkingMemoryProvider`, `ImageService`, `DocProcClient` on the bundle | Services initialized inside `StoryPipelineEntity.run_impl()` |
+| Created entities with `specific_type_name: 'EntityNode'` (generic tracking entity) | Creates a `StoryPipelineEntity` (the orchestrator itself) |
+| Called `this.runPipeline().catch(...)` in the background | Returns entity ID; consumer starts the pipeline via iterator |
+| Manual iterator consumption with `runBotEntity<T>()` helper | `yield* await child.start()` handles delegation naturally |
+| Progress only via entity data polling | Both real-time envelopes and entity data polling |
 
-Or in error/rejection cases:
-```
-created --> safety_check --> rejected
-created --> ... --> error
-```
+The bundle no longer imports `WorkingMemoryProvider`, `ContextServiceClient`, `DocProcClient`, or `ImageService`. It does not know how the pipeline works -- only that creating a `StoryPipelineEntity` with a topic is enough to start one.
 
----
-
-## Step 5: The Background Pipeline
-
-The `runPipeline` method is the heart of the orchestration. It runs asynchronously in the background while the API endpoint has already returned.
+### The create-story Endpoint
 
 ```typescript
-  private async runPipeline(storyEntity: any, topic: string): Promise<void> {
-    const entityId = storyEntity.id!;
+@ApiEndpoint({ method: 'POST', route: 'create-story' })
+async createStory(body: CreateStoryRequest): Promise<CreateStoryResponse> {
+  const { topic } = body;
+  if (!topic?.trim()) throw new Error('Topic is required');
 
-    try {
-      // Step 1: Content safety check
-      await this.updateStage(storyEntity, 'safety_check');
-      const safetyResult = await this.runSafetyCheck(topic);
-
-      if (!safetyResult.is_safe) {
-        logger.warn('[Pipeline] Content rejected', { entityId, safetyResult });
-        await this.updateStage(storyEntity, 'rejected', { safety_result: safetyResult });
-        return;
-      }
-
-      await this.updateStage(storyEntity, 'safety_passed', { safety_result: safetyResult });
-
-      // Step 2: Story writing
-      await this.updateStage(storyEntity, 'writing');
-      const storyResult = await this.runStoryWriter(topic);
-
-      await this.updateStage(storyEntity, 'writing_complete', {
-        story_result: {
-          title: storyResult.title,
-          moral: storyResult.moral,
-          age_range: storyResult.age_range,
-          html_content: '',
-          image_prompts: storyResult.image_prompts,
-        },
-      });
-
-      // Step 3: Image generation
-      const imagePrompts = storyResult.image_prompts;
-      await this.updateStage(storyEntity, 'generating_images', {
-        images_total: imagePrompts.length,
-        images_generated: 0,
-      });
-
-      const images = await this.image_service.generateAllImages(
-        imagePrompts,
-        async (generated, total) => {
-          await this.updateStage(storyEntity, 'generating_images', {
-            images_generated: generated,
-            images_total: total,
-          });
-        },
-      );
-
-      // Step 4: Assemble HTML with embedded images
-      await this.updateStage(storyEntity, 'assembling');
-      const finalHtml = this.image_service.assembleHtml(storyResult.html_content, images);
-
-      // Step 5: Convert to PDF
-      await this.updateStage(storyEntity, 'creating_pdf');
-      let pdfWmId: string | undefined;
-
-      try {
-        const pdfResponse = await this.doc_proc_client.htmlToPdf(
-          Buffer.from(finalHtml, 'utf-8')
-        );
-
-        if (pdfResponse.success && pdfResponse.data) {
-          const pdfBuffer = typeof pdfResponse.data === 'string'
-            ? Buffer.from(pdfResponse.data, 'base64')
-            : Buffer.from(pdfResponse.data);
-
-          const wmResult = await this.working_memory_provider.add_memory_from_buffer({
-            entityNodeId: entityId,
-            name: `${storyResult.title || 'story'}.pdf`,
-            description: `Illustrated storybook PDF: ${storyResult.title}`,
-            contentType: 'application/pdf',
-            memoryType: 'file',
-            buffer: pdfBuffer,
-            metadata: {
-              title: storyResult.title,
-              moral: storyResult.moral,
-              image_count: images.length,
-              generated_at: new Date().toISOString(),
-            },
-          });
-          pdfWmId = wmResult.workingMemoryId;
-        }
-      } catch (err) {
-        logger.warn('[Pipeline] PDF generation failed, continuing without PDF', {
-          entityId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-
-      // Step 6: Store final HTML in working memory
-      try {
-        await this.working_memory_provider.add_memory_from_buffer({
-          entityNodeId: entityId,
-          name: `${storyResult.title || 'story'}.html`,
-          description: `Illustrated storybook HTML: ${storyResult.title}`,
-          contentType: 'text/html',
-          memoryType: 'file',
-          buffer: Buffer.from(finalHtml, 'utf-8'),
-          metadata: {
-            title: storyResult.title,
-            image_count: images.length,
-          },
-        });
-      } catch (err) {
-        logger.warn('[Pipeline] HTML storage failed', { entityId, error: err });
-      }
-
-      // Done!
-      await this.updateStage(storyEntity, 'completed', {
-        pdf_wm_id: pdfWmId,
-        story_result: {
-          title: storyResult.title,
-          moral: storyResult.moral,
-          age_range: storyResult.age_range,
-          html_content: '',
-          image_prompts: storyResult.image_prompts,
-        },
-        image_count: images.length,
-      });
-
-    } catch (err) {
-      await this.updateStage(storyEntity, 'error', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
-    }
-  }
-```
-
-### Pipeline Stage Breakdown
-
-| Stage | What Happens | Entity Data Updated |
-|-------|-------------|-------------------|
-| `safety_check` | Creates a `ContentSafetyCheckEntity` and runs it | `stage: 'safety_check'` |
-| `safety_passed` / `rejected` | Records the safety result | `safety_result: { is_safe, ... }` |
-| `writing` | Creates a `StoryWriterEntity` and runs it | `stage: 'writing'` |
-| `writing_complete` | Records story metadata (title, moral, age range, image prompts) | `story_result: { ... }` |
-| `generating_images` | Calls `ImageService.generateAllImages()` with progress callback | `images_generated: N, images_total: M` |
-| `assembling` | Replaces `{{IMAGE_N}}` placeholders with base64-encoded `<img>` tags | `stage: 'assembling'` |
-| `creating_pdf` | Calls `DocProcClient.htmlToPdf()` and stores the PDF in working memory | `pdf_wm_id: '...'` |
-| `completed` | Stores final HTML in working memory and marks entity as done | `stage: 'completed'` |
-
-### Graceful Error Handling
-
-Notice that Steps 5 and 6 (PDF generation and HTML storage) are each wrapped in their own `try/catch`:
-
-```typescript
-try {
-  const pdfResponse = await this.doc_proc_client.htmlToPdf(
-    Buffer.from(finalHtml, 'utf-8')
-  );
-  // ... store PDF in working memory ...
-} catch (err) {
-  logger.warn('[Pipeline] PDF generation failed, continuing without PDF', {
-    entityId,
-    error: err instanceof Error ? err.message : String(err),
+  const entity = await this.entity_factory.create_entity_node({
+    app_id: this.get_app_id(),
+    name: `story-pipeline-${Date.now()}`,
+    specific_type_name: 'StoryPipelineEntity',
+    general_type_name: 'StoryPipelineEntity',
+    status: 'Pending',
+    data: { topic } as StoryEntityData,
   });
+
+  return { entity_id: entity.id! };
 }
 ```
 
-This is intentional. PDF generation is a nice-to-have -- the story content (HTML with embedded images) is the primary output. If the doc-proc service is down, the pipeline still completes successfully with the HTML result. The same applies to the HTML working memory storage: if the context service is temporarily unavailable, the pipeline logs a warning but does not fail.
+This endpoint creates the pipeline entity but does **not** start it. The entity is created with `status: 'Pending'`. The consumer is responsible for starting the entity by connecting to its iterator. This is the standard FireFoundry pattern: entity creation and entity execution are separate operations.
 
-The outer `try/catch` around the entire pipeline handles fatal errors (like a bot entity failing) by setting the stage to `error` with the error message, so the status endpoint can report what went wrong.
+Note the `specific_type_name: 'StoryPipelineEntity'` -- this matches the `@EntityMixin` decorator and the constructor map key. When the consumer starts this entity, the framework looks up `StoryPipelineEntity` in the constructor map, instantiates it, and calls `run_impl()`.
 
-### Large Data and Working Memory
-
-A critical design decision in this pipeline is **not** storing the assembled HTML in entity data. The final HTML contains base64-encoded images, which can easily be 5-10 MB or more. Entity data is stored in PostgreSQL and should remain lightweight (metadata, IDs, stage names).
-
-Instead, the pipeline stores large outputs in working memory:
+### The story-status Endpoint
 
 ```typescript
-// Store the PDF in working memory
-const wmResult = await this.working_memory_provider.add_memory_from_buffer({
-  entityNodeId: entityId,
-  name: `${storyResult.title || 'story'}.pdf`,
-  description: `Illustrated storybook PDF: ${storyResult.title}`,
-  contentType: 'application/pdf',
-  memoryType: 'file',
-  buffer: pdfBuffer,
-  metadata: { ... },
-});
-pdfWmId = wmResult.workingMemoryId;
-```
+@ApiEndpoint({ method: 'GET', route: 'story-status' })
+async getStoryStatus(query: { entity_id?: string }): Promise<StoryStatusResponse> {
+  const { entity_id } = query;
+  if (!entity_id) throw new Error('entity_id query parameter is required');
 
-The working memory ID (`pdfWmId`) is then stored in entity data. Clients use this ID to download the file through the working memory API.
+  const dto = await this.entity_client.get_node(entity_id);
+  if (!dto) throw new Error(`Story ${entity_id} not found`);
 
-Notice the pattern in the `story_result` stored in entity data at completion:
-
-```typescript
-story_result: {
-  title: storyResult.title,
-  moral: storyResult.moral,
-  age_range: storyResult.age_range,
-  html_content: '',              // Empty! Not stored in entity data
-  image_prompts: storyResult.image_prompts,
-},
-```
-
-The `html_content` field is explicitly set to an empty string. The actual HTML lives in working memory. This keeps entity data small and queryable.
-
----
-
-## Step 6: Entity State Management with updateStage
-
-The `updateStage` helper updates the entity's data with the current pipeline stage and any additional data:
-
-```typescript
-  private async updateStage(
-    entity: any,
-    stage: string,
-    additionalData: Partial<StoryEntityData> = {},
-  ): Promise<void> {
-    try {
-      const dto = await entity.get_dto();
-      const currentData = dto.data || {};
-      const newData = { ...currentData, stage, ...additionalData };
-      await entity.update_data(newData);
-      logger.info('[Pipeline] Stage updated', { entityId: entity.id, stage });
-    } catch (err) {
-      logger.warn('[Pipeline] Failed to update stage', {
-        entityId: entity.id, stage, error: err,
-      });
-    }
-  }
-```
-
-Key details:
-
-- **Merge, don't replace** -- `{ ...currentData, stage, ...additionalData }` preserves existing data fields while updating the stage and adding new fields. This means the entity accumulates data as the pipeline progresses.
-- **Wrapped in try/catch** -- stage updates are best-effort. If the entity service is temporarily slow, the pipeline should not crash just because it could not update progress. The pipeline's actual work (bot execution, image generation) is more important than status reporting.
-- **Read-then-write** -- the method reads the current data with `get_dto()` before writing. This avoids accidentally overwriting fields set by earlier stages.
-
-This pattern enables the status polling endpoint. The client calls `GET /api/story-status?entity_id=...` periodically and sees the stage progress:
-
-```json
-{ "stage": "safety_check" }
-{ "stage": "writing" }
-{ "stage": "generating_images", "images_generated": 2, "images_total": 5 }
-{ "stage": "generating_images", "images_generated": 4, "images_total": 5 }
-{ "stage": "completed", "pdf_wm_id": "abc-123", "image_count": 5 }
-```
-
----
-
-## Step 7: Bot Result Extraction -- the runBotEntity Pattern
-
-This is the most important helper method in the bundle and addresses a common SDK gotcha.
-
-```typescript
-  private async runBotEntity<T>(entity: any): Promise<T> {
-    const iterator = await entity.start();
-
-    let result: any = undefined;
-    while (true) {
-      const { value, done } = await iterator.next();
-      if (done) {
-        result = value;
-        break;
-      }
-    }
-
-    // Fallback: read from entity io.output
-    if (result === undefined) {
-      const io = await this.entity_client.get_node_io(entity.id!);
-      result = (io as any)?.output;
-    }
-
-    if (result === undefined) {
-      throw new Error(`Bot execution for ${entity.id} completed but no structured output found`);
-    }
-
-    return result as T;
-  }
-```
-
-### Why Not `for await...of`?
-
-You might expect to consume the iterator like this:
-
-```typescript
-// DO NOT DO THIS -- loses the return value!
-let result;
-for await (const value of iterator) {
-  result = value;
-}
-// result is the LAST YIELDED value, NOT the return value
-```
-
-The problem is that `for await...of` discards the generator's **return value**. In JavaScript generators, `yield` produces intermediate values, and `return` produces the final value. The `for await...of` loop captures every `yield` but silently drops the `return`. Bot entities use `return` to deliver their structured output (the validated Zod result), so `for await...of` would lose it.
-
-The correct approach is **manual iteration**:
-
-```typescript
-const { value, done } = await iterator.next();
-if (done) {
-  result = value;  // This IS the return value
-  break;
+  const data = (dto as any).data || {};
+  return { entity_id: dto.id!, status: dto.status!, stage: data.stage || 'unknown', data };
 }
 ```
 
-When `done` is `true`, the `value` field contains the generator's return value -- the structured output from the bot.
-
-### The Fallback
-
-Even with manual iteration, there are edge cases where the return value might not propagate (e.g., if the entity was already completed from a previous run and the iterator returns a cached result in a different format). The fallback reads from the entity's IO output:
-
-```typescript
-if (result === undefined) {
-  const io = await this.entity_client.get_node_io(entity.id!);
-  result = (io as any)?.output;
-}
-```
-
-The entity service persists the output of completed entities in the IO record. This is a reliable backup source.
-
-### Usage
-
-The `runBotEntity` helper is generic -- it works with any bot entity type:
-
-```typescript
-const safetyResult = await this.runBotEntity<ContentSafetyResult>(entity);
-const storyResult = await this.runBotEntity<StoryResult>(entity);
-```
-
-The type parameter `<T>` types the return value, matching the Zod schema output defined in each bot.
+This endpoint reads entity data for polling-based progress. The `stage` field is updated by `run_impl()` as the pipeline progresses. Clients that cannot use the iterator protocol (e.g., a simple web dashboard with polling) use this endpoint to check progress.
 
 ---
 
-## Step 8: Creating and Running Bot Entities
+## Step 9: Update the Constructor Map
 
-The `runSafetyCheck` and `runStoryWriter` methods show how to create child entities for bot execution:
+Add `StoryPipelineEntity` to the constructor map alongside the entities from Parts 1 and 2.
+
+**`apps/story-bundle/src/constructors.ts`**:
 
 ```typescript
-  private async runSafetyCheck(topic: string): Promise<ContentSafetyResult> {
-    const entity = await this.entity_factory.create_entity_node({
-      app_id: this.get_app_id(),
-      name: `safety-check-${Date.now()}`,
-      specific_type_name: 'ContentSafetyCheckEntity',
-      general_type_name: 'ContentSafetyCheckEntity',
-      status: 'Pending',
-      data: { topic },
-    });
+import { FFConstructors } from "@firebrandanalytics/ff-agent-sdk";
+import { ContentSafetyCheckEntity } from './entities/ContentSafetyCheckEntity.js';
+import { StoryWriterEntity } from './entities/StoryWriterEntity.js';
+import { StoryPipelineEntity } from './entities/StoryPipelineEntity.js';
 
-    logger.info('[Pipeline] Running content safety check', { entity_id: entity.id, topic });
-    return this.runBotEntity<ContentSafetyResult>(entity);
-  }
-
-  private async runStoryWriter(topic: string): Promise<StoryResult> {
-    const entity = await this.entity_factory.create_entity_node({
-      app_id: this.get_app_id(),
-      name: `story-writer-${Date.now()}`,
-      specific_type_name: 'StoryWriterEntity',
-      general_type_name: 'StoryWriterEntity',
-      status: 'Pending',
-      data: { topic },
-    });
-
-    logger.info('[Pipeline] Running story writer', { entity_id: entity.id, topic });
-    return this.runBotEntity<StoryResult>(entity);
-  }
+export const StoryBundleConstructors = {
+  ...FFConstructors,
+  ContentSafetyCheckEntity: ContentSafetyCheckEntity,
+  StoryWriterEntity: StoryWriterEntity,
+  StoryPipelineEntity: StoryPipelineEntity,
+} as const;
 ```
 
-The pattern is:
-
-1. **Create the entity** with `entity_factory.create_entity_node()`. The `specific_type_name` must exactly match the name registered in `StoryBundleConstructors` (and in the entity's `@EntityMixin` decorator). This is how the framework knows which class to instantiate.
-
-2. **Pass data via the `data` field** -- the entity's `run_impl` (or `get_bot_request_args_impl` for bot entities) reads this data to build its input.
-
-3. **Run it with `runBotEntity<T>()`** -- starts the entity, consumes the iterator, and extracts the structured return value.
-
-Each entity is created with a unique name (using `Date.now()` as a suffix) and `status: 'Pending'`. The entity transitions to `InProgress` when `start()` is called and to `Completed` when the bot finishes.
+The constructor map now has three entries. The framework uses this map to instantiate entities from their persisted type name. When `appendCall(ContentSafetyCheckEntity, ...)` is called inside the pipeline entity, the framework resolves the class through this map.
 
 ---
 
-## Step 9: The Server Entry Point
+## Step 10: The Server Entry Point
 
-The `index.ts` file bootstraps the HTTP server:
+The `index.ts` entry point is unchanged from the standard pattern:
 
 **`apps/story-bundle/src/index.ts`**:
 
@@ -708,490 +771,99 @@ async function startServer() {
 startServer();
 ```
 
-### Understanding createStandaloneAgentBundle
-
-`createStandaloneAgentBundle` does the following:
-
-1. **Instantiates the bundle class** -- calls `new IllustratedStoryAgentBundle()`
-2. **Calls `init()`** -- initializes service clients
-3. **Scans for `@ApiEndpoint` decorators** -- finds all decorated methods on the bundle class and registers them as Express routes under `/api/`
-4. **Registers built-in routes** -- adds `/health` for health checks and the standard invoke protocol routes
-5. **Starts the HTTP server** -- listens on the specified port
-
-The function takes the bundle class (not an instance) as the first argument, along with an options object. The `port` option defaults to 3000 if not specified.
-
-### Signal Handling
-
-The `SIGTERM` and `SIGINT` handlers ensure clean shutdown in containerized environments. Kubernetes sends `SIGTERM` when stopping a pod, and `SIGINT` is sent when pressing Ctrl+C during local development.
+`createStandaloneAgentBundle` instantiates the bundle, calls `init()`, registers the `@ApiEndpoint` routes, sets up the iterator protocol routes, and starts the HTTP server. The iterator protocol routes are what enable `ff-sdk-cli iterator run` to communicate with entities.
 
 ---
 
-## Step 10: Build and Test
+## Step 11: The Consumer Workflow
 
-### Build
+With the entity-based approach, the consumer workflow has two steps: create the entity, then start it via the iterator.
 
-```bash
-pnpm run build
-```
-
-### Local Testing
-
-Start the server locally (with port-forwarding to platform services):
+### Create the Pipeline Entity
 
 ```bash
-# In a separate terminal, set up port-forwarding
-# (see Part 5 for full port-forwarding setup)
+RESULT=$(ff-sdk-cli api call create-story \
+  --method POST \
+  --body '{"topic":"A brave kitten who learns to swim"}' \
+  --url http://localhost:3001)
 
-# Start the server
-PORT=3000 node apps/story-bundle/dist/index.js
+ENTITY_ID=$(echo $RESULT | jq -r '.entity_id')
+echo "Pipeline entity: $ENTITY_ID"
 ```
 
-### Test the Create Story Endpoint
+This calls `POST /api/create-story`, which creates a `StoryPipelineEntity` with `status: 'Pending'` and returns the entity ID. The pipeline has not started yet.
+
+### Start and Consume Progress via Iterator
 
 ```bash
-curl -X POST http://localhost:3000/api/create-story \
-  -H 'Content-Type: application/json' \
-  -d '{"topic": "a brave little robot who learns to paint"}'
+ff-sdk-cli iterator run $ENTITY_ID --url http://localhost:3001
 ```
 
-Expected response:
+This connects to the entity's iterator, starts `run_impl()`, and streams progress envelopes to the terminal in real time. You will see output like:
 
-```json
-{
-  "entity_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-}
+```
+STATUS  RUNNING  Running content safety check
+STATUS  STARTED  (ContentSafetyCheckEntity)
+BOT_PROGRESS  ... tokens ...
+VALUE   { is_safe: true, safety_score: 95, concerns: [], reasoning: "..." }
+STATUS  COMPLETED  (ContentSafetyCheckEntity)
+STATUS  RUNNING  Writing story
+STATUS  STARTED  (StoryWriterEntity)
+BOT_PROGRESS  ... tokens ...
+VALUE   { title: "...", html_content: "...", image_prompts: [...], ... }
+STATUS  COMPLETED  (StoryWriterEntity)
+STATUS  RUNNING  Generating 4 images
+STATUS  RUNNING  Generated 1/4 images
+STATUS  RUNNING  Generated 2/4 images
+STATUS  RUNNING  Generated 3/4 images
+STATUS  RUNNING  Generated 4/4 images
+STATUS  RUNNING  Assembling HTML with images
+STATUS  RUNNING  Generating PDF
+STATUS  RUNNING  Storing results
+VALUE   { stage: "completed", title: "...", image_count: 4, pdf_wm_id: "...", ... }
+STATUS  COMPLETED
 ```
 
-### Poll for Progress
+The child entity envelopes (ContentSafetyCheckEntity, StoryWriterEntity) are forwarded transparently by `yield*`. The consumer sees a unified stream without needing to know about the pipeline's internal structure.
+
+### Poll for Status (Alternative)
+
+If you prefer polling instead of the iterator protocol, use the status endpoint:
 
 ```bash
-curl "http://localhost:3000/api/story-status?entity_id=<entity-id>"
+ff-sdk-cli api call story-status \
+  --query '{"entity_id":"'"$ENTITY_ID"'"}' \
+  --url http://localhost:3001
 ```
 
-Immediately after creation:
-
-```json
-{
-  "entity_id": "a1b2c3d4-...",
-  "status": "Pending",
-  "stage": "safety_check",
-  "data": {
-    "topic": "a brave little robot who learns to paint",
-    "stage": "safety_check"
-  }
-}
-```
-
-During image generation:
-
-```json
-{
-  "entity_id": "a1b2c3d4-...",
-  "status": "Pending",
-  "stage": "generating_images",
-  "data": {
-    "topic": "a brave little robot who learns to paint",
-    "stage": "generating_images",
-    "images_generated": 3,
-    "images_total": 5,
-    "safety_result": { "is_safe": true, "categories": [] },
-    "story_result": {
-      "title": "Rusty's Rainbow",
-      "moral": "Creativity lives in everyone",
-      "age_range": "4-8"
-    }
-  }
-}
-```
-
-After completion:
-
-```json
-{
-  "entity_id": "a1b2c3d4-...",
-  "status": "Pending",
-  "stage": "completed",
-  "data": {
-    "topic": "a brave little robot who learns to paint",
-    "stage": "completed",
-    "pdf_wm_id": "wm-xyz-789",
-    "image_count": 5,
-    "story_result": {
-      "title": "Rusty's Rainbow",
-      "moral": "Creativity lives in everyone",
-      "age_range": "4-8"
-    }
-  }
-}
-```
-
-### Test Content Rejection
+Or with curl:
 
 ```bash
-curl -X POST http://localhost:3000/api/create-story \
-  -H 'Content-Type: application/json' \
-  -d '{"topic": "something inappropriate for children"}'
+curl -s "http://localhost:3001/api/story-status?entity_id=$ENTITY_ID" | jq .stage
 ```
 
-Poll the status -- it should show `stage: 'rejected'` with the safety result explaining why.
+The stage field progresses through:
 
-### Test Input Validation
-
-```bash
-# Missing topic
-curl -X POST http://localhost:3000/api/create-story \
-  -H 'Content-Type: application/json' \
-  -d '{}'
-
-# Returns: { "error": "Topic is required" }
-
-# Missing entity_id
-curl "http://localhost:3000/api/story-status"
-
-# Returns: { "error": "entity_id query parameter is required" }
+```
+safety_check -> safety_passed -> writing -> writing_complete -> generating_images -> assembling -> creating_pdf -> storing_results -> completed
 ```
 
-### Verify Working Memory
+### Inspect Results
 
-After a story completes, use `ff-wm-read` to inspect the stored files:
+After completion, verify the pipeline produced the expected outputs:
 
 ```bash
-# List working memory records for the story entity
-ff-wm-read list --entity-id <entity-id>
+# Check the pipeline entity's data
+ff-eg-read node get $ENTITY_ID
+
+# Check edges to child entities
+ff-eg-read node edges $ENTITY_ID
+
+# Check working memory (PDF and HTML)
+ff-wm-read list --entity-id $ENTITY_ID
 
 # Download the PDF
 ff-wm-read download <pdf-working-memory-id> --output ./story.pdf
-
-# Download the HTML
-ff-wm-read download <html-working-memory-id> --output ./story.html
-```
-
----
-
-## Complete File: agent-bundle.ts
-
-For reference, here is the complete agent bundle file:
-
-```typescript
-import {
-  FFAgentBundle,
-  createEntityClient,
-  ApiEndpoint,
-  logger,
-  WorkingMemoryProvider,
-} from "@firebrandanalytics/ff-agent-sdk";
-import { ContextServiceClient } from '@firebrandanalytics/cs-client';
-import { DocProcClient } from '@firebrandanalytics/doc-proc-client';
-import { StoryBundleConstructors } from "./constructors.js";
-import { ImageService } from "./services/image-service.js";
-import type {
-  CreateStoryRequest,
-  CreateStoryResponse,
-  StoryStatusResponse,
-  StoryEntityData,
-  ContentSafetyResult,
-  StoryResult,
-} from '@shared/types';
-
-const APPLICATION_ID = process.env.FF_APPLICATION_ID || "e7a95bcc-7ef9-432e-9713-f040db078b14";
-const AGENT_BUNDLE_ID = process.env.FF_AGENT_BUNDLE_ID || "3f78cd56-4ac4-4503-816d-01a0e61fd2cf";
-
-export class IllustratedStoryAgentBundle extends FFAgentBundle<any> {
-  private working_memory_provider!: WorkingMemoryProvider;
-  private image_service!: ImageService;
-  private doc_proc_client!: DocProcClient;
-
-  constructor() {
-    super(
-      {
-        id: AGENT_BUNDLE_ID,
-        application_id: APPLICATION_ID,
-        name: "IllustratedStory",
-        type: "agent_bundle",
-        description: "AI-powered illustrated children's storybook generator",
-      },
-      StoryBundleConstructors,
-      createEntityClient(APPLICATION_ID)
-    );
-  }
-
-  override async init() {
-    await super.init();
-
-    const CONTEXT_SERVICE_ADDRESS = process.env.CONTEXT_SERVICE_ADDRESS
-      || 'http://firefoundry-core-context-service.ff-dev.svc.cluster.local:50051';
-    const CONTEXT_SERVICE_API_KEY = process.env.CONTEXT_SERVICE_API_KEY || '';
-
-    const context_client = new ContextServiceClient({
-      address: CONTEXT_SERVICE_ADDRESS,
-      apiKey: CONTEXT_SERVICE_API_KEY,
-    });
-    this.working_memory_provider = new WorkingMemoryProvider(context_client);
-
-    this.image_service = new ImageService();
-
-    const DOC_PROC_URL = process.env.DOC_PROC_SERVICE_URL
-      || 'http://firefoundry-core-doc-proc-service.ff-dev.svc.cluster.local:3000';
-    this.doc_proc_client = DocProcClient.create({ baseUrl: DOC_PROC_URL });
-
-    logger.info("IllustratedStory bundle initialized!");
-  }
-
-  @ApiEndpoint({ method: 'POST', route: 'create-story' })
-  async createStory(body: CreateStoryRequest): Promise<CreateStoryResponse> {
-    const { topic } = body;
-    if (!topic?.trim()) {
-      throw new Error('Topic is required');
-    }
-
-    logger.info('[API] Creating illustrated story', { topic });
-
-    const storyEntity = await this.entity_factory.create_entity_node({
-      app_id: this.get_app_id(),
-      name: `story-${Date.now()}`,
-      specific_type_name: 'EntityNode',
-      general_type_name: 'EntityNode',
-      status: 'Pending',
-      data: {
-        topic,
-        stage: 'created',
-      } as StoryEntityData,
-    });
-
-    const entity_id = storyEntity.id!;
-
-    // Run pipeline in background
-    this.runPipeline(storyEntity, topic).catch(err => {
-      logger.error('[Pipeline] Fatal error', { entity_id, error: err });
-    });
-
-    return { entity_id };
-  }
-
-  @ApiEndpoint({ method: 'GET', route: 'story-status' })
-  async getStoryStatus(query: { entity_id?: string }): Promise<StoryStatusResponse> {
-    const { entity_id } = query;
-    if (!entity_id) {
-      throw new Error('entity_id query parameter is required');
-    }
-
-    const dto = await this.entity_client.get_node(entity_id);
-    if (!dto) {
-      throw new Error(`Story ${entity_id} not found`);
-    }
-
-    const data = (dto as any).data || {};
-    return {
-      entity_id: dto.id!,
-      status: dto.status!,
-      stage: data.stage || 'unknown',
-      data,
-    };
-  }
-
-  private async runPipeline(storyEntity: any, topic: string): Promise<void> {
-    const entityId = storyEntity.id!;
-
-    try {
-      // Step 1: Content safety check
-      await this.updateStage(storyEntity, 'safety_check');
-      const safetyResult = await this.runSafetyCheck(topic);
-
-      if (!safetyResult.is_safe) {
-        logger.warn('[Pipeline] Content rejected', { entityId, safetyResult });
-        await this.updateStage(storyEntity, 'rejected', { safety_result: safetyResult });
-        return;
-      }
-
-      await this.updateStage(storyEntity, 'safety_passed', { safety_result: safetyResult });
-
-      // Step 2: Story writing
-      await this.updateStage(storyEntity, 'writing');
-      const storyResult = await this.runStoryWriter(topic);
-
-      await this.updateStage(storyEntity, 'writing_complete', {
-        story_result: {
-          title: storyResult.title,
-          moral: storyResult.moral,
-          age_range: storyResult.age_range,
-          html_content: '',
-          image_prompts: storyResult.image_prompts,
-        },
-      });
-
-      // Step 3: Image generation
-      const imagePrompts = storyResult.image_prompts;
-      await this.updateStage(storyEntity, 'generating_images', {
-        images_total: imagePrompts.length,
-        images_generated: 0,
-      });
-
-      const images = await this.image_service.generateAllImages(
-        imagePrompts,
-        async (generated, total) => {
-          await this.updateStage(storyEntity, 'generating_images', {
-            images_generated: generated,
-            images_total: total,
-          });
-        },
-      );
-
-      // Step 4: Assemble HTML with embedded images
-      await this.updateStage(storyEntity, 'assembling');
-      const finalHtml = this.image_service.assembleHtml(storyResult.html_content, images);
-
-      // Step 5: Convert to PDF
-      await this.updateStage(storyEntity, 'creating_pdf');
-      let pdfWmId: string | undefined;
-
-      try {
-        const pdfResponse = await this.doc_proc_client.htmlToPdf(
-          Buffer.from(finalHtml, 'utf-8')
-        );
-
-        if (pdfResponse.success && pdfResponse.data) {
-          const pdfBuffer = typeof pdfResponse.data === 'string'
-            ? Buffer.from(pdfResponse.data, 'base64')
-            : Buffer.from(pdfResponse.data);
-
-          const wmResult = await this.working_memory_provider.add_memory_from_buffer({
-            entityNodeId: entityId,
-            name: `${storyResult.title || 'story'}.pdf`,
-            description: `Illustrated storybook PDF: ${storyResult.title}`,
-            contentType: 'application/pdf',
-            memoryType: 'file',
-            buffer: pdfBuffer,
-            metadata: {
-              title: storyResult.title,
-              moral: storyResult.moral,
-              image_count: images.length,
-              generated_at: new Date().toISOString(),
-            },
-          });
-          pdfWmId = wmResult.workingMemoryId;
-        }
-      } catch (err) {
-        logger.warn('[Pipeline] PDF generation failed, continuing without PDF', {
-          entityId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-
-      // Step 6: Store final HTML in working memory
-      try {
-        await this.working_memory_provider.add_memory_from_buffer({
-          entityNodeId: entityId,
-          name: `${storyResult.title || 'story'}.html`,
-          description: `Illustrated storybook HTML: ${storyResult.title}`,
-          contentType: 'text/html',
-          memoryType: 'file',
-          buffer: Buffer.from(finalHtml, 'utf-8'),
-          metadata: {
-            title: storyResult.title,
-            image_count: images.length,
-          },
-        });
-      } catch (err) {
-        logger.warn('[Pipeline] HTML storage failed', { entityId, error: err });
-      }
-
-      // Done!
-      await this.updateStage(storyEntity, 'completed', {
-        pdf_wm_id: pdfWmId,
-        story_result: {
-          title: storyResult.title,
-          moral: storyResult.moral,
-          age_range: storyResult.age_range,
-          html_content: '',
-          image_prompts: storyResult.image_prompts,
-        },
-        image_count: images.length,
-      });
-
-    } catch (err) {
-      await this.updateStage(storyEntity, 'error', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
-    }
-  }
-
-  /**
-   * Execute a bot entity and extract the structured output.
-   * Uses manual iteration to capture the return value (done=true),
-   * with fallback to the entity's io.output field.
-   */
-  private async runBotEntity<T>(entity: any): Promise<T> {
-    const iterator = await entity.start();
-
-    let result: any = undefined;
-    while (true) {
-      const { value, done } = await iterator.next();
-      if (done) {
-        result = value;
-        break;
-      }
-    }
-
-    // Fallback: read from entity io.output
-    if (result === undefined) {
-      const io = await this.entity_client.get_node_io(entity.id!);
-      result = (io as any)?.output;
-    }
-
-    if (result === undefined) {
-      throw new Error(`Bot execution for ${entity.id} completed but no structured output found`);
-    }
-
-    return result as T;
-  }
-
-  private async runSafetyCheck(topic: string): Promise<ContentSafetyResult> {
-    const entity = await this.entity_factory.create_entity_node({
-      app_id: this.get_app_id(),
-      name: `safety-check-${Date.now()}`,
-      specific_type_name: 'ContentSafetyCheckEntity',
-      general_type_name: 'ContentSafetyCheckEntity',
-      status: 'Pending',
-      data: { topic },
-    });
-
-    logger.info('[Pipeline] Running content safety check', { entity_id: entity.id, topic });
-    return this.runBotEntity<ContentSafetyResult>(entity);
-  }
-
-  private async runStoryWriter(topic: string): Promise<StoryResult> {
-    const entity = await this.entity_factory.create_entity_node({
-      app_id: this.get_app_id(),
-      name: `story-writer-${Date.now()}`,
-      specific_type_name: 'StoryWriterEntity',
-      general_type_name: 'StoryWriterEntity',
-      status: 'Pending',
-      data: { topic },
-    });
-
-    logger.info('[Pipeline] Running story writer', { entity_id: entity.id, topic });
-    return this.runBotEntity<StoryResult>(entity);
-  }
-
-  private async updateStage(
-    entity: any,
-    stage: string,
-    additionalData: Partial<StoryEntityData> = {},
-  ): Promise<void> {
-    try {
-      const dto = await entity.get_dto();
-      const currentData = dto.data || {};
-      const newData = { ...currentData, stage, ...additionalData };
-      await entity.update_data(newData);
-      logger.info('[Pipeline] Stage updated', { entityId: entity.id, stage });
-    } catch (err) {
-      logger.warn('[Pipeline] Failed to update stage', {
-        entityId: entity.id, stage, error: err,
-      });
-    }
-  }
-}
 ```
 
 ---
@@ -1199,38 +871,56 @@ export class IllustratedStoryAgentBundle extends FFAgentBundle<any> {
 ## What You've Built
 
 You now have:
-- An `IllustratedStoryAgentBundle` that extends `FFAgentBundle` with proper constructor arguments and service client initialization
-- Two API endpoints: `POST /api/create-story` and `GET /api/story-status`
-- A six-stage background pipeline that coordinates content safety, story writing, image generation, HTML assembly, PDF conversion, and working memory storage
-- A `runBotEntity<T>()` helper that correctly extracts structured output from bot entities using manual iteration
-- Entity state management via `updateStage()` for client-side progress polling
-- Graceful error handling that lets the pipeline continue when non-critical steps fail
-- An `index.ts` entry point using `createStandaloneAgentBundle` to wire everything up
+- A `StoryPipelineEntity` that orchestrates six stages inside a `run_impl()` generator, using `appendCall()` for child entities and `yield*` for delegation
+- Real-time progress via `createStatusEnvelope()` and polling progress via `updateEntityData()`
+- A thin `IllustratedStoryAgentBundle` with just two API endpoints and no orchestration logic
+- An updated constructor map with all three entity types
+- A consumer workflow using `ff-sdk-cli iterator run` for real-time streaming or `GET /api/story-status` for polling
+
+The final project structure:
+
+```
+apps/story-bundle/src/
++-- index.ts                     # Server entry point
++-- agent-bundle.ts              # Thin API surface (create-story, story-status)
++-- constructors.ts              # Entity registry (3 entities)
++-- schemas.ts                   # Zod schemas (safety + story output)
++-- bots/
+|   +-- ContentSafetyBot.ts      # Safety assessment bot
+|   +-- StoryWriterBot.ts        # Story generation bot
++-- entities/
+|   +-- ContentSafetyCheckEntity.ts  # Bot entity for safety check
+|   +-- StoryWriterEntity.ts         # Bot entity for story writing
+|   +-- StoryPipelineEntity.ts       # Pipeline orchestrator entity
++-- prompts/
+|   +-- ContentSafetyPrompt.ts   # Safety check prompt
+|   +-- StoryWriterPrompt.ts     # Story writer prompt
++-- services/
+    +-- image-service.ts         # Image generation and HTML assembly
+```
 
 ---
 
 ## Key Takeaways
 
-1. **`FFAgentBundle` constructor takes three arguments** -- bundle descriptor, constructor map, and entity client. The entity client is created with `createEntityClient(APPLICATION_ID)` which scopes all entity operations to your application.
+1. **Orchestration belongs in a RunnableEntity, not on the AgentBundle.** Placing pipeline logic in `run_impl()` gives you persistence in the entity graph, real-time progress via the iterator protocol, parent-child edges to child entities, and clean separation between API routing and workflow logic.
 
-2. **Override `init()` for async initialization** -- service clients that need async setup go in `init()`, not the constructor. Always call `super.init()` first. The definite assignment assertion (`!`) on private fields signals that initialization happens in `init()`.
+2. **`appendCall()` creates child entities with graph edges.** Unlike `entity_factory.create_entity_node()`, `appendCall()` records a parent-child relationship in the entity graph. This makes the pipeline's structure inspectable with `ff-eg-read node edges`.
 
-3. **`@ApiEndpoint` registers HTTP routes automatically** -- `{ method: 'POST', route: 'create-story' }` becomes `POST /api/create-story`. POST methods receive the parsed JSON body; GET methods receive the parsed query parameters.
+3. **`yield* await child.start()` delegates and extracts the return value.** The `yield*` forwards all of the child's progress envelopes to the pipeline's consumer, and the expression evaluates to the child's return value (the validated bot output). No manual iterator consumption or `runBotEntity<T>()` helpers needed.
 
-4. **Background pipelines return immediately** -- call `this.runPipeline().catch(...)` without `await` to fire-and-forget. Return the entity ID so clients can poll for progress. This keeps API response times fast regardless of pipeline duration.
+4. **`yield createStatusEnvelope('RUNNING', message)` produces consumer-visible progress.** Use it at each stage transition so consumers connected via `ff-sdk-cli iterator run` see real-time updates. Combine with `updateEntityData()` for polling-based consumers.
 
-5. **Use manual iteration for bot result extraction** -- `for await...of` loses the generator's return value. Use `iterator.next()` in a loop and check `done === true` to capture the structured output. Fall back to `entity_client.get_node_io()` if the return value is undefined.
+5. **The agent bundle should be thin.** Its job is to define API endpoints and create entities. It should not contain workflow logic, service client initialization, or multi-stage orchestration. If your bundle class is growing past 100 lines, the orchestration should probably move to an entity.
 
-6. **`specific_type_name` must match the constructor map** -- when creating entities with `entity_factory.create_entity_node()`, the `specific_type_name` must exactly match the key in your constructors map and the `@EntityMixin` decorator. This is how the framework knows which class to instantiate.
+6. **Entity data updates are for polling; status envelopes are for streaming.** Use both at each stage transition to support both consumer patterns. Entity data updates are best-effort (wrapped in try/catch) because they are not critical to the pipeline's execution.
 
-7. **Keep entity data lightweight** -- store large outputs (HTML with base64 images, PDFs) in working memory via `WorkingMemoryProvider.add_memory_from_buffer()`. Store only the working memory ID in entity data.
+7. **Services are initialized inside `run_impl()`, not in the entity constructor.** Entity constructors run on every retrieval from the graph. Deferring service initialization to `run_impl()` keeps construction lightweight and avoids unnecessary connections.
 
-8. **Wrap non-critical steps in try/catch** -- PDF generation and working memory storage are nice-to-haves. If they fail, log a warning and continue. The outer try/catch handles truly fatal errors.
-
-9. **`createStandaloneAgentBundle` bootstraps everything** -- pass it your bundle class and a port. It handles instantiation, `init()`, route registration, and HTTP server startup.
+8. **Non-critical stages should fail gracefully.** PDF generation and working memory storage are each wrapped in their own `try/catch`. The pipeline's primary output is the assembled HTML; auxiliary outputs should not cause the pipeline to fail.
 
 ---
 
 ## Next Steps
 
-In [Part 5: Testing & Deployment](./part-05-testing-and-deployment.md), you'll configure the Dockerfile, Helm values, and environment variables for production deployment. You'll run the full pipeline end-to-end using port-forwarding for local testing, verify results with `ff-sdk-cli`, `ff-eg-read`, and `ff-wm-read`, then deploy to the cluster with `ff ops build` and `ff ops deploy`.
+In [Part 5: Parallel Image Generation](./part-05-testing-and-deployment.md), you'll revisit the image generation stage to add parallelism using `HierarchicalTaskPoolRunner` and hierarchical `CapacitySource`. You'll learn how to limit concurrent image requests both per-story (3) and globally (10), feed tasks via `SourceBufferObj`, and consume `TaskProgressEnvelope` results as images complete.

@@ -372,20 +372,20 @@ The optional `onProgress` callback lets callers track generation progress withou
 onProgress?.(i + 1, total);  // e.g., onProgress(3, 5) = "3 of 5 images done"
 ```
 
-In Part 4, you'll see how the pipeline orchestrator connects this callback to `INTERNAL_UPDATE` events:
+In Part 5, this sequential method is replaced with `generateAllImagesParallel()`, which uses `HierarchicalTaskPoolRunner` to generate images concurrently with capacity limits. The pipeline entity consumes the parallel generator and yields progress envelopes as each image completes:
 
 ```typescript
-// Preview of how the orchestrator uses onProgress (covered in Part 4)
-const images = await this.imageService.generateAllImages(
-  imagePrompts,
-  (generated, total) => {
-    // This becomes an INTERNAL_UPDATE event that clients see in real time
-    emitProgress(`Generating illustrations: ${generated}/${total}`);
+// Preview: parallel image generation (covered in Part 5)
+const images: GeneratedImageResult[] = [];
+for await (const envelope of imageService.generateAllImagesParallel(prompts)) {
+  if (envelope.type === 'FINAL' && envelope.value) {
+    images.push(envelope.value);
+    yield await this.createStatusEnvelope('RUNNING', `Generated ${images.length}/${total}`);
   }
-);
+}
 ```
 
-This separation keeps the `ImageService` focused on image generation while the orchestrator handles progress reporting. The service does not know or care whether progress is displayed in a terminal, a web UI, or logged to a file.
+This separation keeps the `ImageService` focused on image generation while the orchestrator handles progress reporting.
 
 ---
 
@@ -594,4 +594,4 @@ You now have:
 
 ## Next Steps
 
-The `ImageService` is a standalone utility -- it does not know about entities, bots, or the pipeline. In [Part 4: Pipeline Orchestration & API Endpoints](./part-04-pipeline-orchestration.md), you'll wire everything together: the Content Safety Bot (Part 1), the Story Writer Bot (Part 2), the ImageService (this part), and a PDF generation step into a multi-stage pipeline. You'll build the orchestrator entity that manages the full lifecycle and expose REST endpoints for triggering stories and polling progress.
+The `ImageService` is a standalone utility -- it does not know about entities, bots, or the pipeline. In [Part 4: Pipeline Orchestration & API Endpoints](./part-04-pipeline-and-api.md), you'll wire everything together: the Content Safety Bot (Part 1), the Story Writer Bot (Part 2), the ImageService (this part), and a PDF generation step into a multi-stage pipeline. You'll build a `StoryPipelineEntity` -- a `RunnableEntity` that orchestrates the full lifecycle using `appendCall()` and `yield*` -- and expose REST endpoints for triggering stories and consuming progress via iterators.
