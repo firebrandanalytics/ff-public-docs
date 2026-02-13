@@ -533,25 +533,35 @@ export class AnimeStoryWriterPrompt extends StoryWriterPrompt {
 }
 ```
 
-The bot then selects the right prompt at the PromptGroup level:
+The bot then selects the right prompt using `DiscriminatedUnionPrompt` -- the SDK's built-in class for prompt-level variant selection:
 
 ```typescript
-// In the bot constructor, register multiple prompts in the base PromptGroup
-const prompts: Record<IllustrationStyle, StoryWriterPrompt> = {
-  'watercolor': new StoryWriterPrompt('system'),
-  'anime': new AnimeStoryWriterPrompt('system'),
-  'digital-art': new DigitalArtStoryWriterPrompt('system'),
-  // ...
-};
+import {
+  DiscriminatedUnionPrompt,
+  PromptGroup,
+} from '@firebrandanalytics/ff-agent-sdk';
 
-// The PromptGroup uses named prompts — each style gets its own name
-const baseGroup = new PromptGroup<STORY_PTH>(
-  Object.entries(prompts).map(([style, prompt]) => ({
-    name: `story_writer_${style}`,
-    prompt: prompt as any,
-  }))
+// DiscriminatedUnionPrompt evaluates a discriminator function at render time
+// and delegates to the matching prompt variant. This is the Prompt-level
+// analogue of PromptTemplateSwitchNode.
+const storyPrompt = new DiscriminatedUnionPrompt<STORY_PTH, IllustrationStyle>(
+  'system', {},
+  (request) => (request.args?.customization?.style || 'watercolor') as IllustrationStyle,
+  {
+    'watercolor': new StoryWriterPrompt('system'),
+    'anime': new AnimeStoryWriterPrompt('system'),
+    'digital-art': new DigitalArtStoryWriterPrompt('system'),
+    // ... one entry per style
+  },
 );
+
+// Add to the prompt group as a single named prompt:
+const baseGroup = new PromptGroup<STORY_PTH>([
+  { name: 'story_writer', prompt: storyPrompt },
+]);
 ```
+
+The discriminator function receives the `PromptNodeRequest` at render time (just like lambda children), evaluates which variant to use, and delegates rendering to the matched prompt. If the key is not found, it returns `undefined` (or throws in strict mode). An optional `default_case` parameter provides a fallback.
 
 The polymorphic approach has distinct advantages for complex systems:
 
@@ -567,7 +577,7 @@ The tradeoff is more code to maintain. Use this when the prompt structure genuin
 |----------|------------|
 | **Lambda children** | Values change per request but section structure stays the same. Simplest pattern -- use this by default. |
 | **SwitchNode** | Different cases need structurally different children (different count, different nodes). Good middle ground. |
-| **Polymorphic subclasses** | Entire sections differ significantly between variants. Each variant has its own testing and evolution lifecycle. Best for complex multi-variant systems. |
+| **Polymorphic subclasses** + `DiscriminatedUnionPrompt` | Entire sections differ significantly between variants. Each variant has its own testing and evolution lifecycle. `DiscriminatedUnionPrompt` handles variant selection at render time. Best for complex multi-variant systems. |
 
 The illustrated-story tutorial uses the **lambda children** approach because the section structure is identical across all styles -- only specific values (age range, illustration count, style description) change per request.
 
