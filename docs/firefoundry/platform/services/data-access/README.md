@@ -139,6 +139,7 @@ Specialized databases with their own adapters:
 
 - **[Concepts](./concepts.md)** — Core concepts: AST queries, staged queries, scratch pad, ACL model, stored definitions, data dictionary
 - **[Getting Started](./getting-started.md)** — Step-by-step tutorial from first connection to cross-database federation and building a data dictionary
+- **[FireKicks Tutorial](./firekicks-tutorial.md)** — End-to-end walkthrough using the FireKicks retail dataset: schema discovery, queries, data dictionary, tag taxonomy, and AI routing
 - **[Reference](./reference.md)** — API reference: gRPC/REST endpoints, dictionary query API, admin API, proto messages, config, env vars, error codes
 
 ## Related
