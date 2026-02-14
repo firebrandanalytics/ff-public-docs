@@ -24,6 +24,10 @@ Each guide assumes familiarity with the basic Entity-Bot-Prompt architecture cov
 
 - **[Graph Traversal](graph_traversal.md)** - Navigate entity relationships and connections through typed edges to build complex queries, find related entities, and implement graph-based workflows.
 
+### Virtual Workers
+
+- **[Virtual Worker SDK](virtual-worker-sdk.md)** - Session-first API for interacting with VWM-managed AI coding agents (Claude Code, Codex, Gemini). Covers standalone usage, entity integration with VWSessionEntity, streaming, file operations, crash recovery, and working memory bridging.
+
 ### Advanced Capabilities
 
 - **[Vector Similarity](vector-similarity-quickstart.md)** - Add semantic search capabilities to your entities with pre-computed embeddings, similarity matching, and the new gRPC broker integration for embedding generation.
