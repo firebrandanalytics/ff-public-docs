@@ -339,6 +339,181 @@ When a stored view is created or updated without an explicit `output_schema`, th
 4. Agent queries: QueryAST { from: "active_users" } → view expands transparently
 ```
 
+## Data Dictionary
+
+### What Is the Data Dictionary?
+
+The data dictionary is a semantic annotation layer that enriches raw database schema information with business meaning, usage guidance, statistics, relationships, and data quality information. While `GetSchema` tells AI agents *what tables and columns exist*, the data dictionary tells them *what those tables and columns mean, how to use them, and what to watch out for*.
+
+### Why It Matters for AI
+
+Without a data dictionary, AI agents must guess at:
+- What each column means ("Is `amt` the order total or the line item amount?")
+- Which tables to use ("Should I use `orders` or `order_history`?")
+- Valid filter values ("What are the valid `status` values?")
+- Data quality issues ("Are there nulls in `email`?")
+- How tables relate beyond explicit foreign keys
+
+The data dictionary answers these questions explicitly, reducing hallucination and improving query accuracy.
+
+### Table Annotations
+
+Each table (or stored view) can be annotated with:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `description` | TEXT | What this table contains and its purpose |
+| `businessName` | TEXT | Human-friendly name (e.g., "Customer Orders") |
+| `grain` | TEXT | What each row represents (e.g., "One row per order line item") |
+| `tags` | TEXT[] | Categorical tags for filtering and routing |
+| `statistics` | JSONB | Row count, average row size, last analyzed date |
+| `relationships` | JSONB | Semantic relationships to other tables with join hints |
+| `qualityNotes` | JSONB | Known data quality issues, completeness, freshness |
+| `usageNotes` | TEXT | When to use (and when NOT to use) this table |
+
+### Column Annotations
+
+Each column can be annotated with:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `description` | TEXT | What this column represents |
+| `businessName` | TEXT | Business-friendly name |
+| `semanticType` | TEXT | Role in queries: `identifier`, `measure`, `dimension`, `temporal`, `descriptive` |
+| `dataClassification` | TEXT | Sensitivity: `public`, `internal`, `financial`, `pii` |
+| `tags` | TEXT[] | Categorical tags |
+| `sampleValues` | TEXT[] | Example values for context |
+| `statistics` | JSONB | Min, max, avg, distinct count, null count (type-appropriate) |
+| `valuePattern` | TEXT | Natural language description of value patterns |
+| `constraints` | JSONB | Validation rules: enum values, ranges, regex patterns |
+| `relationships` | JSONB | Loose foreign keys — semantic joins without explicit FKs |
+| `qualityNotes` | JSONB | Null rates, known data issues |
+| `usageNotes` | TEXT | Query guidance (e.g., "Use `order_date`, NOT `created_at` for business reporting") |
+
+### Semantic Types
+
+Semantic types classify how a column is used in queries:
+
+| Type | Description | Example Columns |
+|------|-------------|-----------------|
+| `identifier` | Primary/foreign keys, unique IDs | `order_id`, `customer_id`, `sku` |
+| `measure` | Numeric values for aggregation | `total_amount`, `quantity`, `unit_price` |
+| `dimension` | Categorical values for grouping/filtering | `status`, `category`, `region` |
+| `temporal` | Date/time columns | `order_date`, `created_at`, `ship_date` |
+| `descriptive` | Free text, names, labels | `product_name`, `notes`, `address` |
+
+AI agents use semantic types to make better query decisions — for example, automatically applying `SUM()` to measures and `GROUP BY` to dimensions.
+
+### Data Classifications
+
+Data classifications indicate sensitivity level:
+
+| Classification | Description | Handling |
+|---------------|-------------|----------|
+| `public` | Non-sensitive business data | No restrictions |
+| `internal` | Internal-only data | May be filtered from external-facing queries |
+| `financial` | Financial data (revenue, costs, margins) | May require additional authorization |
+| `pii` | Personally identifiable information | Subject to data protection regulations |
+
+### Statistics
+
+Statistics provide quantitative metadata about data distribution:
+
+**Table statistics** (JSONB):
+```json
+{
+  "rowCount": 131072,
+  "avgRowSizeBytes": 256
+}
+```
+
+**Column statistics** (JSONB, type-appropriate):
+```json
+// Numeric column
+{ "min": 0.99, "max": 299.99, "avg": 45.67, "distinctCount": 1500, "nullCount": 0 }
+
+// String column
+{ "distinctCount": 5, "nullCount": 12, "avgLength": 8 }
+
+// Temporal column
+{ "min": "2023-01-01", "max": "2025-12-31", "distinctCount": 1096, "nullCount": 0 }
+```
+
+### Constraints
+
+Constraints define validation rules that the service can use to verify filter values before hitting the database:
+
+```json
+// Enum constraint — valid values for a status column
+{ "type": "enum", "values": ["pending", "shipped", "delivered", "cancelled", "returned"] }
+
+// Range constraint — valid numeric range
+{ "type": "range", "min": 0, "max": 999999.99 }
+
+// Regex constraint — value pattern
+{ "type": "regex", "pattern": "^[A-Z]{2}-\\d{6}$" }
+```
+
+### Relationships
+
+Relationships capture semantic joins that may not be represented by explicit database foreign keys:
+
+```json
+[
+  {
+    "targetTable": "customers",
+    "targetColumn": "customer_id",
+    "matchType": "exact",
+    "description": "Links to customer who placed the order"
+  },
+  {
+    "targetTable": "products",
+    "targetColumn": "sku",
+    "matchType": "exact",
+    "description": "Product SKU lookup — join on sku for product details"
+  }
+]
+```
+
+### Tag-Based Filtering and AI Routing
+
+Tags are the primary mechanism for controlling which tables and columns AI agents see. The dictionary query API supports tag inclusion and exclusion:
+
+- **`tags=financial,sales`** — Include annotations tagged `financial` OR `sales` (union)
+- **`excludeTags=raw,internal`** — Exclude annotations tagged `raw` OR `internal` (any match excludes)
+- Both can be combined: `tags=financial&excludeTags=pii` — financial annotations that are NOT PII
+
+**Common tag patterns:**
+
+| Tag | Purpose |
+|-----|---------|
+| `raw` | Unprocessed upstream tables (hide from AI) |
+| `curated` | Cleaned/validated views (show to AI) |
+| `financial` | Revenue, cost, and financial metrics |
+| `pii` | Contains personally identifiable information |
+| `transactional` | Order/event-level data |
+| `reference` | Lookup/dimension tables |
+| `system` | Internal system tables |
+
+**AI routing example:** When an AI agent starts a data analysis session, the application queries the dictionary with `excludeTags=raw,system,internal` to get only the curated, business-relevant tables. The AI never sees the raw upstream tables, saving tokens and preventing confusion.
+
+### Virtual Views and the Dictionary
+
+Stored views (virtual views) get their own dictionary entries, indistinguishable from real tables. This means:
+- A virtual view `monthly_revenue` has its own description, tags, grain, statistics
+- The AI sees it alongside real tables in dictionary queries
+- Tag `raw` on the base table + tag `curated` on the virtual view = AI only sees the clean version
+- The dictionary entry can document the view's business purpose without revealing its implementation
+
+### Admin vs. Query API
+
+The data dictionary has two API surfaces:
+
+- **Admin API** (`/admin/annotations/*`) — Create, update, and delete annotations. Requires admin authentication. Used by data stewards and automated enrichment processes.
+- **Query API** (`/v1/dictionary/*`) — Read-only access with tag filtering. Requires only API key authentication. Used by AI agents and applications at query time.
+
+This separation ensures that reading the dictionary is a normal data-plane operation (fast, frequent, low-privilege), while modifying it is a controlled administrative action.
+
 ## Security Model
 
 - **No inline credentials**: Admin API rejects connections with inline passwords

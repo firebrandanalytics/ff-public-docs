@@ -21,16 +21,19 @@ This is the key value proposition: **you don't change your data layer to fit the
 - **AI-curated data objects**: Stored definitions (views, UDFs, TVFs) present curated, AI-friendly abstractions over raw schemas — the AI sees meaningful business objects, not implementation details
 - **Fine-grained governance**: Table/column ACL, function blacklisting, and audit logging ensure AI agents only access what they're authorized to see
 
-### Toward a Data Catalog and Governance Platform
+### Five-Layer Knowledge Architecture
 
-The service is evolving beyond query execution into **data governance and discovery**:
+The service provides a layered knowledge architecture that goes beyond query execution into **data governance and discovery**:
 
-- **Data Catalog**: Machine-readable metadata about available connections, tables, columns, types, relationships, and business context — enabling AI agents to autonomously discover and understand data assets
-- **Data Dictionary**: Semantic annotations on tables and columns (descriptions, business meaning, sensitivity classifications, data quality indicators) that help AI agents make informed decisions about which data to use and how to interpret results
-- **Ontologies**: Formal domain models that describe entity relationships, hierarchies, and business rules — giving AI agents a structured understanding of how data concepts relate to each other across databases
-- **AI Navigation Skills**: Rather than hard-coding data knowledge into each agent, the service can host and serve **data navigation skills** — reusable knowledge packages that teach AI agents how to explore, query, and interpret specific data domains
+| Layer | Name | Status |
+|-------|------|--------|
+| 1 | **Catalog** — Schema discovery (tables, columns, types) | Implemented |
+| 2 | **Dictionary** — Semantic annotations, tags, statistics, constraints, relationships | Implemented |
+| 3 | **Ontology** — Formal domain models, entity relationships, hierarchies | Implemented |
+| 4 | **Process Models** — Business process flows, decision points, step sequences | Implemented |
+| 5 | **Scratch Pad** — Per-identity conversational state for multi-step analysis | Implemented |
 
-These capabilities complement the existing stored definitions (views/UDFs) by adding the **discovery and understanding layer** that precedes query construction: before an AI writes a query, it needs to know what data exists, what it means, and how to navigate it.
+The data dictionary (Layer 2) is particularly important for AI: it provides descriptions, business names, semantic types, data classifications, statistics, constraints, relationships, quality notes, and usage guidance — all queryable with tag-based filtering so AI agents see only the curated data they need.
 
 ## Key Features
 
@@ -41,9 +44,11 @@ These capabilities complement the existing stored definitions (views/UDFs) by ad
 - **Dialect Translation**: Automatic SQL generation handling quoting, functions, and type casting per backend
 - **Function Pass-Through + Blacklisting**: Any database-native function works; dangerous functions are blocked
 - **Table/Column ACL**: Fine-grained access control enforced by AST inspection
+- **Data Dictionary**: Semantic annotations on tables and columns — descriptions, business names, statistics, constraints, relationships, quality notes, and tag-based filtering for AI routing
 - **Stored Definitions**: Virtual views, scalar UDFs, and table-valued functions that expand at query time
 - **Credential Management**: Environment-variable-based credentials with zero-downtime rotation
-- **Admin API**: REST endpoints for connection CRUD, credential rotation, and view management
+- **Admin API**: REST endpoints for connection CRUD, credential rotation, view management, and annotation management
+- **Dictionary Query API**: Non-admin read-only access to data dictionary with tag inclusion/exclusion, semantic type, and classification filters
 - **Audit Logging**: All operations logged with identity, connection, SQL hash, and duration
 
 ## Architecture Overview
@@ -89,7 +94,10 @@ Execute pre-queries against different database connections, with results automat
 ### Scratch Pad (Phase 3A)
 Per-identity SQLite databases for persisting intermediate results. Use `save_as` on any QueryAST request to save results, then query them in subsequent requests using the `scratch:<identity>` connection.
 
-### Dictionary Integration (Phase 3)
+### Data Dictionary with Tag-Based AI Routing
+Rich semantic annotations on tables and columns — descriptions, business names, grain, statistics (JSONB), constraints, relationships, quality notes, and usage notes. The dictionary query API (`/v1/dictionary/tables`, `/v1/dictionary/columns`) supports tag inclusion/exclusion filters, semantic type filters, and data classification filters, enabling AI agents to discover only the curated data they should use.
+
+### Schema Augmentation
 Stored view definitions now appear as first-class entries in `GetSchema` responses alongside real database tables (type `stored_view`). When views are created or updated via the Admin API, a probe query (LIMIT 1) automatically infers output column types if no explicit schema is provided. Namespace visibility filtering ensures agent-scoped views are only visible to the owning agent.
 
 ### Enterprise Database Support (Phase 3D)
@@ -129,9 +137,9 @@ Specialized databases with their own adapters:
 
 ## Documentation
 
-- **[Concepts](./concepts.md)** — Core concepts: AST queries, staged queries, scratch pad, ACL model, stored definitions
-- **[Getting Started](./getting-started.md)** — Step-by-step tutorial from first connection to cross-database federation
-- **[Reference](./reference.md)** — API reference: gRPC/REST endpoints, proto messages, config files, env vars, error codes
+- **[Concepts](./concepts.md)** — Core concepts: AST queries, staged queries, scratch pad, ACL model, stored definitions, data dictionary
+- **[Getting Started](./getting-started.md)** — Step-by-step tutorial from first connection to cross-database federation and building a data dictionary
+- **[Reference](./reference.md)** — API reference: gRPC/REST endpoints, dictionary query API, admin API, proto messages, config, env vars, error codes
 
 ## Related
 
