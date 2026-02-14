@@ -983,7 +983,7 @@ You have completed the illustrated storybook tutorial series. Here are direction
 - **Add image regeneration** -- let users regenerate individual illustrations they don't like, using the entity graph to replace specific `ImageGenerationEntity` children
 - **Produce print-ready output** -- the Doc Processing service's Python worker supports image upscaling (Lanczos or Stability AI ESRGAN) and ICC profile-based CMYK colorspace conversion. You could upscale your generated illustrations to print resolution, convert them from RGB to CMYK using a FOGRA39 or SWOP profile, and assemble a print-ready PDF with bleed and trim marks
 - **Support multiple languages** -- add a language selector and modify the `StoryWriterPrompt` to generate stories in the selected language
-- **Deploy to production** -- use `ff ops build && ff ops deploy` for the bundle and Vercel/Docker for the Next.js app
+- **Deploy to production** -- use `ff ops build && ff ops deploy` for both the agent bundle and the Next.js app
 - **Build a different pipeline** -- the patterns you've learned (bot-entity separation, structured output, parallel entities, SSE streaming) apply to any multi-stage AI workflow: report generation, data analysis, content moderation, and more
 
 ---
