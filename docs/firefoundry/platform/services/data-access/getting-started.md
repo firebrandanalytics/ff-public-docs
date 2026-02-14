@@ -91,7 +91,7 @@ Response:
 
 ## 4. AST Query — Simple SELECT
 
-The same query as structured AST (database-agnostic):
+The same query as structured AST:
 
 ```bash
 curl -s -X POST "$DA_HOST/v1/connections/warehouse/query-ast" \
@@ -119,7 +119,7 @@ curl -s -X POST "$DA_HOST/v1/connections/warehouse/query-ast" \
   }' | jq
 ```
 
-The service generates the correct SQL for the target database (PostgreSQL uses `$1`, MySQL uses `?`, SQLite uses `?`).
+The service serializes the AST with the correct identifier quoting and parameter placeholders for the target database (PostgreSQL uses `$1`, MySQL uses `?`, SQLite uses `?`). SQL constructs like functions and operators are passed through to the upstream database as-is.
 
 ## 5. AST Query — JOIN and Aggregation
 

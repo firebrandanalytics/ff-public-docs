@@ -34,12 +34,14 @@ connections:
 ### Why AST?
 
 Traditional raw SQL presents challenges for AI-driven applications:
-- Different databases use different SQL dialects (quoting, functions, type casting)
 - SQL injection risks when constructing queries from AI-generated content
 - No structural validation before execution
 - Cannot enforce table/column-level access controls on raw SQL
+- Identifier quoting and parameter placeholder styles vary between databases
 
-The **AST Query API** accepts queries as structured JSON objects representing SQL SELECT statements. The service validates the structure, checks access controls at the table and column level, and generates correct SQL for the target database.
+The **AST Query API** accepts queries as structured JSON objects representing SQL SELECT statements. The service validates the structure, checks access controls at the table and column level, expands stored definitions, and serializes the AST to SQL with the correct identifier quoting and parameter placeholders for the target database.
+
+> **Important:** The AST API is not a database-agnostic query language. SQL constructs (functions, syntax, type-specific operations) are passed through to the upstream database. Agents should know what database they're targeting and use the SQL constructs that database supports. The service handles mechanical serialization concerns (quoting, parameter styles, boolean literals) but does not translate SQL syntax between databases.
 
 ### How It Works
 
@@ -48,7 +50,7 @@ The **AST Query API** accepts queries as structured JSON objects representing SQ
 3. Function blacklist is checked to block dangerous functions
 4. Stored definitions (views, UDFs, TVFs) are expanded if referenced
 5. Table/column ACL is enforced against the caller's identity
-6. SQL is generated for the specific database dialect
+6. AST is serialized to SQL with correct quoting and parameter placeholders for the target database
 7. Query is executed and results returned with column metadata
 
 ### AST Structure
@@ -75,7 +77,7 @@ A query AST is a `SelectStatement` JSON object:
 }
 ```
 
-This produces dialect-specific SQL:
+The serializer produces SQL with the correct quoting and parameter style for each backend:
 - **PostgreSQL**: `SELECT "name", COUNT(*) AS "total" FROM "users" WHERE "active" = TRUE GROUP BY "name" ORDER BY "total" DESC LIMIT 10`
 - **MySQL**: `` SELECT `name`, COUNT(*) AS `total` FROM `users` WHERE `active` = TRUE GROUP BY `name` ORDER BY `total` DESC LIMIT 10 ``
 - **SQLite**: `SELECT "name", COUNT(*) AS "total" FROM "users" WHERE "active" = 1 GROUP BY "name" ORDER BY "total" DESC LIMIT 10`
@@ -96,7 +98,7 @@ This produces dialect-specific SQL:
 | Window Functions | ROW_NUMBER, RANK, LAG/LEAD, SUM OVER, frame specs |
 | Set Operations | UNION, INTERSECT, EXCEPT (with ALL) |
 | CASE | Simple and searched CASE expressions |
-| CAST | Type conversion with dialect mapping |
+| CAST | Type conversion |
 | Functions | Any database-native function (pass-through with arity validation) |
 
 ### Who Generates ASTs?
@@ -106,22 +108,30 @@ This produces dialect-specific SQL:
 - The **Admin API** to manage connections, views, and stored definitions
 - **Raw SQL** via the Query/Execute endpoints for ad-hoc work
 
-## Dialect Translation
+## SQL Serialization
 
-The AST serializer generates correct SQL for each backend, handling:
+The service is an **unopinionated SQL gateway** — it serializes AST structures into SQL with the correct mechanical formatting for each backend, but does not attempt to translate SQL constructs between databases. Agents should know what database they're targeting and use the functions and syntax that database supports.
+
+### What the Serializer Handles
+
+The AST serializer handles per-backend differences in **mechanical formatting**:
 
 | Aspect | PostgreSQL | MySQL | SQLite | SQL Server | Oracle | Snowflake | Databricks |
 |--------|-----------|-------|--------|-----------|--------|-----------|------------|
 | Identifier quoting | `"name"` | `` `name` `` | `"name"` | `[name]` | `"name"` | `"name"` | `` `name` `` |
-| Param style | `$1` | `?` | `?` | `@p1` | `:1` | `?` | `?` |
+| Parameter placeholders | `$1` | `?` | `?` | `@p1` | `:1` | `?` | `?` |
 | Boolean literals | `TRUE`/`FALSE` | `TRUE`/`FALSE` | `1`/`0` | `1`/`0` | `1`/`0` | `TRUE`/`FALSE` | `TRUE`/`FALSE` |
 | LIMIT/OFFSET | `LIMIT n OFFSET m` | `LIMIT n OFFSET m` | `LIMIT n OFFSET m` | `TOP n` / `OFFSET FETCH` | `FETCH FIRST n ROWS` | `LIMIT n OFFSET m` | `LIMIT n OFFSET m` |
-| NULLS FIRST/LAST | Native | CASE emulation | CASE emulation | CASE emulation | CASE emulation | Native | Native |
-| Concat operator | `\|\|` | `CONCAT()` | `\|\|` | `+` | `\|\|` | `\|\|` | `CONCAT()` |
-| EXCEPT | `EXCEPT` | `EXCEPT` | `EXCEPT` | `EXCEPT` | `MINUS` | `EXCEPT` | `EXCEPT` |
-| Recursive CTEs | `WITH RECURSIVE` | `WITH RECURSIVE` | `WITH RECURSIVE` | `WITH` (no keyword) | `WITH` (no keyword) | `WITH RECURSIVE` | `WITH RECURSIVE` |
 
-Functions are passed through to the database — the service doesn't maintain a function translation table. If you call `pg_sleep()` on PostgreSQL, it works. If you call it on MySQL, the database returns an error. The blacklist blocks functions that are dangerous regardless of dialect.
+### What the Serializer Does NOT Handle
+
+The service does **not** translate SQL constructs between databases. SQL functions, operators, and syntax are passed through as-is to the upstream database:
+
+- **Functions**: If you call `pg_sleep()` on PostgreSQL, it works. If you call it on MySQL, the database returns an error. The service doesn't maintain a function translation table.
+- **Operators**: If you use `||` for string concatenation, it works on PostgreSQL and SQLite but not on SQL Server (which uses `+`). The agent should use the correct operator for the target database.
+- **Syntax**: Database-specific syntax (e.g., `FILTER` clauses on aggregates in PostgreSQL, `PIVOT` in SQL Server) is passed through — the upstream database accepts or rejects it.
+
+The function blacklist blocks functions that are dangerous regardless of backend. All other functions pass through to the database.
 
 ## Staged Queries
 
@@ -163,7 +173,7 @@ The main SQLite query can JOIN pg_users and mysql_logs as if they were local tab
 
 ### VALUES CTE Injection
 
-Results are injected as VALUES CTEs, serialized per-dialect:
+Results are injected as VALUES CTEs, formatted for each backend:
 
 - **PostgreSQL**: `WITH alias(col1,col2) AS (VALUES ($1::text,$2::integer), ...)`
 - **MySQL**: `WITH alias(col1,col2) AS (VALUES ROW(?,?), ROW(?,?), ...)`

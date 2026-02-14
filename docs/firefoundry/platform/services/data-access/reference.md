@@ -471,9 +471,9 @@ Scratch pad connections follow the pattern `scratch:<identity>`:
 
 ### Limits
 
-- No current TTL or automatic cleanup (planned for Phase 3B)
-- No cross-identity sharing (planned for Phase 3B)
-- No storage quotas (planned for Phase 3B)
+- No current TTL or automatic cleanup
+- No cross-identity sharing
+- No storage quotas
 
 ## Staged Query Execution Limits
 
