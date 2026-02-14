@@ -256,222 +256,218 @@ How customers move through segments over time.
 
 ## Loading Process Models into DAS
 
+### Create the Domain
+
+```bash
+echo '{"name":"sales","description":"Order processing, line items, and retail distribution","owner":"sales-team"}' \
+  | ff-da admin processes domains create
+```
+
 ### Create Processes
 
 ```bash
-curl -s -X POST "$DA_URL/admin/processes/processes" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "order_fulfillment",
-    "domain": "sales",
-    "description": "End-to-end order lifecycle from placement through delivery and return window",
-    "timing": {
-      "frequency": "continuous",
-      "typicalPeriod": "per-order",
-      "durationDays": 14
-    },
-    "actors": ["order_system", "warehouse", "shipping_carrier", "customer"],
-    "statusHint": "Check orders.order_status for current state: pending → processing → shipped → delivered. Cancelled is a terminal state."
-  }'
+ff-da admin processes create --file - <<'EOF'
+{
+  "name": "order_fulfillment",
+  "domain": "sales",
+  "description": "End-to-end order lifecycle from placement through delivery and return window",
+  "timing": {
+    "frequency": "continuous",
+    "typicalPeriod": "per-order",
+    "durationDays": 14
+  },
+  "actors": ["order_system", "warehouse", "shipping_carrier", "customer"],
+  "statusHint": "Check orders.order_status for current state: pending → processing → shipped → delivered. Cancelled is a terminal state."
+}
+EOF
 ```
 
 ```bash
-curl -s -X POST "$DA_URL/admin/processes/processes" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "monthly_financial_close",
-    "domain": "finance",
-    "description": "Monthly aggregation, reconciliation, and publication of financial figures",
-    "timing": {
-      "frequency": "monthly",
-      "typicalPeriod": "monthly",
-      "durationDays": 10
-    },
-    "actors": ["finance_system", "finance_team", "finance_manager"],
-    "statusHint": "Check monthly_financials for the month. If row exists and is_closed = true, the month is finalized. Otherwise figures are provisional."
-  }'
+ff-da admin processes create --file - <<'EOF'
+{
+  "name": "monthly_financial_close",
+  "domain": "finance",
+  "description": "Monthly aggregation, reconciliation, and publication of financial figures",
+  "timing": {
+    "frequency": "monthly",
+    "typicalPeriod": "monthly",
+    "durationDays": 10
+  },
+  "actors": ["finance_system", "finance_team", "finance_manager"],
+  "statusHint": "Check monthly_financials for the month. If row exists and is_closed = true, the month is finalized. Otherwise figures are provisional."
+}
+EOF
 ```
 
 ### Create Steps
 
 ```bash
-curl -s -X POST "$DA_URL/admin/processes/processes/order_fulfillment/steps" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "order_placed",
-    "processName": "order_fulfillment",
-    "domain": "sales",
-    "description": "Customer submits an order through online, retail, wholesale, or direct channel",
-    "sequence": 1,
-    "actors": ["customer", "order_system"],
-    "tribalNote": "Orders from the wholesale channel are typically bulk orders with higher quantities and negotiated pricing. Do not compare wholesale AOV with retail AOV directly.",
-    "reads": [
-      { "connection": "firekicks", "table": "products", "columns": ["product_id", "base_price", "is_active"] },
-      { "connection": "firekicks", "table": "inventory", "columns": ["stock_quantity"] }
-    ],
-    "writes": [
-      { "connection": "firekicks", "table": "orders", "columns": ["order_id", "customer_id", "order_date", "total_amount", "order_status"] },
-      { "connection": "firekicks", "table": "order_items", "columns": ["order_item_id", "order_id", "product_id", "quantity", "unit_price"] }
-    ]
-  }'
+ff-da admin processes steps create --domain sales --process order_fulfillment --file - <<'EOF'
+{
+  "name": "order_placed",
+  "processName": "order_fulfillment",
+  "domain": "sales",
+  "description": "Customer submits an order through online, retail, wholesale, or direct channel",
+  "sequence": 1,
+  "actors": ["customer", "order_system"],
+  "tribalNote": "Orders from the wholesale channel are typically bulk orders with higher quantities and negotiated pricing. Do not compare wholesale AOV with retail AOV directly.",
+  "reads": [
+    { "connection": "firekicks", "table": "products", "columns": ["product_id", "base_price", "is_active"] },
+    { "connection": "firekicks", "table": "inventory", "columns": ["stock_quantity"] }
+  ],
+  "writes": [
+    { "connection": "firekicks", "table": "orders", "columns": ["order_id", "customer_id", "order_date", "total_amount", "order_status"] },
+    { "connection": "firekicks", "table": "order_items", "columns": ["order_item_id", "order_id", "product_id", "quantity", "unit_price"] }
+  ]
+}
+EOF
 ```
 
 ```bash
-curl -s -X POST "$DA_URL/admin/processes/processes/order_fulfillment/steps" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "shipping",
-    "processName": "order_fulfillment",
-    "domain": "sales",
-    "description": "Order is handed to carrier for delivery",
-    "sequence": 4,
-    "actors": ["shipping_carrier"],
-    "tribalNote": "Three carriers: FedEx (60%), UPS (30%), USPS (10%). FedEx handles priority, USPS handles economy. on_time rates differ significantly by carrier.",
-    "reads": [
-      { "connection": "firekicks", "table": "orders", "columns": ["order_id", "shipping_method"] }
-    ],
-    "writes": [
-      { "connection": "firekicks", "table": "shipping_performance", "columns": ["order_id", "carrier", "ship_date", "promised_date", "on_time"] }
-    ]
-  }'
+ff-da admin processes steps create --domain sales --process order_fulfillment --file - <<'EOF'
+{
+  "name": "shipping",
+  "processName": "order_fulfillment",
+  "domain": "sales",
+  "description": "Order is handed to carrier for delivery",
+  "sequence": 4,
+  "actors": ["shipping_carrier"],
+  "tribalNote": "Three carriers: FedEx (60%), UPS (30%), USPS (10%). FedEx handles priority, USPS handles economy. on_time rates differ significantly by carrier.",
+  "reads": [
+    { "connection": "firekicks", "table": "orders", "columns": ["order_id", "shipping_method"] }
+  ],
+  "writes": [
+    { "connection": "firekicks", "table": "shipping_performance", "columns": ["order_id", "carrier", "ship_date", "promised_date", "on_time"] }
+  ]
+}
+EOF
 ```
 
 ### Create Business Rules
 
 ```bash
-curl -s -X POST "$DA_URL/admin/processes/rules" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "exclude_cancelled_from_revenue",
-    "domain": "sales",
-    "description": "Revenue calculations must exclude cancelled orders. Cancelled orders have been fully refunded.",
-    "ruleType": "filter",
-    "enforcement": "hard_enforced",
-    "conditions": [
-      {
-        "type": "exclude",
-        "column": "order_status",
-        "operator": "not_in",
-        "listValues": ["cancelled"],
-        "reason": "Cancelled orders are fully refunded and must never appear in revenue calculations"
-      }
-    ],
-    "appliesTo": ["orders", "order_items"],
-    "processName": "order_fulfillment"
-  }'
+ff-da admin processes rules create --file - <<'EOF'
+{
+  "name": "exclude_cancelled_from_revenue",
+  "domain": "sales",
+  "description": "Revenue calculations must exclude cancelled orders. Cancelled orders have been fully refunded.",
+  "ruleType": "filter",
+  "enforcement": "hard_enforced",
+  "conditions": [
+    {
+      "type": "exclude",
+      "column": "order_status",
+      "operator": "not_in",
+      "listValues": ["cancelled"],
+      "reason": "Cancelled orders are fully refunded and must never appear in revenue calculations"
+    }
+  ],
+  "appliesTo": ["orders", "order_items"],
+  "processName": "order_fulfillment"
+}
+EOF
 ```
 
 ```bash
-curl -s -X POST "$DA_URL/admin/processes/rules" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "use_revenue_attributed_for_roi",
-    "domain": "marketing",
-    "description": "Campaign ROI must use revenue_attributed column, not total order revenue",
-    "ruleType": "guidance",
-    "enforcement": "soft_enforced",
-    "conditions": [
-      {
-        "type": "column_preference",
-        "column": "revenue_attributed",
-        "reason": "revenue_attributed uses last-touch attribution. Using total_amount from orders would double-count revenue across campaigns."
-      }
-    ],
-    "appliesTo": ["campaign_performance", "campaign_roi_summary"],
-    "processName": "campaign_management"
-  }'
+ff-da admin processes rules create --file - <<'EOF'
+{
+  "name": "use_revenue_attributed_for_roi",
+  "domain": "marketing",
+  "description": "Campaign ROI must use revenue_attributed column, not total order revenue",
+  "ruleType": "guidance",
+  "enforcement": "soft_enforced",
+  "conditions": [
+    {
+      "type": "column_preference",
+      "column": "revenue_attributed",
+      "reason": "revenue_attributed uses last-touch attribution. Using total_amount from orders would double-count revenue across campaigns."
+    }
+  ],
+  "appliesTo": ["campaign_performance", "campaign_roi_summary"],
+  "processName": "campaign_management"
+}
+EOF
 ```
 
 ```bash
-curl -s -X POST "$DA_URL/admin/processes/rules" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "provisional_financials_warning",
-    "domain": "finance",
-    "description": "Monthly financials for the current month are provisional and may change until close is complete",
-    "ruleType": "advisory",
-    "enforcement": "advisory",
-    "conditions": [
-      {
-        "type": "temporal",
-        "reason": "Figures for the current month are provisional. Only use monthly_financials for closed months in official reports. The close process typically completes by the 10th business day of the following month."
-      }
-    ],
-    "appliesTo": ["monthly_financials"],
-    "processName": "monthly_financial_close"
-  }'
+ff-da admin processes rules create --file - <<'EOF'
+{
+  "name": "provisional_financials_warning",
+  "domain": "finance",
+  "description": "Monthly financials for the current month are provisional and may change until close is complete",
+  "ruleType": "advisory",
+  "enforcement": "advisory",
+  "conditions": [
+    {
+      "type": "temporal",
+      "reason": "Figures for the current month are provisional. Only use monthly_financials for closed months in official reports. The close process typically completes by the 10th business day of the following month."
+    }
+  ],
+  "appliesTo": ["monthly_financials"],
+  "processName": "monthly_financial_close"
+}
+EOF
 ```
 
 ### Create Annotations
 
 ```bash
-curl -s -X POST "$DA_URL/admin/processes/annotations" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "campaign_roi_lag",
-    "domain": "marketing",
-    "description": "Campaign ROI is only meaningful 30 days after campaign end date. During the campaign and shortly after, attribution is incomplete and ROI will appear artificially low.",
-    "contextTrigger": "campaign ROI",
-    "appliesTo": ["campaign_performance", "campaign_roi_summary"],
-    "importance": "high"
-  }'
+ff-da admin processes annotations create --file - <<'EOF'
+{
+  "name": "campaign_roi_lag",
+  "domain": "marketing",
+  "description": "Campaign ROI is only meaningful 30 days after campaign end date. During the campaign and shortly after, attribution is incomplete and ROI will appear artificially low.",
+  "contextTrigger": "campaign ROI",
+  "appliesTo": ["campaign_performance", "campaign_roi_summary"],
+  "importance": "high"
+}
+EOF
 ```
 
 ```bash
-curl -s -X POST "$DA_URL/admin/processes/annotations" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "segment_lag",
-    "domain": "customer",
-    "description": "Customer segment changes lag approximately 30 days behind behavioral changes. A customer who recently increased spending may still show as Bargain-Hunter until the next segment evaluation.",
-    "contextTrigger": "customer segment",
-    "appliesTo": ["customers", "customer_segments_history"],
-    "importance": "medium"
-  }'
+ff-da admin processes annotations create --file - <<'EOF'
+{
+  "name": "segment_lag",
+  "domain": "customer",
+  "description": "Customer segment changes lag approximately 30 days behind behavioral changes. A customer who recently increased spending may still show as Bargain-Hunter until the next segment evaluation.",
+  "contextTrigger": "customer segment",
+  "appliesTo": ["customers", "customer_segments_history"],
+  "importance": "medium"
+}
+EOF
 ```
 
 ```bash
-curl -s -X POST "$DA_URL/admin/processes/annotations" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "ltv_definition",
-    "domain": "customer",
-    "description": "lifetime_value is cumulative actual spending updated daily. It is NOT a predicted future value or a modeled LTV. For predictive LTV, compute it from order history.",
-    "contextTrigger": "lifetime value",
-    "appliesTo": ["customers"],
-    "importance": "high"
-  }'
+ff-da admin processes annotations create --file - <<'EOF'
+{
+  "name": "ltv_definition",
+  "domain": "customer",
+  "description": "lifetime_value is cumulative actual spending updated daily. It is NOT a predicted future value or a modeled LTV. For predictive LTV, compute it from order history.",
+  "contextTrigger": "lifetime value",
+  "appliesTo": ["customers"],
+  "importance": "high"
+}
+EOF
 ```
 
 ### Create Calendar Context
 
 ```bash
-curl -s -X POST "$DA_URL/admin/processes/calendars" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "firekicks_fiscal_calendar",
-    "domain": "finance",
-    "description": "FireKicks uses a calendar fiscal year (Jan-Dec) with standard quarters",
-    "fiscalYearStartMonth": 1,
-    "yearFormat": "CY",
-    "quarterMapping": {
-      "Q1": { "startMonth": 1, "endMonth": 3 },
-      "Q2": { "startMonth": 4, "endMonth": 6 },
-      "Q3": { "startMonth": 7, "endMonth": 9 },
-      "Q4": { "startMonth": 10, "endMonth": 12 }
-    }
-  }'
+ff-da admin processes calendars create --file - <<'EOF'
+{
+  "name": "firekicks_fiscal_calendar",
+  "domain": "finance",
+  "description": "FireKicks uses a calendar fiscal year (Jan-Dec) with standard quarters",
+  "fiscalYearStartMonth": 1,
+  "yearFormat": "CY",
+  "quarterMapping": {
+    "Q1": { "startMonth": 1, "endMonth": 3 },
+    "Q2": { "startMonth": 4, "endMonth": 6 },
+    "Q3": { "startMonth": 7, "endMonth": 9 },
+    "Q4": { "startMonth": 10, "endMonth": 12 }
+  }
+}
+EOF
 ```
 
 ### Bulk Import
@@ -479,10 +475,7 @@ curl -s -X POST "$DA_URL/admin/processes/calendars" \
 Load an entire domain's process models at once:
 
 ```bash
-curl -s -X POST "$DA_URL/admin/processes/import" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d @process-models-sales.json
+ff-da admin processes import --domain sales --file process-models-sales.json
 ```
 
 The JSON file follows the `DomainExport` structure:
@@ -501,10 +494,7 @@ The JSON file follows the `DomainExport` structure:
 ### Validate
 
 ```bash
-curl -s -X POST "$DA_URL/admin/processes/validate" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{ "domain": "sales" }'
+ff-da admin processes validate --domain sales
 ```
 
 Validation checks:

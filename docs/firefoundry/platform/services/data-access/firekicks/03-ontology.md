@@ -267,267 +267,239 @@ When terms are ambiguous, context clues and disambiguation prompts help the AI r
 ### Create Domains
 
 ```bash
-curl -s -X POST "$DA_URL/admin/ontology/domains" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "sales",
-    "description": "Order processing, line items, and retail distribution",
-    "owner": "sales-team"
-  }'
+echo '{"name":"sales","description":"Order processing, line items, and retail distribution","owner":"sales-team"}' \
+  | ff-da admin ontology domains create
 ```
 
-Repeat for `customer`, `product`, `marketing`, and `finance`.
+Repeat for `customer`, `product`, `marketing`, and `finance`:
+
+```bash
+echo '{"name":"customer","description":"Customer profiles, addresses, and preferences","owner":"customer-team"}' \
+  | ff-da admin ontology domains create
+
+echo '{"name":"product","description":"Product catalog, suppliers, and inventory","owner":"product-team"}' \
+  | ff-da admin ontology domains create
+
+echo '{"name":"marketing","description":"Campaigns, engagement, and acquisition","owner":"marketing-team"}' \
+  | ff-da admin ontology domains create
+
+echo '{"name":"finance","description":"Financial reporting and aggregations","owner":"finance-team"}' \
+  | ff-da admin ontology domains create
+```
+
+Verify:
+
+```bash
+ff-da admin ontology domains list
+```
 
 ### Create Entity Types
 
 ```bash
-curl -s -X POST "$DA_URL/admin/ontology/entity-types" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Customer",
-    "domain": "customer",
-    "description": "Individual or business that purchases FireKicks products",
-    "contextClues": ["customer", "buyer", "purchaser", "account", "segment"],
-    "isAbstract": false,
-    "disambiguationPrompt": "Customer refers to end buyers who purchase products. Not to be confused with retail partners (stores that carry FireKicks) or suppliers (manufacturers)."
-  }'
+ff-da admin ontology entity-types create --file - <<'EOF'
+{
+  "name": "Customer",
+  "domain": "customer",
+  "description": "Individual or business that purchases FireKicks products",
+  "contextClues": ["customer", "buyer", "purchaser", "account", "segment"],
+  "isAbstract": false,
+  "disambiguationPrompt": "Customer refers to end buyers who purchase products. Not to be confused with retail partners (stores that carry FireKicks) or suppliers (manufacturers)."
+}
+EOF
 ```
 
 ```bash
-curl -s -X POST "$DA_URL/admin/ontology/entity-types" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Order",
-    "domain": "sales",
-    "description": "A customer purchase transaction with one or more line items",
-    "contextClues": ["order", "purchase", "transaction", "sale", "checkout"],
-    "isAbstract": false,
-    "disambiguationPrompt": "An Order is a completed purchase transaction. Use order_date for business date filtering. total_amount is the final amount including tax and shipping."
-  }'
+ff-da admin ontology entity-types create --file - <<'EOF'
+{
+  "name": "Order",
+  "domain": "sales",
+  "description": "A customer purchase transaction with one or more line items",
+  "contextClues": ["order", "purchase", "transaction", "sale", "checkout"],
+  "isAbstract": false,
+  "disambiguationPrompt": "An Order is a completed purchase transaction. Use order_date for business date filtering. total_amount is the final amount including tax and shipping."
+}
+EOF
 ```
 
 ```bash
-curl -s -X POST "$DA_URL/admin/ontology/entity-types" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Product",
-    "domain": "product",
-    "description": "An athletic shoe product in the FireKicks catalog",
-    "contextClues": ["product", "shoe", "sneaker", "item", "SKU", "model"],
-    "isAbstract": false,
-    "disambiguationPrompt": "Product refers to items in the shoe catalog. Categories: running, basketball, casual, training, kids."
-  }'
+ff-da admin ontology entity-types create --file - <<'EOF'
+{
+  "name": "Product",
+  "domain": "product",
+  "description": "An athletic shoe product in the FireKicks catalog",
+  "contextClues": ["product", "shoe", "sneaker", "item", "SKU", "model"],
+  "isAbstract": false,
+  "disambiguationPrompt": "Product refers to items in the shoe catalog. Categories: running, basketball, casual, training, kids."
+}
+EOF
 ```
 
 ### Create Column Mappings
 
 ```bash
 # Customer ID mapping
-curl -s -X POST "$DA_URL/admin/ontology/column-mappings" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "entityType": "Customer",
-    "domain": "customer",
-    "connection": "firekicks",
-    "table": "customers",
-    "column": "customer_id",
-    "role": "id",
-    "isPrimary": true,
-    "confidence": 1.0
-  }'
+echo '{"entityType":"Customer","domain":"customer","connection":"firekicks","table":"customers","column":"customer_id","role":"id","isPrimary":true,"confidence":1.0}' \
+  | ff-da admin ontology columns create
 
 # Customer segment mapping
-curl -s -X POST "$DA_URL/admin/ontology/column-mappings" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "entityType": "Customer",
-    "domain": "customer",
-    "connection": "firekicks",
-    "table": "customers",
-    "column": "customer_segment",
-    "role": "category",
-    "isPrimary": true,
-    "confidence": 1.0
-  }'
+echo '{"entityType":"Customer","domain":"customer","connection":"firekicks","table":"customers","column":"customer_segment","role":"category","isPrimary":true,"confidence":1.0}' \
+  | ff-da admin ontology columns create
 
 # Order total amount mapping
-curl -s -X POST "$DA_URL/admin/ontology/column-mappings" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "entityType": "Order",
-    "domain": "sales",
-    "connection": "firekicks",
-    "table": "orders",
-    "column": "total_amount",
-    "role": "amount",
-    "isPrimary": true,
-    "confidence": 1.0
-  }'
+echo '{"entityType":"Order","domain":"sales","connection":"firekicks","table":"orders","column":"total_amount","role":"amount","isPrimary":true,"confidence":1.0}' \
+  | ff-da admin ontology columns create
 ```
 
 ### Create Relationships
 
 ```bash
-curl -s -X POST "$DA_URL/admin/ontology/relationships" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "fromEntity": "Customer",
-    "toEntity": "Order",
-    "verb": "places",
-    "cardinality": "1:N",
-    "joinHints": [{
-      "fromConnection": "firekicks",
-      "fromTable": "customers",
-      "fromColumn": "customer_id",
-      "toConnection": "firekicks",
-      "toTable": "orders",
-      "toColumn": "customer_id",
-      "joinType": "INNER"
-    }],
-    "confidence": 1.0
-  }'
+ff-da admin ontology relationships create --file - <<'EOF'
+{
+  "fromEntity": "Customer",
+  "toEntity": "Order",
+  "verb": "places",
+  "cardinality": "1:N",
+  "joinHints": [{
+    "fromConnection": "firekicks",
+    "fromTable": "customers",
+    "fromColumn": "customer_id",
+    "toConnection": "firekicks",
+    "toTable": "orders",
+    "toColumn": "customer_id",
+    "joinType": "INNER"
+  }],
+  "confidence": 1.0
+}
+EOF
 ```
 
 ```bash
-curl -s -X POST "$DA_URL/admin/ontology/relationships" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "fromEntity": "Order",
-    "toEntity": "OrderItem",
-    "verb": "contains",
-    "cardinality": "1:N",
-    "joinHints": [{
-      "fromConnection": "firekicks",
-      "fromTable": "orders",
-      "fromColumn": "order_id",
-      "toConnection": "firekicks",
-      "toTable": "order_items",
-      "toColumn": "order_id",
-      "joinType": "INNER"
-    }],
-    "confidence": 1.0
-  }'
+ff-da admin ontology relationships create --file - <<'EOF'
+{
+  "fromEntity": "Order",
+  "toEntity": "OrderItem",
+  "verb": "contains",
+  "cardinality": "1:N",
+  "joinHints": [{
+    "fromConnection": "firekicks",
+    "fromTable": "orders",
+    "fromColumn": "order_id",
+    "toConnection": "firekicks",
+    "toTable": "order_items",
+    "toColumn": "order_id",
+    "joinType": "INNER"
+  }],
+  "confidence": 1.0
+}
+EOF
 ```
 
 ### Create Concepts
 
 ```bash
-curl -s -X POST "$DA_URL/admin/ontology/concepts" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Revenue",
-    "domain": "sales",
-    "description": "Total income from completed (shipped or delivered) orders",
-    "calculationRule": "SUM(orders.total_amount) WHERE order_status IN ('\''shipped'\'', '\''delivered'\'')",
-    "unit": "USD",
-    "timeSensitive": true
-  }'
+ff-da admin ontology concepts create --file - <<'EOF'
+{
+  "name": "Revenue",
+  "domain": "sales",
+  "description": "Total income from completed (shipped or delivered) orders",
+  "calculationRule": "SUM(orders.total_amount) WHERE order_status IN ('shipped', 'delivered')",
+  "unit": "USD",
+  "timeSensitive": true
+}
+EOF
 ```
 
 ```bash
-curl -s -X POST "$DA_URL/admin/ontology/concepts" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Average Order Value",
-    "domain": "sales",
-    "description": "Mean order total across all completed orders",
-    "calculationRule": "AVG(orders.total_amount) WHERE order_status IN ('\''shipped'\'', '\''delivered'\'')",
-    "unit": "USD",
-    "timeSensitive": true,
-    "dependsOn": ["Revenue"]
-  }'
+ff-da admin ontology concepts create --file - <<'EOF'
+{
+  "name": "Average Order Value",
+  "domain": "sales",
+  "description": "Mean order total across all completed orders",
+  "calculationRule": "AVG(orders.total_amount) WHERE order_status IN ('shipped', 'delivered')",
+  "unit": "USD",
+  "timeSensitive": true,
+  "dependsOn": ["Revenue"]
+}
+EOF
 ```
 
 ```bash
-curl -s -X POST "$DA_URL/admin/ontology/concepts" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Campaign ROI",
-    "domain": "marketing",
-    "description": "Return on investment for marketing campaigns",
-    "calculationRule": "(SUM(campaign_performance.revenue_attributed) - SUM(campaign_performance.spend)) / SUM(campaign_performance.spend) * 100",
-    "unit": "percent",
-    "timeSensitive": true
-  }'
+ff-da admin ontology concepts create --file - <<'EOF'
+{
+  "name": "Campaign ROI",
+  "domain": "marketing",
+  "description": "Return on investment for marketing campaigns",
+  "calculationRule": "(SUM(campaign_performance.revenue_attributed) - SUM(campaign_performance.spend)) / SUM(campaign_performance.spend) * 100",
+  "unit": "percent",
+  "timeSensitive": true
+}
+EOF
 ```
 
 ### Bulk Import
 
-For larger ontologies, use the bulk import endpoint to load an entire domain at once:
+For larger ontologies, use the bulk import command to load an entire domain at once:
 
 ```bash
-curl -s -X POST "$DA_URL/admin/ontology/import" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "domain": {
-      "name": "sales",
-      "description": "Order processing, line items, and retail distribution"
+ff-da admin ontology import --domain sales --file - <<'EOF'
+{
+  "domain": {
+    "name": "sales",
+    "description": "Order processing, line items, and retail distribution"
+  },
+  "entityTypes": [
+    {
+      "name": "Order",
+      "domain": "sales",
+      "description": "A customer purchase transaction",
+      "contextClues": ["order", "purchase", "transaction", "sale"]
     },
-    "entityTypes": [
-      {
-        "name": "Order",
-        "domain": "sales",
-        "description": "A customer purchase transaction",
-        "contextClues": ["order", "purchase", "transaction", "sale"]
-      },
-      {
-        "name": "OrderItem",
-        "domain": "sales",
-        "description": "A line item within an order",
-        "contextClues": ["line item", "item", "SKU"]
-      }
-    ],
-    "columnMappings": [
-      {
-        "entityType": "Order",
-        "domain": "sales",
-        "connection": "firekicks",
-        "table": "orders",
-        "column": "order_id",
-        "role": "id",
-        "isPrimary": true,
-        "confidence": 1.0
-      }
-    ],
-    "relationships": [
-      {
-        "fromEntity": "Order",
-        "toEntity": "OrderItem",
-        "verb": "contains",
-        "cardinality": "1:N",
-        "joinHints": [{
-          "fromTable": "orders",
-          "fromColumn": "order_id",
-          "toTable": "order_items",
-          "toColumn": "order_id",
-          "joinType": "INNER"
-        }]
-      }
-    ],
-    "concepts": [
-      {
-        "name": "Revenue",
-        "domain": "sales",
-        "description": "Total income from completed orders",
-        "calculationRule": "SUM(orders.total_amount) WHERE order_status IN ('shipped', 'delivered')",
-        "unit": "USD",
-        "timeSensitive": true
-      }
-    ]
-  }'
+    {
+      "name": "OrderItem",
+      "domain": "sales",
+      "description": "A line item within an order",
+      "contextClues": ["line item", "item", "SKU"]
+    }
+  ],
+  "columnMappings": [
+    {
+      "entityType": "Order",
+      "domain": "sales",
+      "connection": "firekicks",
+      "table": "orders",
+      "column": "order_id",
+      "role": "id",
+      "isPrimary": true,
+      "confidence": 1.0
+    }
+  ],
+  "relationships": [
+    {
+      "fromEntity": "Order",
+      "toEntity": "OrderItem",
+      "verb": "contains",
+      "cardinality": "1:N",
+      "joinHints": [{
+        "fromTable": "orders",
+        "fromColumn": "order_id",
+        "toTable": "order_items",
+        "toColumn": "order_id",
+        "joinType": "INNER"
+      }]
+    }
+  ],
+  "concepts": [
+    {
+      "name": "Revenue",
+      "domain": "sales",
+      "description": "Total income from completed orders",
+      "calculationRule": "SUM(orders.total_amount) WHERE order_status IN ('shipped', 'delivered')",
+      "unit": "USD",
+      "timeSensitive": true
+    }
+  ]
+}
+EOF
 ```
 
 ### Validate
@@ -535,10 +507,7 @@ curl -s -X POST "$DA_URL/admin/ontology/import" \
 After loading, validate the ontology for consistency:
 
 ```bash
-curl -s -X POST "$DA_URL/admin/ontology/validate" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{ "domain": "sales" }'
+ff-da admin ontology validate --domain sales
 ```
 
 Response:

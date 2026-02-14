@@ -119,37 +119,64 @@ export FIREKICKS_DB_USER=fireiq_data
 export FIREKICKS_DB_PASSWORD=<your-password>
 ```
 
-> **Note:** This tutorial uses `ff-da` CLI for data-plane operations and `curl` for admin endpoints that don't have CLI support yet (ontology, process models, dictionary queries).
-
 ## Register the Connection
 
-The Data Access Service needs a connection definition to access FireKicks. Create `connections-firekicks.yaml`:
+The Data Access Service needs a connection definition to access FireKicks. The sample file is provided at [`data/firekicks-connection.json`](./data/firekicks-connection.json):
 
-```yaml
-connections:
-  - name: firekicks
-    type: postgresql
-    description: "FireKicks shoe company dataset (20 tables, ~131K orders)"
-    allow_raw_sql: true
-    config:
-      host: firebrand-ai4bi-pg.postgres.database.azure.com
-      port: 5432
-      database: firekicks
-      sslMode: require
-    credentials:
-      method: env
-      envMappings:
-        username: FIREKICKS_DB_USER
-        password: FIREKICKS_DB_PASSWORD
-    pool:
-      maxOpen: 5        # Max simultaneous connections
-      maxIdle: 2        # Connections kept warm
-      maxLifetime: 300s  # Recycle connections after 5 minutes
-    limits:
-      maxRows: 10000         # Max rows per response
-      maxBytes: 10485760     # 10MB max response size
-      queryTimeout: 30s      # Per-query timeout
-      requestsPerMinute: 100 # Rate limit
+```json
+{
+  "name": "firekicks",
+  "type": "postgresql",
+  "description": "FireKicks shoe company dataset (20 tables, ~131K orders)",
+  "allow_raw_sql": true,
+  "config": {
+    "host": "firebrand-ai4bi-pg.postgres.database.azure.com",
+    "port": 5432,
+    "database": "firekicks",
+    "sslMode": "require"
+  },
+  "credentials": {
+    "method": "env",
+    "envMappings": {
+      "username": "FIREKICKS_DB_USER",
+      "password": "FIREKICKS_DB_PASSWORD"
+    }
+  },
+  "pool": {
+    "maxOpen": 5,
+    "maxIdle": 2,
+    "maxLifetime": "300s"
+  },
+  "limits": {
+    "maxRows": 10000,
+    "maxBytes": 10485760,
+    "queryTimeout": "30s",
+    "requestsPerMinute": 100
+  }
+}
+```
+
+Upload it via the admin API:
+
+```bash
+ff-da admin connections create --file data/firekicks-connection.json
+```
+
+```
+Connection created successfully.
+  Name: firekicks
+```
+
+Verify and test the connection:
+
+```bash
+ff-da admin connections test --name firekicks
+```
+
+```
+Connection: firekicks
+Status:     ok
+Duration:   45ms
 ```
 
 Key configuration decisions:
@@ -161,32 +188,42 @@ Key configuration decisions:
 
 ## Configure Access Control
 
-Create `acl-firekicks.yaml` to control who can access what:
+Access control is defined in [`data/firekicks-acl.json`](./data/firekicks-acl.json):
 
-```yaml
-acl:
-  - identity: "user:admin"
-    connections: ["*"]
-    allow_raw_sql: true
-  - identity: "app:query-explainer"
-    connections: ["firekicks"]
-    allow_raw_sql: false
-
-function_blacklist:
-  global:
-    - pg_sleep
-    - pg_terminate_backend
-    - pg_cancel_backend
-    - lo_import
-    - lo_export
-    - pg_read_file
-    - pg_read_binary_file
-    - pg_ls_dir
-    - pg_stat_file
-    - dblink
-    - dblink_exec
-    - pg_advisory_lock
+```json
+{
+  "acl": [
+    {
+      "identity": "user:admin",
+      "connections": ["*"],
+      "allow_raw_sql": true
+    },
+    {
+      "identity": "app:query-explainer",
+      "connections": ["firekicks"],
+      "allow_raw_sql": false
+    }
+  ],
+  "function_blacklist": {
+    "global": [
+      "pg_sleep",
+      "pg_terminate_backend",
+      "pg_cancel_backend",
+      "lo_import",
+      "lo_export",
+      "pg_read_file",
+      "pg_read_binary_file",
+      "pg_ls_dir",
+      "pg_stat_file",
+      "dblink",
+      "dblink_exec",
+      "pg_advisory_lock"
+    ]
+  }
+}
 ```
+
+> **Note:** ACL configuration is loaded by the Data Access Service at startup. Place the file in the service's config directory or pass it via the `--acl-config` flag.
 
 The ACL defines two identities:
 
