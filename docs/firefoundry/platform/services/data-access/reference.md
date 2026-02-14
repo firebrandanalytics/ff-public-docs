@@ -141,6 +141,131 @@ message StagedQueryTranslation {
 
 Stored views are automatically included in schema responses when they match the requested connection and are visible to the caller's identity scope.
 
+## Dictionary Query API
+
+The dictionary query API provides read-only access to data dictionary annotations with tag-based filtering. These are **non-admin endpoints** — they require only API key authentication (same as data-plane), not admin auth.
+
+### Authentication
+
+Dictionary query requests require:
+- **API Key**: Via `X-Api-Key` header
+
+No caller identity (`X-On-Behalf-Of`) is required for dictionary queries.
+
+### Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/v1/dictionary/tables` | List table annotations with optional filtering |
+| GET | `/v1/dictionary/columns` | List column annotations with optional filtering |
+
+### GET /v1/dictionary/tables
+
+Query parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `connection` | string | Filter by connection name |
+| `tags` | string | Comma-separated tag inclusion filter (OR semantics) |
+| `excludeTags` | string | Comma-separated tag exclusion filter (any match excludes) |
+
+Response:
+```json
+{
+  "tables": [
+    {
+      "connection": "firekicks",
+      "schema": "public",
+      "table": "orders",
+      "description": "Customer orders with shipping and payment details",
+      "businessName": "Customer Orders",
+      "grain": "One row per order",
+      "tags": ["transactional", "sales", "financial"],
+      "statistics": { "rowCount": 131072, "avgRowSizeBytes": 256 },
+      "relationships": [
+        { "targetTable": "customers", "targetColumn": "customer_id", "joinColumn": "customer_id", "type": "many-to-one" }
+      ],
+      "qualityNotes": { "completeness": "All required fields populated" },
+      "usageNotes": "Primary table for order analysis. Use order_date for business date filtering.",
+      "updatedAt": "2026-02-14T12:00:00Z",
+      "updatedBy": "data-steward"
+    }
+  ],
+  "total": 1,
+  "filters": {
+    "connection": "firekicks",
+    "tags": [],
+    "excludeTags": []
+  }
+}
+```
+
+### GET /v1/dictionary/columns
+
+Query parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `connection` | string | Filter by connection name |
+| `table` | string | Filter by table name |
+| `tags` | string | Comma-separated tag inclusion filter (OR semantics) |
+| `excludeTags` | string | Comma-separated tag exclusion filter (any match excludes) |
+| `semanticType` | string | Filter by semantic type: `identifier`, `measure`, `dimension`, `temporal`, `descriptive` |
+| `dataClassification` | string | Filter by classification: `public`, `internal`, `financial`, `pii` |
+
+Response:
+```json
+{
+  "columns": [
+    {
+      "connection": "firekicks",
+      "schema": "public",
+      "table": "orders",
+      "column": "total_amount",
+      "description": "Total order amount including tax and shipping",
+      "businessName": "Order Total",
+      "semanticType": "measure",
+      "dataClassification": "financial",
+      "tags": ["financial", "sales"],
+      "sampleValues": ["29.99", "149.50", "299.00"],
+      "statistics": { "min": 9.99, "max": 999.99, "avg": 89.45, "distinctCount": 4500, "nullCount": 0 },
+      "valuePattern": "Decimal USD amount, typically 9.99 to 999.99",
+      "constraints": { "type": "range", "min": 0, "max": 999999.99 },
+      "relationships": [],
+      "qualityNotes": null,
+      "usageNotes": "Use for revenue calculations. Includes tax and shipping.",
+      "updatedAt": "2026-02-14T12:00:00Z",
+      "updatedBy": "data-steward"
+    }
+  ],
+  "total": 1,
+  "filters": {
+    "connection": "firekicks",
+    "table": "",
+    "tags": [],
+    "excludeTags": [],
+    "semanticType": "",
+    "dataClassification": ""
+  }
+}
+```
+
+### Filtering Examples
+
+```bash
+# All tables for a connection
+curl -s -H "X-Api-Key: $API_KEY" "$DA_HOST/v1/dictionary/tables?connection=warehouse"
+
+# Tables tagged "financial" but NOT "raw"
+curl -s -H "X-Api-Key: $API_KEY" "$DA_HOST/v1/dictionary/tables?connection=warehouse&tags=financial&excludeTags=raw"
+
+# All PII columns
+curl -s -H "X-Api-Key: $API_KEY" "$DA_HOST/v1/dictionary/columns?connection=warehouse&dataClassification=pii"
+
+# Measure columns for a specific table, excluding PII
+curl -s -H "X-Api-Key: $API_KEY" "$DA_HOST/v1/dictionary/columns?connection=warehouse&table=orders&semanticType=measure&excludeTags=pii"
+```
+
 ## Admin API
 
 ### Connection Management
@@ -164,6 +289,66 @@ Stored views are automatically included in schema responses when they match the 
 | GET | `/admin/views/{namespace}/{name}` | Get view with AST |
 | PUT | `/admin/views/{namespace}/{name}` | Update view |
 | DELETE | `/admin/views/{namespace}/{name}` | Delete view |
+
+### Annotation Management (Data Dictionary)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/annotations/tables` | List all table annotations |
+| POST | `/admin/annotations/tables` | Create/update a table annotation |
+| POST | `/admin/annotations/tables/bulk` | Bulk upsert table annotations |
+| DELETE | `/admin/annotations/tables/{connection}/{schema}/{table}` | Delete a table annotation |
+| GET | `/admin/annotations/columns` | List all column annotations |
+| POST | `/admin/annotations/columns` | Create/update a column annotation |
+| POST | `/admin/annotations/columns/bulk` | Bulk upsert column annotations |
+| DELETE | `/admin/annotations/columns/{connection}/{schema}/{table}/{column}` | Delete a column annotation |
+| POST | `/admin/annotations/import` | Import annotations from JSON |
+| GET | `/admin/annotations/export` | Export all annotations as JSON |
+
+### Table Annotation Body
+
+```json
+{
+  "connection": "warehouse",
+  "schema": "public",
+  "table": "orders",
+  "description": "Customer orders with shipping and payment details",
+  "businessName": "Customer Orders",
+  "grain": "One row per order",
+  "tags": ["transactional", "sales", "financial"],
+  "statistics": { "rowCount": 131072, "avgRowSizeBytes": 256 },
+  "relationships": [
+    { "targetTable": "customers", "targetColumn": "customer_id", "joinColumn": "customer_id", "type": "many-to-one" }
+  ],
+  "qualityNotes": { "completeness": "All required fields populated" },
+  "usageNotes": "Primary table for order analysis."
+}
+```
+
+### Column Annotation Body
+
+```json
+{
+  "connection": "warehouse",
+  "schema": "public",
+  "table": "orders",
+  "column": "total_amount",
+  "description": "Total order amount including tax and shipping",
+  "businessName": "Order Total",
+  "semanticType": "measure",
+  "dataClassification": "financial",
+  "tags": ["financial", "sales"],
+  "sampleValues": ["29.99", "149.50"],
+  "statistics": { "min": 9.99, "max": 999.99, "avg": 89.45, "distinctCount": 4500, "nullCount": 0 },
+  "valuePattern": "Decimal USD amount, typically 9.99 to 999.99",
+  "constraints": { "type": "range", "min": 0, "max": 999999.99 },
+  "relationships": [
+    { "targetTable": "products", "targetColumn": "sku", "matchType": "exact", "description": "Product lookup" }
+  ],
+  "qualityNotes": { "nullRate": 0, "notes": "No quality issues" },
+  "usageNotes": "Use for revenue calculations."
+}
+```
 
 ### Credential Methods
 
@@ -258,6 +443,12 @@ function_blacklist:
 | `ACL_FILE` | `configs/acl.yaml` | ACL rules file |
 | `API_KEY` | `dev-api-key` | API key for authentication |
 | `VIEWS_FILE` | — | Optional stored definitions file |
+| `ANNOTATIONS_FILE` | — | Optional annotations file (JSON seed for data dictionary) |
+| `PG_HOST` | — | FireFoundry PostgreSQL host (enables PG persistence for views, annotations, connections) |
+| `PG_PORT` | `5432` | FireFoundry PostgreSQL port |
+| `PG_PASSWORD` | — | Password for `fireread` user (read-only operations) |
+| `PG_INSERT_PASSWORD` | — | Password for `fireinsert` user (write operations) |
+| `PG_DATABASE` | `ff_int_dev_clone` | FireFoundry PostgreSQL database name |
 | `SCRATCH_DIR` | `/tmp/data-access-scratch` | Directory for scratch pad SQLite databases |
 | `LOG_LEVEL` | `info` | Logging level (`info` or `debug`) |
 | `ENABLE_REFLECTION` | `false` | Enable gRPC reflection |
