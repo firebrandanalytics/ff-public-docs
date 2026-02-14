@@ -193,75 +193,68 @@ Here's how FireKicks tables map to tags:
 
 ## Load Table Annotations
 
-With the design complete, load annotations into DAS. Set up the HTTP variables:
-
-```bash
-export DA_URL=http://localhost:8080
-export API_KEY=dev-api-key
-```
+With the design complete, load annotations into DAS using the `ff-da` CLI.
 
 ### Annotate the Orders Table
 
 ```bash
-curl -s -X POST "$DA_URL/admin/annotations/tables" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "connection": "firekicks",
-    "table": "orders",
-    "description": "Customer purchase orders across all sales channels. Each order has a customer, channel, and financial totals (subtotal, tax, shipping, discount, total). ~131,000 orders from 2022-2025.",
-    "businessName": "Customer Orders",
-    "grain": "One row per order",
-    "tags": ["sales", "transactional"],
-    "statistics": { "rowCount": 131072, "avgRowSizeBytes": 200 },
-    "relationships": [
-      {
-        "targetTable": "customers",
-        "type": "child",
-        "joinHint": "orders.customer_id = customers.customer_id",
-        "description": "Each order belongs to one customer"
-      },
-      {
-        "targetTable": "order_items",
-        "type": "parent",
-        "joinHint": "orders.order_id = order_items.order_id",
-        "description": "Each order has 1-5 line items"
-      },
-      {
-        "targetTable": "shipping_performance",
-        "type": "parent",
-        "joinHint": "orders.order_id = shipping_performance.order_id",
-        "description": "One shipment tracking record per order"
-      }
-    ],
-    "qualityNotes": {
-      "completeness": "100%",
-      "knownIssues": ["retail_partner_id is NULL for ~65% of orders (expected for non-retail channels)"]
+ff-da admin annotations create-table --file - <<'EOF'
+{
+  "connection": "firekicks",
+  "table": "orders",
+  "description": "Customer purchase orders across all sales channels. Each order has a customer, channel, and financial totals (subtotal, tax, shipping, discount, total). ~131,000 orders from 2022-2025.",
+  "businessName": "Customer Orders",
+  "grain": "One row per order",
+  "tags": ["sales", "transactional"],
+  "statistics": { "rowCount": 131072, "avgRowSizeBytes": 200 },
+  "relationships": [
+    {
+      "targetTable": "customers",
+      "type": "child",
+      "joinHint": "orders.customer_id = customers.customer_id",
+      "description": "Each order belongs to one customer"
     },
-    "usageNotes": "Primary fact table for sales analysis. Use order_date for business date filtering, NOT created_at (which is the system timestamp). total_amount includes tax and shipping. For line-item detail, join to order_items."
-  }'
+    {
+      "targetTable": "order_items",
+      "type": "parent",
+      "joinHint": "orders.order_id = order_items.order_id",
+      "description": "Each order has 1-5 line items"
+    },
+    {
+      "targetTable": "shipping_performance",
+      "type": "parent",
+      "joinHint": "orders.order_id = shipping_performance.order_id",
+      "description": "One shipment tracking record per order"
+    }
+  ],
+  "qualityNotes": {
+    "completeness": "100%",
+    "knownIssues": ["retail_partner_id is NULL for ~65% of orders (expected for non-retail channels)"]
+  },
+  "usageNotes": "Primary fact table for sales analysis. Use order_date for business date filtering, NOT created_at (which is the system timestamp). total_amount includes tax and shipping. For line-item detail, join to order_items."
+}
+EOF
 ```
 
 ### Annotate the Customers Table
 
 ```bash
-curl -s -X POST "$DA_URL/admin/annotations/tables" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "connection": "firekicks",
-    "table": "customers",
-    "description": "Customer master data with demographics, segmentation, and lifetime value. ~10,000 customers segmented into Premium, Athlete, Regular, and Bargain-Hunter tiers.",
-    "businessName": "Customer Profiles",
-    "grain": "One row per customer",
-    "tags": ["customer", "master-data"],
-    "statistics": { "rowCount": 10000, "avgRowSizeBytes": 320 },
-    "qualityNotes": {
-      "completeness": "99%",
-      "knownIssues": ["phone is nullable, ~30% null"]
-    },
-    "usageNotes": "Primary customer dimension. Use customer_segment for tier analysis. lifetime_value is cumulative actual spending, not a prediction. For nearest-store analysis, use the customer_nearest_store view."
-  }'
+ff-da admin annotations create-table --file - <<'EOF'
+{
+  "connection": "firekicks",
+  "table": "customers",
+  "description": "Customer master data with demographics, segmentation, and lifetime value. ~10,000 customers segmented into Premium, Athlete, Regular, and Bargain-Hunter tiers.",
+  "businessName": "Customer Profiles",
+  "grain": "One row per customer",
+  "tags": ["customer", "master-data"],
+  "statistics": { "rowCount": 10000, "avgRowSizeBytes": 320 },
+  "qualityNotes": {
+    "completeness": "99%",
+    "knownIssues": ["phone is nullable, ~30% null"]
+  },
+  "usageNotes": "Primary customer dimension. Use customer_segment for tier analysis. lifetime_value is cumulative actual spending, not a prediction. For nearest-store analysis, use the customer_nearest_store view."
+}
+EOF
 ```
 
 ## Load Column Annotations
@@ -271,107 +264,102 @@ Column annotations add semantic meaning to individual fields. Here are the key c
 ### Identifier Column
 
 ```bash
-curl -s -X POST "$DA_URL/admin/annotations/columns" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "connection": "firekicks",
-    "table": "orders",
-    "column": "order_id",
-    "description": "Unique order identifier (auto-increment integer)",
-    "businessName": "Order ID",
-    "semanticType": "identifier",
-    "dataClassification": "public",
-    "tags": ["sales"],
-    "statistics": { "distinctCount": 131072, "nullCount": 0 }
-  }'
+ff-da admin annotations create-column --file - <<'EOF'
+{
+  "connection": "firekicks",
+  "table": "orders",
+  "column": "order_id",
+  "description": "Unique order identifier (auto-increment integer)",
+  "businessName": "Order ID",
+  "semanticType": "identifier",
+  "dataClassification": "public",
+  "tags": ["sales"],
+  "statistics": { "distinctCount": 131072, "nullCount": 0 }
+}
+EOF
 ```
 
 ### Measure Column (Financial)
 
 ```bash
-curl -s -X POST "$DA_URL/admin/annotations/columns" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "connection": "firekicks",
-    "table": "orders",
-    "column": "total_amount",
-    "description": "Final order total including subtotal, tax, shipping, minus discounts. This is the revenue figure for financial reporting.",
-    "businessName": "Order Total",
-    "semanticType": "measure",
-    "dataClassification": "financial",
-    "tags": ["sales", "financial"],
-    "sampleValues": ["29.99", "149.50", "299.00"],
-    "statistics": { "min": 9.99, "max": 999.99, "avg": 89.45, "nullCount": 0 },
-    "valuePattern": "Decimal USD amount, typically 9.99 to 999.99",
-    "usageNotes": "Use for revenue calculations. Includes tax and shipping. For subtotal only, use the subtotal column."
-  }'
+ff-da admin annotations create-column --file - <<'EOF'
+{
+  "connection": "firekicks",
+  "table": "orders",
+  "column": "total_amount",
+  "description": "Final order total including subtotal, tax, shipping, minus discounts. This is the revenue figure for financial reporting.",
+  "businessName": "Order Total",
+  "semanticType": "measure",
+  "dataClassification": "financial",
+  "tags": ["sales", "financial"],
+  "sampleValues": ["29.99", "149.50", "299.00"],
+  "statistics": { "min": 9.99, "max": 999.99, "avg": 89.45, "nullCount": 0 },
+  "valuePattern": "Decimal USD amount, typically 9.99 to 999.99",
+  "usageNotes": "Use for revenue calculations. Includes tax and shipping. For subtotal only, use the subtotal column."
+}
+EOF
 ```
 
 ### Temporal Column
 
 ```bash
-curl -s -X POST "$DA_URL/admin/annotations/columns" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "connection": "firekicks",
-    "table": "orders",
-    "column": "order_date",
-    "description": "Business date when the order was placed. Use this for all date-based analysis and reporting.",
-    "businessName": "Order Date",
-    "semanticType": "temporal",
-    "dataClassification": "public",
-    "tags": ["sales", "temporal"],
-    "statistics": { "min": "2022-01-01", "max": "2025-12-31", "distinctCount": 1461, "nullCount": 0 },
-    "usageNotes": "Use order_date for business reporting. Do NOT use created_at — that is a system timestamp and may differ from the business date."
-  }'
+ff-da admin annotations create-column --file - <<'EOF'
+{
+  "connection": "firekicks",
+  "table": "orders",
+  "column": "order_date",
+  "description": "Business date when the order was placed. Use this for all date-based analysis and reporting.",
+  "businessName": "Order Date",
+  "semanticType": "temporal",
+  "dataClassification": "public",
+  "tags": ["sales", "temporal"],
+  "statistics": { "min": "2022-01-01", "max": "2025-12-31", "distinctCount": 1461, "nullCount": 0 },
+  "usageNotes": "Use order_date for business reporting. Do NOT use created_at — that is a system timestamp and may differ from the business date."
+}
+EOF
 ```
 
 ### Dimension Column with Constraints
 
 ```bash
-curl -s -X POST "$DA_URL/admin/annotations/columns" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "connection": "firekicks",
-    "table": "orders",
-    "column": "order_status",
-    "description": "Current order fulfillment status",
-    "businessName": "Order Status",
-    "semanticType": "dimension",
-    "dataClassification": "public",
-    "tags": ["sales"],
-    "sampleValues": ["shipped", "delivered", "pending"],
-    "statistics": { "distinctCount": 5, "nullCount": 0 },
-    "constraints": {
-      "type": "enum",
-      "values": ["pending", "processing", "shipped", "delivered", "cancelled"]
-    },
-    "usageNotes": "Filter to shipped+delivered for revenue reports. Use pending+processing for pipeline analysis. Cancelled orders should be excluded from financial aggregations."
-  }'
+ff-da admin annotations create-column --file - <<'EOF'
+{
+  "connection": "firekicks",
+  "table": "orders",
+  "column": "order_status",
+  "description": "Current order fulfillment status",
+  "businessName": "Order Status",
+  "semanticType": "dimension",
+  "dataClassification": "public",
+  "tags": ["sales"],
+  "sampleValues": ["shipped", "delivered", "pending"],
+  "statistics": { "distinctCount": 5, "nullCount": 0 },
+  "constraints": {
+    "type": "enum",
+    "values": ["pending", "processing", "shipped", "delivered", "cancelled"]
+  },
+  "usageNotes": "Filter to shipped+delivered for revenue reports. Use pending+processing for pipeline analysis. Cancelled orders should be excluded from financial aggregations."
+}
+EOF
 ```
 
 ### PII Column
 
 ```bash
-curl -s -X POST "$DA_URL/admin/annotations/columns" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "connection": "firekicks",
-    "table": "customers",
-    "column": "email",
-    "description": "Customer email address used for account login and marketing communications",
-    "businessName": "Email Address",
-    "semanticType": "identifier",
-    "dataClassification": "pii",
-    "tags": ["customer", "pii"],
-    "statistics": { "distinctCount": 10000, "nullCount": 0 },
-    "valuePattern": "Standard email format (user@domain.com)"
-  }'
+ff-da admin annotations create-column --file - <<'EOF'
+{
+  "connection": "firekicks",
+  "table": "customers",
+  "column": "email",
+  "description": "Customer email address used for account login and marketing communications",
+  "businessName": "Email Address",
+  "semanticType": "identifier",
+  "dataClassification": "pii",
+  "tags": ["customer", "pii"],
+  "statistics": { "distinctCount": 10000, "nullCount": 0 },
+  "valuePattern": "Standard email format (user@domain.com)"
+}
+EOF
 ```
 
 ## Statistics
@@ -461,13 +449,10 @@ These notes are the dictionary's most valuable field for AI — they encode the 
 
 ## Bulk Import
 
-For the full FireKicks dataset with 23 tables and 189 columns, use the bulk import endpoint:
+For the full FireKicks dataset with 23 tables and 189 columns, use the bulk import command with the provided sample file at [`data/annotations-firekicks.json`](./data/annotations-firekicks.json):
 
 ```bash
-curl -s -X POST "$DA_URL/admin/annotations/import" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d @configs/annotations-firekicks.json
+ff-da admin annotations import --file data/annotations-firekicks.json
 ```
 
 The JSON file contains both table and column annotations:
@@ -501,27 +486,37 @@ The JSON file contains both table and column annotations:
 }
 ```
 
-The FireKicks dataset ships with a complete annotation file at `configs/annotations-firekicks.json` in the DAS repository.
+The complete annotation file with all 23 tables and 189 columns is included in the [`data/`](./data/) directory of this tutorial.
 
 ## Query the Dictionary
 
-Once annotations are loaded, query them using the dictionary API. This is the API that AI agents call at query time to discover what data is available.
+Once annotations are loaded, query them using the `ff-da dictionary` commands. This is the API that AI agents call at query time to discover what data is available.
 
 ### All Tables for a Connection
 
 ```bash
-curl -s -H "X-Api-Key: $API_KEY" \
-  "$DA_URL/v1/dictionary/tables?connection=firekicks" \
-  | jq '.tables[] | {table, businessName, grain}'
+ff-da dictionary tables --connection firekicks
+```
+
+```
+TABLE                    BUSINESS NAME                GRAIN
+orders                   Customer Orders              One row per order
+customers                Customer Profiles            One row per customer
+products                 Product Catalog              One row per product
+...
+```
+
+For full JSON output:
+
+```bash
+ff-da dictionary tables --connection firekicks --format json
 ```
 
 ### Filter by Domain
 
 ```bash
 # Sales tables only
-curl -s -H "X-Api-Key: $API_KEY" \
-  "$DA_URL/v1/dictionary/tables?connection=firekicks&tags=sales" \
-  | jq '.tables[] | .table'
+ff-da dictionary tables --connection firekicks --tags sales
 ```
 
 Returns: `orders`, `order_items`, `retail_partners`, `daily_sales_summary`
@@ -529,9 +524,7 @@ Returns: `orders`, `order_items`, `retail_partners`, `daily_sales_summary`
 ### Financial Data Without PII
 
 ```bash
-curl -s -H "X-Api-Key: $API_KEY" \
-  "$DA_URL/v1/dictionary/columns?connection=firekicks&tags=financial&excludeTags=pii" \
-  | jq '.columns[] | {table, column, semanticType}'
+ff-da dictionary columns --connection firekicks --tags financial --exclude-tags pii
 ```
 
 Returns financial columns like `subtotal`, `tax_amount`, `total_amount`, `discount_amount` — but excludes any PII-tagged columns.
@@ -539,9 +532,7 @@ Returns financial columns like `subtotal`, `tax_amount`, `total_amount`, `discou
 ### All Measure Columns
 
 ```bash
-curl -s -H "X-Api-Key: $API_KEY" \
-  "$DA_URL/v1/dictionary/columns?connection=firekicks&semanticType=measure" \
-  | jq '.columns[] | {table, column, description}'
+ff-da dictionary columns --connection firekicks --semantic-type measure
 ```
 
 Returns every numeric column meant for aggregation across the entire dataset.
@@ -549,9 +540,7 @@ Returns every numeric column meant for aggregation across the entire dataset.
 ### All PII Columns (Compliance)
 
 ```bash
-curl -s -H "X-Api-Key: $API_KEY" \
-  "$DA_URL/v1/dictionary/columns?connection=firekicks&dataClassification=pii" \
-  | jq '.columns[] | {table, column, description}'
+ff-da dictionary columns --connection firekicks --data-classification pii
 ```
 
 Useful for data governance audits — shows exactly which columns contain personally identifiable information.
@@ -568,8 +557,7 @@ Use tags to control visibility. Tag raw tables, create curated views (covered in
 
 ```bash
 # Agent only sees curated, AI-ready tables
-curl -s -H "X-Api-Key: $API_KEY" \
-  "$DA_URL/v1/dictionary/tables?connection=firekicks&excludeTags=raw"
+ff-da dictionary tables --connection firekicks --exclude-tags raw
 ```
 
 ### Token Economics

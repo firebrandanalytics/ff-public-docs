@@ -43,6 +43,81 @@ A well-designed stored definition should be:
 - **Scalar UDF** — When a calculation appears in multiple views or queries. Avoids duplicating formulas.
 - **TVF** — When the query needs a parameter (customer ID, date range) to be useful. More flexible than a view but requires the caller to provide arguments.
 
+## Reshaping: Renaming and Computed Columns
+
+The most common use of stored definitions isn't joins or aggregation — it's **simple reshaping**. Enterprise databases are full of tables with confusing column names, legacy abbreviations, and values that require multi-column expressions to interpret. A stored view can fix this without touching the upstream database.
+
+### Column Renaming
+
+Upstream tables often have names that made sense to the DBA but confuse everyone else:
+
+```
+cust_seg_cd  →  customer_segment
+ord_dt       →  order_date
+tot_amt      →  total_amount
+shp_mthd_cd  →  shipping_method
+rtl_prtnr_id →  retail_partner_id
+```
+
+A view that simply renames columns gives AI agents (and humans) an immediately understandable data surface. No joins, no aggregation — just semantic clarity.
+
+### Computed Columns
+
+Sometimes the information an AI needs isn't stored directly but requires combining or transforming existing columns:
+
+- **Status flags**: `CASE WHEN ship_date IS NOT NULL AND delivered_date IS NULL THEN 'in_transit' ... END AS delivery_status`
+- **Derived categories**: `CASE WHEN total_amount > 200 THEN 'high_value' WHEN total_amount > 50 THEN 'mid_value' ELSE 'low_value' END AS order_tier`
+- **Formatted values**: `first_name || ' ' || last_name AS full_name`
+- **Business logic**: `total_amount - subtotal AS tax_and_shipping`
+- **Time-based**: `EXTRACT(YEAR FROM order_date) || '-Q' || EXTRACT(QUARTER FROM order_date) AS fiscal_quarter`
+
+Without these computed columns, an AI agent must reconstruct the business logic inline in every query — and likely gets it wrong. A view encodes the calculation once.
+
+### When Reshaping Matters Most
+
+The FireKicks dataset has relatively clean, well-named columns, so reshaping is less critical here. But in enterprise environments, reshaping is often the *primary* value of stored definitions:
+
+- **Legacy systems** with abbreviated column names (`ACT_CUST_DTL_MTD_AMT`)
+- **ERP exports** with generic field names (`FIELD1`, `FIELD2`, `CUSTOM_ATTR_17`)
+- **Data warehouses** with staging-layer naming conventions (`stg_fact_sales_line_item_amount_usd`)
+- **Multi-source schemas** where the same concept has different names across systems
+
+In these cases, a simple rename-and-reshape view is more valuable than any aggregation view. It makes the data *discoverable* — an AI that sees `customer_lifetime_value` knows what to do with it; an AI that sees `CUST_LTV_MTD_AGG_V2` does not.
+
+### Example: Reshaping a Hypothetical Legacy Table
+
+If FireKicks had a legacy `ord_hdr` table instead of the clean `orders` table:
+
+**SQL equivalent:**
+```sql
+SELECT
+  oh.ord_id AS order_id,
+  oh.cust_id AS customer_id,
+  oh.ord_dt AS order_date,
+  oh.tot_amt AS total_amount,
+  oh.sub_amt AS subtotal,
+  oh.tx_amt AS tax_amount,
+  oh.shp_amt AS shipping_amount,
+  oh.disc_amt AS discount_amount,
+  oh.tot_amt - oh.sub_amt AS tax_and_shipping,
+  CASE oh.ord_stat_cd
+    WHEN 'P' THEN 'pending'
+    WHEN 'R' THEN 'processing'
+    WHEN 'S' THEN 'shipped'
+    WHEN 'D' THEN 'delivered'
+    WHEN 'X' THEN 'cancelled'
+  END AS order_status,
+  CASE oh.chnl_cd
+    WHEN 'ON' THEN 'online'
+    WHEN 'RT' THEN 'retail'
+    WHEN 'WH' THEN 'wholesale'
+    WHEN 'DR' THEN 'direct'
+  END AS order_channel
+FROM ord_hdr oh
+```
+
+This view does no joins and no aggregation. It just renames columns, decodes status codes, and adds a computed `tax_and_shipping` column. Yet it transforms a table that an AI couldn't reason about into one it can.
+
 ## Designing Views for FireKicks
 
 Let's walk through the design process for three views that cover different patterns.
@@ -158,10 +233,8 @@ This means an agent can override a system view with its own version without affe
 ### Create product_performance
 
 ```bash
-curl -s -X POST "$DA_URL/admin/views" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
+ff-da admin views create --file - <<'EOF'
+{
     "name": "product_performance",
     "namespace": "system",
     "connection": "firekicks",
@@ -262,7 +335,8 @@ curl -s -X POST "$DA_URL/admin/views" \
         { "expr": { "column": { "table": "p", "column": "brand_line" } } }
       ]
     }
-  }'
+}
+EOF
 ```
 
 When created, the service auto-probes the view by running it with `LIMIT 1` to infer output column types. The response includes the inferred `outputSchema`:
@@ -315,10 +389,8 @@ Scalar UDFs compute a single value from inputs. They're useful when the same cal
 A margin calculation that multiple views and ad-hoc queries need:
 
 ```bash
-curl -s -X POST "$DA_URL/admin/views" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
+ff-da admin views create --file - <<'EOF'
+{
     "name": "calculate_margin",
     "namespace": "system",
     "connection": "firekicks",
@@ -361,7 +433,8 @@ curl -s -X POST "$DA_URL/admin/views" \
       "from": { "table": { "table": "products" } },
       "limit": 1
     }
-  }'
+}
+EOF
 ```
 
 UDFs with parameters skip auto-probing (since the service can't guess parameter values). You can optionally declare the output schema:
@@ -379,10 +452,8 @@ Table-valued functions return rowsets based on parameters. They're like paramete
 Returns all orders for a specific customer, pre-joined with line items and shipping:
 
 ```bash
-curl -s -X POST "$DA_URL/admin/views" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
+ff-da admin views create --file - <<'EOF'
+{
     "name": "customer_orders",
     "namespace": "system",
     "connection": "firekicks",
@@ -445,7 +516,8 @@ curl -s -X POST "$DA_URL/admin/views" \
       ],
       "orderBy": [{ "expr": { "column": { "table": "o", "column": "order_date" } }, "dir": "SORT_DESC" }]
     }
-  }'
+}
+EOF
 ```
 
 ### Calling a TVF
@@ -479,19 +551,18 @@ Stored definitions should be annotated in the data dictionary just like regular 
 ### Annotate the View
 
 ```bash
-curl -s -X POST "$DA_URL/admin/annotations/tables" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "connection": "firekicks",
-    "table": "product_performance",
-    "description": "Pre-computed product scorecard aggregating sales metrics (orders, units, revenue) and quality metrics (avg rating, review count) per product. Only counts shipped and delivered orders.",
-    "businessName": "Product Performance Scorecard",
-    "grain": "One row per product (200 rows)",
-    "tags": ["product", "performance", "curated", "view"],
-    "statistics": { "rowCount": 200 },
-    "usageNotes": "Use this view instead of manually joining products + order_items + reviews. Revenue reflects shipped+delivered orders only. For all-time metrics — not date-filterable. For date-range analysis, query order_items directly."
-  }'
+ff-da admin annotations create-table --file - <<'EOF'
+{
+  "connection": "firekicks",
+  "table": "product_performance",
+  "description": "Pre-computed product scorecard aggregating sales metrics (orders, units, revenue) and quality metrics (avg rating, review count) per product. Only counts shipped and delivered orders.",
+  "businessName": "Product Performance Scorecard",
+  "grain": "One row per product (200 rows)",
+  "tags": ["product", "performance", "curated", "view"],
+  "statistics": { "rowCount": 200 },
+  "usageNotes": "Use this view instead of manually joining products + order_items + reviews. Revenue reflects shipped+delivered orders only. For all-time metrics — not date-filterable. For date-range analysis, query order_items directly."
+}
+EOF
 ```
 
 ### Tag Strategy: Raw vs Curated

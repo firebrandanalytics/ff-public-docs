@@ -45,6 +45,13 @@ Raw SQL requires `allow_raw_sql: true` on both the connection config and the cal
 
 The AST (Abstract Syntax Tree) API accepts structured JSON instead of raw SQL. The service validates the query, checks ACL, expands stored definitions, and serializes to SQL for the target database.
 
+> **Note:** The AST examples below use the HTTP data-plane API directly with `curl` to show the raw protocol. Set up these variables for the examples:
+> ```bash
+> export DA_URL=http://localhost:8080
+> export API_KEY=dev-api-key
+> export IDENTITY=user:tutorial
+> ```
+
 ### Simple SELECT
 
 ```bash
@@ -453,16 +460,14 @@ Here's how an AI agent uses all five layers end-to-end:
 
 ```bash
 # Agent queries dictionary for curated sales and product tables
-curl -s -H "X-Api-Key: $API_KEY" \
-  "$DA_URL/v1/dictionary/tables?connection=firekicks&tags=sales,product" | jq
+ff-da dictionary tables --connection firekicks --tags sales,product --format json
 ```
 
 **Step 2: Understand column semantics**
 
 ```bash
 # Agent reads column annotations for the tables it will query
-curl -s -H "X-Api-Key: $API_KEY" \
-  "$DA_URL/v1/dictionary/columns?connection=firekicks&table=orders&semanticType=measure" | jq
+ff-da dictionary columns --connection firekicks --table orders --semantic-type measure --format json
 ```
 
 Learns: `total_amount` (measure, financial) — "Final order total including subtotal, tax, shipping, minus discounts."
