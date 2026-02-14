@@ -23,6 +23,7 @@ Extended Services provide specialized capabilities that enhance agent functional
 
 **Extended Services:**
 - **Entity Service** - Entity graph management with vector-based semantic search
+- **Data Access Service** - Secure multi-database SQL access with AST query translation and fine-grained ACL
 - **Document Processing Service** - Document extraction, generation, and transformation
 
 ### Tier 3: Supporting Services
@@ -41,6 +42,7 @@ Supporting Services include services under active development that extend platfo
 | **Context Service** | 2.0.0 | GA | Working memory, blob storage, and conversation persistence | Core | gRPC |
 | **Code Sandbox** | 2.0.0 | GA | Secure code execution with database connectivity | Core | REST |
 | **Entity Service** | 0.3.0-beta.0 | Beta | Entity graph management with vector semantic search | Extended | REST |
+| **Data Access Service** | 0.1.0 | Beta | Multi-database SQL access with AST query translation and ACL | Extended | gRPC + REST |
 | **Document Processing** | 0.1.10 | Beta | Document extraction, OCR, generation, transformation | Extended | REST |
 | **Doc Proc Python Worker** | 0.1.0 | Planning | Advanced ML-based document processing backends | Supporting | gRPC |
 | **Web Search Service** | 0.1.0 | Beta | Provider-agnostic web search with Bing integration | Supporting | REST |
@@ -487,6 +489,7 @@ Detailed documentation for each service:
 - [Code Sandbox](./code-sandbox.md) - Secure code execution environment
 
 ### Tier 2: Extended Services
+- [Data Access Service](./data-access/README.md) - Multi-database SQL access with AST queries, staged federation, and scratch pad
 - [Entity Service](./entity-service.md) - Entity graph with vector search
 - [Document Processing Service](./doc-proc-service.md) - Document operations
 
