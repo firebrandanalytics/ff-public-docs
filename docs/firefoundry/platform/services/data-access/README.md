@@ -39,6 +39,8 @@ The data dictionary (Layer 2) is particularly important for AI: it provides desc
 
 - **Multi-Database Support**: PostgreSQL, MySQL, SQLite, SQL Server, Oracle, Snowflake, and Databricks — 7 backends (see [Database Support](#database-support) below)
 - **AST Query API**: Submit structured JSON queries — validated, access-controlled, and serialized with correct identifier quoting and parameter placeholders for the target database
+- **SQL-to-AST Pipeline**: Parse PostgreSQL-dialect SQL into AST, then process through the full validation/ACL/expansion pipeline
+- **EXPLAIN Plans**: Get database execution plans from AST or SQL queries, with optional ANALYZE mode
 - **Staged Queries**: Execute federated pre-queries across different connections, with results injected as CTEs
 - **Scratch Pad**: Per-identity SQLite databases for persisting intermediate results across requests
 - **Unopinionated SQL Gateway**: SQL constructs are passed through to the upstream database. The service handles identifier quoting, parameter placeholder styles, and boolean literal formatting per backend, but does not translate SQL syntax between databases — agents use the SQL constructs their target database supports
@@ -46,9 +48,14 @@ The data dictionary (Layer 2) is particularly important for AI: it provides desc
 - **Table/Column ACL**: Fine-grained access control enforced by AST inspection
 - **Data Dictionary**: Semantic annotations on tables and columns — descriptions, business names, statistics, constraints, relationships, quality notes, and tag-based filtering for AI routing
 - **Stored Definitions**: Virtual views, scalar UDFs, and table-valued functions that expand at query time
+- **Variables & Row-Level Security**: Named variables resolved at query time from request context, with security predicates that automatically filter data per caller identity
+- **Identity Mapping Tables**: DAS-managed key-value lookups that translate between identity systems (e.g., email → customer_id)
+- **Ontology Service**: Maps business concepts to database structures — entity types, relationships, column mappings, and concept hierarchies for AI entity resolution
+- **Process Model Service**: Encodes business rules, calendar contexts, tribal knowledge, and process steps that inform query generation
 - **Credential Management**: Environment-variable-based credentials with zero-downtime rotation
-- **Admin API**: REST endpoints for connection CRUD, credential rotation, view management, and annotation management
+- **Admin API**: REST endpoints for connection CRUD, credential rotation, view management, annotation management, variable/mapping management, ontology management, and process management
 - **Dictionary Query API**: Non-admin read-only access to data dictionary with tag inclusion/exclusion, semantic type, and classification filters
+- **Audit API**: Query execution history with filtering by connection, identity, time range, and error status
 - **Audit Logging**: All operations logged with identity, connection, SQL hash, and duration
 
 ## Architecture Overview

@@ -500,8 +500,134 @@ Design your tag taxonomy to support AI routing:
 
 The key pattern: AI agents query with `excludeTags=raw,system` to see only production-ready data. Data stewards tag new tables as `raw` until they're validated, then add `curated`.
 
+## 12. EXPLAIN Query Plans
+
+Preview the execution plan for any AST query without running it:
+
+```bash
+curl -s -X POST "$DA_HOST/v1/connections/warehouse/explain-ast" \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: $IDENTITY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "select": {
+      "columns": [
+        { "expr": { "column": { "column": "city" } } },
+        { "expr": { "function": { "name": "count", "args": [{ "star": {} }] } }, "alias": "cnt" }
+      ],
+      "from": { "table": { "table": "customers" } },
+      "groupBy": [{ "expr": { "column": { "column": "city" } } }],
+      "orderBy": [{ "expr": { "column": { "column": "cnt" } }, "dir": "SORT_DESC" }],
+      "limit": 10
+    },
+    "analyze": false,
+    "verbose": false
+  }' | jq
+```
+
+Response:
+```json
+{
+  "planLines": [
+    "Limit  (cost=150.00..150.03 rows=10 width=40)",
+    "  ->  Sort  (cost=150.00..155.00 rows=2000 width=40)",
+    "        Sort Key: (count(*)) DESC",
+    "        ->  HashAggregate  (cost=100.00..120.00 rows=2000 width=40)",
+    "              Group Key: city",
+    "              ->  Seq Scan on customers  (cost=0.00..50.00 rows=10000 width=32)"
+  ],
+  "sql": "SELECT \"city\", COUNT(*) AS \"cnt\" FROM \"customers\" GROUP BY \"city\" ORDER BY \"cnt\" DESC LIMIT 10",
+  "durationMs": 2
+}
+```
+
+Set `analyze: true` to execute the query and get actual timing statistics in the plan.
+
+For SQL-based explain, use `/v1/connections/{conn}/explain-sql` with a `sql` field instead of `select`.
+
+## 13. Set Up Variables for Row-Level Security
+
+Variables enable row-level security (RLS) by resolving caller identity into database filter values at query time.
+
+### Create a Mapping Table
+
+Map email identities to customer IDs:
+
+```bash
+curl -s -X POST "$DA_HOST/admin/mappings" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "email_to_customer",
+    "description": "Maps email addresses to customer IDs",
+    "keyColumn": "email",
+    "valueColumn": "customer_id",
+    "entries": [
+      { "key": "alice@example.com", "value": "42" },
+      { "key": "bob@example.com", "value": "99" }
+    ]
+  }'
+```
+
+### Create a Lookup Variable
+
+```bash
+curl -s -X POST "$DA_HOST/admin/variables" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "customer_id",
+    "description": "Resolves caller email to numeric customer ID",
+    "resolution": "lookup",
+    "lookupTable": "email_to_customer",
+    "lookupKey": "email",
+    "lookupValue": "customer_id"
+  }'
+```
+
+### Create a View with Security Predicate
+
+```bash
+curl -s -X POST "$DA_HOST/admin/views" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my_orders",
+    "namespace": "system",
+    "connection": "warehouse",
+    "description": "Orders filtered by caller identity",
+    "ast": {
+      "columns": [
+        { "expr": { "column": { "column": "id" } } },
+        { "expr": { "column": { "column": "amount" } } },
+        { "expr": { "column": { "column": "status" } } }
+      ],
+      "from": { "table": { "table": "orders" } }
+    },
+    "securityPredicate": {
+      "binary": {
+        "op": "BINARY_OP_EQ",
+        "left": { "column": { "column": "customer_id" } },
+        "right": { "variable": { "name": "customer_id" } }
+      }
+    }
+  }'
+```
+
+Now when `alice@example.com` queries `my_orders`, they only see orders where `customer_id = 42`. The security predicate is injected transparently — the caller cannot bypass it.
+
+### Test Variable Resolution
+
+```bash
+curl -s -X POST "$DA_HOST/admin/variables/resolve" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"variable": "customer_id", "identity": "alice@example.com", "connection": "warehouse"}'
+```
+
 ## Next Steps
 
-- Read [Concepts](./concepts.md) for deeper understanding of the data dictionary, ACL, staged queries, and stored definitions
-- Read [Reference](./reference.md) for the full API specification including dictionary query and admin annotation endpoints
+- Read [Concepts](./concepts.md) for deeper understanding of the data dictionary, ACL, staged queries, stored definitions, variables/RLS, ontology, and process models
+- Read [Reference](./reference.md) for the full API specification including all admin, ontology, and process model endpoints
+- Follow the [FireKicks Tutorial](./firekicks/) for a comprehensive end-to-end walkthrough using a real dataset
 - Install the AI skills to enable AI agents to generate AST queries automatically
