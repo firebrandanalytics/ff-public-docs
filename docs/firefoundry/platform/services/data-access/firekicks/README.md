@@ -49,6 +49,8 @@ The data includes realistic patterns: seasonal spikes (Q4 holidays, back-to-scho
 | `campaign_roi_summary` | Per-campaign ROI: spend, revenue, impressions, clicks, conversions |
 | `customer_nearest_store` | Per-customer nearest retail partner with distance (PostGIS) |
 
+SQL source files for these views are in [`data/views/`](./data/views/).
+
 ### Core Relationships
 
 ```
