@@ -524,6 +524,146 @@ The data dictionary has two API surfaces:
 
 This separation ensures that reading the dictionary is a normal data-plane operation (fast, frequent, low-privilege), while modifying it is a controlled administrative action.
 
+## Variables and Row-Level Security
+
+### What Are Variables?
+
+Variables are named values resolved at query time from the request context. They appear in AST expressions as `{ "variable": { "name": "..." } }` nodes and are resolved before the query reaches the database. Variables are the foundation for row-level security (RLS) in stored definitions.
+
+### Resolution Strategies
+
+| Strategy | How It Resolves | Use Case |
+|----------|----------------|----------|
+| `builtin` | Reads from request context | `caller_identity` (X-On-Behalf-Of header), `caller_connection` (target connection) |
+| `direct` | Uses the caller identity value as-is | When the identity header matches the database column value |
+| `lookup` | Translates via a mapping table | When identity format differs from database (e.g., email → customer_id) |
+
+Built-in variables are always available. Custom variables are defined via the admin API.
+
+### Mapping Tables
+
+Mapping tables are DAS-managed key-value lookups that translate between identity systems. For example, if callers authenticate with email addresses but the database uses numeric customer IDs:
+
+```
+Mapping table: email_to_customer
+  alice@example.com → 42
+  bob@example.com   → 99
+
+Variable: customer_id (resolution: lookup, lookupTable: email_to_customer)
+
+Caller identity: alice@example.com
+Resolved value: 42
+```
+
+### Security Predicates
+
+A security predicate is an AST expression attached to a stored definition. It's injected as a WHERE clause whenever the view is expanded:
+
+```json
+"securityPredicate": {
+  "binary": {
+    "op": "BINARY_OP_EQ",
+    "left": { "column": { "column": "customer_id" } },
+    "right": { "variable": { "name": "caller_identity" } }
+  }
+}
+```
+
+When caller `user:42` queries the view, the service resolves `caller_identity` to `42` and injects `WHERE customer_id = 42`. The caller cannot bypass the predicate — it's applied transparently by the service.
+
+### How RLS Composes
+
+Security predicates compose with the caller's own filters and with business rules:
+
+```sql
+-- Caller queries: SELECT * FROM my_orders WHERE total > 100
+-- Service expands to:
+SELECT ... FROM orders
+WHERE customer_id = 42              -- security predicate (injected)
+  AND order_status != 'cancelled'   -- business rule (hard_enforced)
+  AND total > 100                   -- caller's filter
+```
+
+### Variable Persistence
+
+Variable definitions and mapping tables are persisted in the DAS internal PostgreSQL database (when `PG_HOST` is configured). Without PG, they exist in memory only and are lost on restart.
+
+## Ontology
+
+### What Is the Ontology?
+
+The ontology (Layer 3) maps business concepts to database structures. It bridges the gap between natural language ("revenue", "Premium customers") and SQL objects (tables, columns, joins). AI agents use the ontology to resolve ambiguous terms and discover the correct database objects for a given business concept.
+
+### Key Components
+
+| Component | Description | Example |
+|-----------|-------------|---------|
+| **Domain** | A business area grouping related entities | `sales`, `customer`, `marketing` |
+| **Entity Type** | A business concept with context clues for resolution | `Customer` (clues: "buyer", "account", "shopper") |
+| **Concept** | A derived or composite business idea | `Revenue` — depends on Order entity, amount role |
+| **Relationship** | How entity types connect, with join hints | Customer → Order (1:N, `customers.customer_id = orders.customer_id`) |
+| **Column Mapping** | Maps entity types to specific database columns with roles | Customer.name → `customers.first_name` (role: `name`, is_primary: true) |
+| **Exclusion** | Prevents incorrect entity resolution | "Product Supplier" excludes "Customer" (different business meaning) |
+
+### Column Mapping Roles
+
+Each column mapping has a role that describes how the column relates to its entity type:
+
+| Role | Description | Example |
+|------|-------------|---------|
+| `id` | Primary identifier | `customers.customer_id` |
+| `name` | Display name | `customers.first_name` |
+| `amount` | Numeric measure | `orders.total_amount` |
+| `date` | Temporal reference | `orders.order_date` |
+| `category` | Categorical grouping | `customers.customer_segment` |
+| `flag` | Boolean/status indicator | `products.is_active` |
+
+### Entity Resolution
+
+When an AI agent encounters a term like "revenue" or "Premium customers", it calls `ResolveEntity` to find matching entity types. The service scores candidates by matching context clues and returns a confidence-ranked list. If the result is ambiguous, the service provides a disambiguation prompt.
+
+### Cross-Database Column Mappings
+
+Column mappings can span multiple connections, enabling the ontology to describe entities that exist across different databases. The `GetEntityColumns` response includes `cross_db_mappings` that show how the same entity is represented in different systems.
+
+## Process Models
+
+### What Are Process Models?
+
+Process models (Layer 4) encode business process knowledge — rules, calendar definitions, step sequences, and tribal knowledge. This context helps AI agents generate queries that respect business logic that isn't captured in the database schema.
+
+### Key Components
+
+| Component | Description | Example |
+|-----------|-------------|---------|
+| **Process** | A named business workflow with steps | "Order Fulfillment" — 5 steps from order placed to delivered |
+| **Step** | A single step in a process with data touchpoints | "Ship Order" — reads `orders`, writes `shipping_performance` |
+| **Business Rule** | An enforceable constraint on queries | "Exclude cancelled orders from revenue" (hard_enforced) |
+| **Annotation** | Context-triggered tribal knowledge | "December financials are provisional until monthly close" |
+| **Calendar Context** | Fiscal calendar definition | Q1 = Oct-Dec, fiscal year starts October 1 |
+
+### Business Rule Enforcement
+
+| Level | Meaning | Agent Behavior |
+|-------|---------|----------------|
+| `ADVISORY` | Suggestion only | Agent may choose to follow or ignore |
+| `SOFT_ENFORCED` | Should follow | Agent follows by default, can override with justification |
+| `HARD_ENFORCED` | Must follow | Agent always applies this rule, no override |
+
+Rules include executable conditions (AST predicates) that the agent can inject into queries automatically.
+
+### Calendar Context
+
+Calendar definitions tell AI agents how to interpret time-based business terms:
+
+- "This quarter" → Fiscal Q4 = October 1 through December 31 (not calendar Q4)
+- "FY25" → October 2024 through September 2025
+- Quarter boundaries defined by `quarter_mapping` with start/end months
+
+### Process Discovery
+
+AI agents call `GetProcessContext` to learn about business processes, rules, and calendar definitions for a domain. This is typically done at the start of a data analysis session, alongside dictionary and ontology queries, to build a complete understanding of the business context.
+
 ## Security Model
 
 - **No inline credentials**: Admin API rejects connections with inline passwords
