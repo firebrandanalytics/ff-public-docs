@@ -505,7 +505,52 @@ Mapping tables are used by `lookup`-type variables to translate caller identitie
   ],
   "domain": "",
   "max_candidates": 5,
-  "min_score": 0.3
+  "min_score": 0.3,
+  "filter": null
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `queries` | array | Required. Terms to resolve (up to 1000) |
+| `queries[].term` | string | The search term |
+| `queries[].entity_types` | string[] | Filter by entity type (empty = all) |
+| `queries[].exclude_values` | string[] | Search terms to exclude from results |
+| `domain` | string | Filter by domain (empty = all) |
+| `max_candidates` | int | Max candidates per term (default: 10) |
+| `min_score` | float | Minimum match score threshold (default: 0.1) |
+| `filter` | object | AST Expression predicate applied to the values table before scoring (see below) |
+
+**Filter predicate**: An optional AST Expression (same format as security predicates) that filters the values table before scoring. Only search candidates pointing to values that pass the filter are considered. This enables:
+
+- **Row-Level Security (RLS)**: Restrict which values a caller can see based on their identity (via `variable` references)
+- **Regional preference**: Bias results toward the caller's region, business unit, etc.
+
+Filter expressions use the standard AST Expression JSON format. Column references are resolved against the values table. Variable references (`variable.name`) are resolved using the variable store before evaluation.
+
+Example — filter to only North American companies:
+```json
+{
+  "filter": {
+    "binary": {
+      "op": "BINARY_OP_EQ",
+      "left": {"column": {"column": "region"}},
+      "right": {"literal": {"stringValue": "NA"}}
+    }
+  }
+}
+```
+
+Example — filter using a resolved variable for RLS:
+```json
+{
+  "filter": {
+    "binary": {
+      "op": "BINARY_OP_EQ",
+      "left": {"column": {"column": "business_unit"}},
+      "right": {"variable": {"name": "caller_business_unit"}}
+    }
+  }
 }
 ```
 

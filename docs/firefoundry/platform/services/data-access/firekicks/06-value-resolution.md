@@ -718,6 +718,82 @@ For large value stores (10K+ rows), consider:
 - Running refresh during off-peak hours
 - Using scheduled refresh (not blocking requests)
 
+## Filtering Values
+
+Resolve requests can include a **filter predicate** to narrow which values are considered before scoring. This applies an AST Expression to the values table — search candidates pointing to excluded values are never scored.
+
+### Regional Preference
+
+FireKicks operates globally but users typically work with their regional data. Filter by region to prioritize local results:
+
+```bash
+ff-da resolve --file filter-request.json
+```
+
+```json
+{
+  "queries": [{"term": "Nike", "entity_types": ["Brand"]}],
+  "max_candidates": 5,
+  "filter": {
+    "binary": {
+      "op": "BINARY_OP_EQ",
+      "left": {"column": {"column": "region"}},
+      "right": {"literal": {"stringValue": "NA"}}
+    }
+  }
+}
+```
+
+Only brands with `region = 'NA'` in the values table are matched. European brands like "NIKE EUROPE BV" are excluded entirely — their search candidates are never scored.
+
+### RLS with Variables
+
+For row-level security, use variable references that resolve per-caller:
+
+```json
+{
+  "filter": {
+    "binary": {
+      "op": "BINARY_OP_EQ",
+      "left": {"column": {"column": "business_unit"}},
+      "right": {"variable": {"name": "caller_business_unit"}}
+    }
+  }
+}
+```
+
+The `caller_business_unit` variable is resolved from the variable store using the caller's identity before the filter is applied. Different callers see different subsets of the value store.
+
+### Compound Filters
+
+Combine multiple conditions with AND/OR:
+
+```json
+{
+  "filter": {
+    "binary": {
+      "op": "BINARY_OP_AND",
+      "left": {
+        "binary": {
+          "op": "BINARY_OP_EQ",
+          "left": {"column": {"column": "region"}},
+          "right": {"literal": {"stringValue": "NA"}}
+        }
+      },
+      "right": {
+        "binary": {
+          "op": "BINARY_OP_EQ",
+          "left": {"column": {"column": "status"}},
+          "right": {"literal": {"stringValue": "active"}}
+        }
+      }
+    }
+  }
+}
+```
+
+Filters are simple predicates on the curated values table. Complex joins and aggregations should be done in the value store's `source_query` at refresh time, not at resolve time.
+
 ## Next Steps
 
 You've completed the value resolution system. Here's what to explore next:

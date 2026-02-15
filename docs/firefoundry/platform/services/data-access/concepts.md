@@ -717,6 +717,18 @@ The caller's identity (from `X-On-Behalf-Of`) determines which scopes are visibl
 
 When an agent confirms a match, a new entry is added to the search table with the caller's scope. After N distinct users confirm the same term-to-value mapping, it auto-promotes to system scope. This creates a feedback loop where the system gets smarter with use.
 
+### Value Filters
+
+Resolve requests can include a **filter predicate** — an AST Expression applied to the values table before scoring. Search candidates whose value rows don't pass the filter are never scored or returned.
+
+This supports two key use cases:
+
+- **Row-Level Security (RLS)**: Restrict which values a caller can see. For example, a filter like `business_unit = $caller_business_unit` ensures users only resolve entities they have access to. Variable references are resolved against the variable store, so the same filter works for all callers.
+
+- **Regional/contextual preference**: Bias results toward the caller's context. For example, a global company might filter by `region = 'NA'` so that North American users preferentially resolve to North American entities, even though the full global dataset is available.
+
+Filters are curated at the value store level — complex joins and aggregations happen in the `source_query` at refresh time. At resolve time, filters are simple predicates on the curated values table columns.
+
 ## Security Model
 
 - **No inline credentials**: Admin API rejects connections with inline passwords
