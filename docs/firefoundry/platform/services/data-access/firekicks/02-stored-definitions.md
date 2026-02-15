@@ -133,7 +133,7 @@ Let's walk through the design process for three views that cover different patte
 - **Filters:** Only count completed orders (shipped + delivered) for accurate revenue
 - **Key columns:** product_id, product_name, category, brand_line, total_orders, total_units, total_revenue, avg_rating, review_count
 
-**SQL equivalent** (what the AST encodes):
+**SQL** (provided as [`data/views/product_performance.sql`](./data/views/product_performance.sql)):
 ```sql
 SELECT
   p.product_id,
@@ -169,7 +169,7 @@ GROUP BY p.product_id, p.product_name, p.category, p.brand_line
 - **Source tables:** `campaigns` (details), `campaign_performance` (daily metrics)
 - **Key columns:** campaign_id, campaign_name, campaign_type, target_segment, total_spend, total_impressions, total_clicks, total_conversions, revenue_attributed, roi_percentage
 
-**SQL equivalent:**
+**SQL** (provided as [`data/views/campaign_roi_summary.sql`](./data/views/campaign_roi_summary.sql)):
 ```sql
 SELECT
   c.campaign_id,
@@ -209,9 +209,16 @@ GROUP BY c.campaign_id, c.campaign_name, c.campaign_type, c.target_segment, c.bu
 
 This view uses PostGIS `ST_Distance` — a database-specific function. This is a good example of why DAS is an unopinionated SQL gateway: the AST passes `ST_Distance` through to PostgreSQL as-is.
 
-## Creating Stored Views
+## Creating Stored Definitions
 
-Stored views are created through the admin API using AST (Abstract Syntax Tree) JSON, not raw SQL. The AST is validated, stored, and expanded at query time.
+Stored definitions can be created in two ways:
+
+| Method | Input | Best For |
+|--------|-------|----------|
+| **SQL** | Standard SQL SELECT statement | Humans writing views, most common use cases |
+| **AST** | Structured JSON (SelectStatement proto) | AI-generated views, programmatic assembly, advanced validation |
+
+Both methods produce the same result: a stored definition with a validated AST and (for non-parameterized views) an auto-probed output schema. The SQL method parses your SQL through the DAS SQL parser to produce the AST automatically. The AST method gives you direct control over the structured representation.
 
 ### Namespaces
 
@@ -230,7 +237,118 @@ When a caller queries a view, the service resolves the name using this priority 
 
 This means an agent can override a system view with its own version without affecting other agents.
 
-### Create product_performance
+### Creating Views from SQL
+
+The simplest way to create a stored definition is from a SQL SELECT statement. The service parses the SQL, validates it, generates the AST, and stores both the original SQL (for round-tripping) and the generated AST (for query execution).
+
+#### Using the CLI
+
+```bash
+# Inline SQL
+ff-da admin views create-sql \
+  --name product_performance \
+  --connection firekicks \
+  --description "Per-product scorecard: orders, units, revenue, avg rating, review count" \
+  --sql "SELECT p.product_id, p.product_name, p.category, p.brand_line,
+         COUNT(DISTINCT oi.order_id) AS total_orders,
+         SUM(oi.quantity) AS total_units,
+         SUM(oi.quantity * oi.unit_price) AS total_revenue,
+         AVG(pr.rating) AS avg_rating,
+         COUNT(DISTINCT pr.review_id) AS review_count
+         FROM products p
+         LEFT JOIN order_items oi ON p.product_id = oi.product_id
+         LEFT JOIN orders o ON oi.order_id = o.order_id
+           AND o.order_status IN ('shipped', 'delivered')
+         LEFT JOIN product_reviews pr ON p.product_id = pr.product_id
+         GROUP BY p.product_id, p.product_name, p.category, p.brand_line"
+```
+
+For complex queries, use a `.sql` file:
+
+```bash
+# From a SQL file
+ff-da admin views create-sql \
+  --name product_performance \
+  --connection firekicks \
+  --description "Per-product scorecard: orders, units, revenue, avg rating, review count" \
+  --sql-file data/views/product_performance.sql
+```
+
+```
+View created from SQL successfully.
+  Namespace: system
+  Name:      product_performance
+  SQL:       SELECT p.product_id, p.product_name, p.category, p.brand_line, COUNT(DIS...
+```
+
+Create the campaign ROI view the same way:
+
+```bash
+ff-da admin views create-sql \
+  --name campaign_roi_summary \
+  --connection firekicks \
+  --description "Per-campaign ROI: spend, revenue, impressions, clicks, conversions" \
+  --sql-file data/views/campaign_roi_summary.sql
+```
+
+#### Using the HTTP API
+
+You can also POST SQL directly to the admin API:
+
+```bash
+curl -s -X POST "http://localhost:8080/admin/views" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "product_performance",
+    "namespace": "system",
+    "connection": "firekicks",
+    "description": "Per-product scorecard: orders, units, revenue, avg rating, review count",
+    "sql": "SELECT p.product_id, p.product_name, p.category, p.brand_line, COUNT(DISTINCT oi.order_id) AS total_orders, SUM(oi.quantity) AS total_units, SUM(oi.quantity * oi.unit_price) AS total_revenue, AVG(pr.rating) AS avg_rating, COUNT(DISTINCT pr.review_id) AS review_count FROM products p LEFT JOIN order_items oi ON p.product_id = oi.product_id LEFT JOIN orders o ON oi.order_id = o.order_id AND o.order_status IN ('"'"'shipped'"'"', '"'"'delivered'"'"') LEFT JOIN product_reviews pr ON p.product_id = pr.product_id GROUP BY p.product_id, p.product_name, p.category, p.brand_line"
+  }'
+```
+
+The response includes the generated AST, the original SQL (`sourceSQL`), and the auto-probed output schema:
+
+```json
+{
+  "name": "product_performance",
+  "namespace": "system",
+  "connection": "firekicks",
+  "sourceSQL": "SELECT p.product_id, ...",
+  "ast": { "columns": [...], "from": {...}, "joins": [...], "groupBy": [...] },
+  "outputSchema": [
+    { "name": "product_id", "type": "INTEGER" },
+    { "name": "product_name", "type": "VARCHAR" },
+    { "name": "category", "type": "VARCHAR" },
+    { "name": "brand_line", "type": "VARCHAR" },
+    { "name": "total_orders", "type": "BIGINT" },
+    { "name": "total_units", "type": "BIGINT" },
+    { "name": "total_revenue", "type": "NUMERIC" },
+    { "name": "avg_rating", "type": "NUMERIC" },
+    { "name": "review_count", "type": "BIGINT" }
+  ],
+  "createdAt": "2025-06-15T10:30:00Z"
+}
+```
+
+#### Parameterized Definitions from SQL
+
+SQL queries with positional parameters (`$1`, `$2`, etc.) are automatically detected. You can optionally name the parameters with `--param`:
+
+```bash
+ff-da admin views create-sql \
+  --name customer_orders \
+  --connection firekicks \
+  --description "All orders for a given customer with line-item count and shipping status" \
+  --sql-file data/views/customer_orders.sql \
+  --param "cust_id:integer"
+```
+
+If you omit `--param`, the service auto-detects `$1` in the SQL and generates a parameter named `p1` with type `string`. Explicit `--param` declarations give you control over names and types.
+
+### Creating Views from AST
+
+For programmatic use — particularly by AI agents that generate and validate queries in application code — you can create views directly from AST JSON. This gives full control over the structured representation.
 
 ```bash
 ff-da admin views create --file - <<'EOF'
@@ -339,27 +457,23 @@ ff-da admin views create --file - <<'EOF'
 EOF
 ```
 
-When created, the service auto-probes the view by running it with `LIMIT 1` to infer output column types. The response includes the inferred `outputSchema`:
+The response is identical to SQL-based creation — the service auto-probes the output schema and returns the full definition.
 
-```json
-{
-  "name": "product_performance",
-  "namespace": "system",
-  "connection": "firekicks",
-  "outputSchema": [
-    { "name": "product_id", "type": "INTEGER" },
-    { "name": "product_name", "type": "VARCHAR" },
-    { "name": "category", "type": "VARCHAR" },
-    { "name": "brand_line", "type": "VARCHAR" },
-    { "name": "total_orders", "type": "BIGINT" },
-    { "name": "total_units", "type": "BIGINT" },
-    { "name": "total_revenue", "type": "NUMERIC" },
-    { "name": "avg_rating", "type": "NUMERIC" },
-    { "name": "review_count", "type": "BIGINT" }
-  ],
-  "createdAt": "2025-06-15T10:30:00Z"
-}
-```
+### SQL vs AST: When to Use Which
+
+**Use SQL when:**
+- A human is writing the view definition
+- The query is straightforward (SELECTs, JOINs, aggregation, CASE expressions)
+- You want to store the original SQL alongside the AST for readability
+- You're prototyping or iterating quickly
+
+**Use AST when:**
+- An AI agent is generating view definitions programmatically
+- Your application code needs to assemble, combine, or modify query fragments before storing
+- You want to validate structural properties of the query in application code before saving
+- You're building a system that enforces application-level invariants (e.g., "all views must include a customer_id column", "no view may reference PII columns")
+
+The key insight: SQL is **write-once, parse-once** — you write the query, DAS parses it. AST is **composable** — your application can build AST fragments, inspect them, combine them, validate them against business rules, and then save the result. This makes AST the right choice when the view definition is itself a computed artifact.
 
 ### Manage Views with ff-da CLI
 
@@ -373,12 +487,155 @@ ff-da admin views list --connection firekicks
 # Get a specific view's definition
 ff-da admin views get --namespace system --name product_performance
 
-# Create from a JSON file
-ff-da admin views create --file product_performance.json
+# Get as JSON (includes full AST)
+ff-da admin views get --namespace system --name product_performance --format json
 
 # Delete a view
 ff-da admin views delete --namespace system --name product_performance
 ```
+
+## AI-Generated Views: The Learning Loop
+
+Stored definitions aren't just for humans to pre-define. They enable a **learning loop** where AI agents discover useful query patterns over time and codify them as reusable views.
+
+### How It Works
+
+Consider an AI agent that answers ad-hoc business questions. Over many conversations, it notices patterns:
+
+1. Users frequently ask about "orders by region" — requiring a join between `orders`, `customers`, and `customer_addresses`
+2. The same 4-table join for "product profitability" appears in 30% of sessions
+3. Questions about "campaign effectiveness by segment" always need the same complex aggregation
+
+Without stored definitions, the agent rebuilds these queries from scratch every time — and risks getting them wrong. With stored definitions, the agent can **promote a successful query into a reusable view**:
+
+```
+Agent observes: "I've built this 4-table join 12 times this week"
+Agent action:   Save it as a stored view in its agent namespace
+Next query:     Agent queries the view directly — faster, more reliable, fewer tokens
+```
+
+### Agent Namespace Isolation
+
+The namespace system makes this safe. An agent creating views in its own namespace (`agent:report-bot`) doesn't affect the `system` views that everyone uses. The agent's views are private experiments:
+
+- **`agent:report-bot/regional_orders`** — The agent's own view, only visible to it
+- **`system/product_performance`** — A curated view shared with all callers
+
+If an agent-created view proves valuable, a human can promote it to `system` after review. This is the self-improvement loop: agents learn, humans curate.
+
+### Why AST for AI-Generated Views
+
+When an AI agent creates a view programmatically, the AST format is preferred over SQL because it lets the host application **inspect and enforce invariants before saving**:
+
+```
+Agent generates AST → Application validates:
+  ✓ Only references allowed tables (no PII tables)
+  ✓ Includes required security predicates
+  ✓ Doesn't exceed complexity limits
+  ✓ Column names follow naming conventions
+  ✓ No blacklisted functions
+→ Application saves validated AST to DAS
+```
+
+With SQL, the application would need to parse the SQL back into a structure to perform these checks — which is exactly what the AST already is. The AST representation lets you treat query definitions as **data structures** that your application can manipulate, validate, and compose.
+
+### Practical Example: Agent Self-Improvement
+
+Here's the lifecycle of an AI-discovered view:
+
+**Step 1: Agent builds an ad-hoc query during a conversation**
+
+The agent needs "revenue by customer segment and quarter" and builds the query from raw tables.
+
+**Step 2: Agent's host application notices the pattern**
+
+After seeing this query pattern repeated across sessions, the application decides to save it.
+
+**Step 3: Application builds and validates the AST**
+
+```json
+{
+  "name": "revenue_by_segment_quarter",
+  "namespace": "agent:report-bot",
+  "connection": "firekicks",
+  "description": "Quarterly revenue breakdown by customer segment (auto-generated)",
+  "ast": {
+    "columns": [
+      { "expr": { "column": { "table": "c", "column": "customer_segment" } } },
+      {
+        "expr": {
+          "function": {
+            "name": "date_trunc",
+            "args": [
+              { "literal": { "stringValue": "quarter" } },
+              { "column": { "table": "o", "column": "order_date" } }
+            ]
+          }
+        },
+        "alias": "quarter"
+      },
+      {
+        "expr": { "function": { "name": "sum", "args": [{ "column": { "table": "o", "column": "total_amount" } }] } },
+        "alias": "total_revenue"
+      },
+      {
+        "expr": { "function": { "name": "count", "args": [{ "star": {} }] } },
+        "alias": "order_count"
+      }
+    ],
+    "from": { "table": { "table": "orders", "alias": "o" } },
+    "joins": [{
+      "type": "JOIN_INNER",
+      "table": { "table": "customers", "alias": "c" },
+      "on": {
+        "binary": {
+          "op": "BINARY_OP_EQ",
+          "left": { "column": { "table": "o", "column": "customer_id" } },
+          "right": { "column": { "table": "c", "column": "customer_id" } }
+        }
+      }
+    }],
+    "groupBy": [
+      { "expr": { "column": { "table": "c", "column": "customer_segment" } } },
+      { "expr": { "function": { "name": "date_trunc", "args": [{ "literal": { "stringValue": "quarter" } }, { "column": { "table": "o", "column": "order_date" } }] } } }
+    ]
+  }
+}
+```
+
+**Step 4: Application saves via admin API**
+
+```bash
+curl -s -X POST "http://localhost:8080/admin/views" \
+  -H "Content-Type: application/json" \
+  -d @revenue_by_segment_quarter.json
+```
+
+**Step 5: Agent uses the view in future queries**
+
+Instead of rebuilding the 2-table join with date_trunc and aggregation, the agent queries:
+
+```json
+{
+  "select": {
+    "columns": [{ "expr": { "star": {} } }],
+    "from": { "table": { "table": "revenue_by_segment_quarter" } },
+    "where": {
+      "binary": {
+        "op": "BINARY_OP_EQ",
+        "left": { "column": { "column": "customer_segment" } },
+        "right": { "literal": { "stringValue": "Premium" } }
+      }
+    }
+  }
+}
+```
+
+Simpler query, fewer tokens, no risk of getting the join or aggregation wrong.
+
+### The Value Proposition
+
+This isn't just caching — it's **knowledge accumulation**. Each saved view represents a learned fact: "this is how you answer questions about X." Over time, the agent builds a library of reliable, validated query patterns that make it faster and more accurate. The stored definition system is the persistence layer for this accumulated knowledge.
 
 ## Creating UDFs
 
@@ -387,6 +644,21 @@ Scalar UDFs compute a single value from inputs. They're useful when the same cal
 ### calculate_margin
 
 A margin calculation that multiple views and ad-hoc queries need:
+
+From SQL:
+
+```bash
+ff-da admin views create-sql \
+  --name calculate_margin \
+  --connection firekicks \
+  --namespace system \
+  --description "Calculates margin percentage: (price - cost) / price * 100" \
+  --sql "SELECT ROUND(($2 - $1) / $2 * 100, 2) AS margin_pct FROM products LIMIT 1" \
+  --param "cost:float" \
+  --param "price:float"
+```
+
+Or from AST JSON, which gives you explicit control over the expression tree:
 
 ```bash
 ff-da admin views create --file - <<'EOF'
@@ -449,76 +721,20 @@ Table-valued functions return rowsets based on parameters. They're like paramete
 
 ### customer_orders
 
-Returns all orders for a specific customer, pre-joined with line items and shipping:
+Returns all orders for a specific customer, pre-joined with line items and shipping.
+
+From SQL (using the file at [`data/views/customer_orders.sql`](./data/views/customer_orders.sql)):
 
 ```bash
-ff-da admin views create --file - <<'EOF'
-{
-    "name": "customer_orders",
-    "namespace": "system",
-    "connection": "firekicks",
-    "description": "All orders for a given customer with line-item count and shipping status",
-    "params": [
-      { "name": "cust_id", "position": 1, "type": "integer" }
-    ],
-    "ast": {
-      "columns": [
-        { "expr": { "column": { "table": "o", "column": "order_id" } } },
-        { "expr": { "column": { "table": "o", "column": "order_date" } } },
-        { "expr": { "column": { "table": "o", "column": "order_status" } } },
-        { "expr": { "column": { "table": "o", "column": "order_channel" } } },
-        { "expr": { "column": { "table": "o", "column": "total_amount" } } },
-        {
-          "expr": { "function": { "name": "count", "args": [{ "column": { "table": "oi", "column": "order_item_id" } }] } },
-          "alias": "item_count"
-        },
-        { "expr": { "column": { "table": "sp", "column": "on_time" } }, "alias": "shipped_on_time" }
-      ],
-      "from": { "table": { "table": "orders", "alias": "o" } },
-      "joins": [
-        {
-          "type": "JOIN_LEFT",
-          "table": { "table": "order_items", "alias": "oi" },
-          "on": {
-            "binary": {
-              "op": "BINARY_OP_EQ",
-              "left": { "column": { "table": "o", "column": "order_id" } },
-              "right": { "column": { "table": "oi", "column": "order_id" } }
-            }
-          }
-        },
-        {
-          "type": "JOIN_LEFT",
-          "table": { "table": "shipping_performance", "alias": "sp" },
-          "on": {
-            "binary": {
-              "op": "BINARY_OP_EQ",
-              "left": { "column": { "table": "o", "column": "order_id" } },
-              "right": { "column": { "table": "sp", "column": "order_id" } }
-            }
-          }
-        }
-      ],
-      "where": {
-        "binary": {
-          "op": "BINARY_OP_EQ",
-          "left": { "column": { "table": "o", "column": "customer_id" } },
-          "right": { "param": { "position": 1 } }
-        }
-      },
-      "groupBy": [
-        { "expr": { "column": { "table": "o", "column": "order_id" } } },
-        { "expr": { "column": { "table": "o", "column": "order_date" } } },
-        { "expr": { "column": { "table": "o", "column": "order_status" } } },
-        { "expr": { "column": { "table": "o", "column": "order_channel" } } },
-        { "expr": { "column": { "table": "o", "column": "total_amount" } } },
-        { "expr": { "column": { "table": "sp", "column": "on_time" } } }
-      ],
-      "orderBy": [{ "expr": { "column": { "table": "o", "column": "order_date" } }, "dir": "SORT_DESC" }]
-    }
-}
-EOF
+ff-da admin views create-sql \
+  --name customer_orders \
+  --connection firekicks \
+  --description "All orders for a given customer with line-item count and shipping status" \
+  --sql-file data/views/customer_orders.sql \
+  --param "cust_id:integer"
 ```
+
+The `$1` in the SQL is automatically detected. The `--param` flag names it `cust_id` with type `integer`.
 
 ### Calling a TVF
 
@@ -661,9 +877,11 @@ You've learned how to:
 
 1. **Design** stored definitions — identify the right grain, joins, and aggregations
 2. **Choose** the right type — views for pre-built tables, UDFs for reusable calculations, TVFs for parameterized queries
-3. **Create** definitions via the admin API — AST JSON with auto-probe for output schemas
-4. **Use namespaces** — system, app, and agent scoping with resolution order
-5. **Integrate** with the dictionary — annotate views with tags, descriptions, and usage notes
-6. **Route AI agents** — curated views as the primary query surface, raw tables hidden by tags
+3. **Create from SQL** — the easiest path for human-authored definitions, with auto-detected parameters
+4. **Create from AST** — the programmatic path for AI-generated definitions, with composable JSON structures
+5. **Enable AI self-improvement** — agent namespaces let AI discover and save query patterns over time
+6. **Use namespaces** — system, app, and agent scoping with resolution order
+7. **Integrate** with the dictionary — annotate views with tags, descriptions, and usage notes
+8. **Route AI agents** — curated views as the primary query surface, raw tables hidden by tags
 
 In [Part 3](./03-ontology.md), you'll build an ontology that maps business concepts — like "Customer", "Revenue", and "Premium segment" — to the database structures and stored definitions you've created.
