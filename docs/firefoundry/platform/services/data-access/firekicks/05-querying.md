@@ -455,7 +455,7 @@ All the joins, filters, and aggregation are pre-encoded in the view. The AI just
 
 ## Identity and Row-Level Security in Practice
 
-The `X-On-Behalf-Of` header isn't just for ACL checks — it flows all the way through to stored definition expansion, enabling row-level security (RLS) that filters data per caller transparently. This section shows the end-to-end flow.
+The `X-On-Behalf-Of` header isn't just for ACL checks — it flows through to variable resolution and stored definition expansion, enabling row-level security (RLS) that filters data per caller transparently. Security predicates use the `{ "variable": { "name": "..." } }` expression type to reference values resolved at query time (see [Part 2](./02-stored-definitions.md#identity-and-row-level-security) for the full variable system). This section shows the end-to-end flow.
 
 ### The Setup
 
@@ -551,16 +551,17 @@ The agents don't need to know about the security filter. They query `my_orders`,
 
 ### Identity Beyond Customer ID
 
-Security predicates aren't limited to customer IDs. Common patterns:
+Security predicates aren't limited to customer IDs. Using the variable system, you can define variables with different resolution strategies for each identity type:
 
-| Identity Type | Predicate Filters On | Use Case |
-|--------------|---------------------|----------|
-| `customer:123` | `customer_id` | Customer portal — see only your orders |
-| `partner:acme` | `retail_partner_id` | Partner portal — see only your stores' sales |
-| `region:west` | `sales_region` | Regional manager — see only your region |
-| `app:sales-agent` | *(no predicate)* | Internal agent — full access per ACL |
+| Identity Type | Variable | Resolution | Use Case |
+|--------------|----------|------------|----------|
+| `customer:123` | `caller_identity` | `builtin` | Customer portal — identity maps directly to customer_id |
+| `alice@acme.com` | `customer_id` | `lookup` | Email-based auth — translated via mapping table |
+| `partner:acme` | `partner_id` | `direct` | Partner portal — identity used as retail_partner_id |
+| `region:west` | `region_code` | `direct` | Regional manager — identity used as sales_region |
+| `app:sales-agent` | *(no predicate)* | — | Internal agent — full access per ACL |
 
-The same `orders` data serves all these audiences through different views with different security predicates, all resolved from the caller's identity.
+The same `orders` data serves all these audiences through different views with different security predicates, all resolved from the caller's identity via the variable system.
 
 ## The Complete Agent Workflow
 
