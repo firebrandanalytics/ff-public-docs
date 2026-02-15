@@ -106,9 +106,36 @@ products (200)
 
 ## Prerequisites
 
+- PostgreSQL 13+ server
 - Data Access Service running (gRPC on `:50051`, HTTP on `:8080`)
 - `ff-da` CLI installed (`go build -o ~/.local/bin/ff-da ./cmd/ff-da` from the DAS repo)
-- PostgreSQL access to the FireKicks database
+
+## Set Up the FireKicks Database
+
+The FireKicks dataset is included as a PostgreSQL dump in [`data/firekicks.dump`](./data/firekicks.dump) (~11MB, custom format). Restore it to your PostgreSQL server:
+
+```bash
+# Create the database
+createdb -h <your-postgresql-host> -U postgres firekicks
+
+# Restore the dump (includes PostGIS extension, tables, data, indexes, views)
+pg_restore -h <your-postgresql-host> -U postgres -d firekicks --no-owner --no-acl data/firekicks.dump
+```
+
+> **Note:** The dataset uses PostGIS for spatial queries (nearest store calculations). If PostGIS is not available on your server, the restore will show warnings for the PostGIS extension and spatial columns — the rest of the dataset will load fine, but the `customer_nearest_store` view will not work.
+
+Create a database user for the tutorial (or use an existing one):
+
+```bash
+psql -h <your-postgresql-host> -U postgres -d firekicks -c "
+  CREATE USER firekicks_tutorial WITH PASSWORD 'tutorial-password';
+  GRANT CONNECT ON DATABASE firekicks TO firekicks_tutorial;
+  GRANT USAGE ON SCHEMA public TO firekicks_tutorial;
+  GRANT SELECT ON ALL TABLES IN SCHEMA public TO firekicks_tutorial;
+"
+```
+
+Set up environment variables:
 
 ```bash
 # ff-da CLI environment variables
@@ -119,8 +146,8 @@ export DA_API_KEY=dev-api-key
 export DA_IDENTITY=user:tutorial
 
 # FireKicks database credentials (for DAS connection config)
-export FIREKICKS_DB_USER=fireiq_data
-export FIREKICKS_DB_PASSWORD=<your-password>
+export FIREKICKS_DB_USER=firekicks_tutorial
+export FIREKICKS_DB_PASSWORD=tutorial-password
 ```
 
 ## Register the Connection
@@ -186,7 +213,7 @@ Duration:   45ms
 Key configuration decisions:
 
 - **`allow_raw_sql: true`** — Enables direct SQL queries. Set to `false` for production agents that should only use AST queries (which enforce ACL and prevent injection).
-- **`credentials.method: env`** — Credentials are read from environment variables, never stored in config files. This allows rotation without service restarts.
+- **`credentials.method: env`** — Credentials are read from environment variables (`FIREKICKS_DB_USER` and `FIREKICKS_DB_PASSWORD` set above), never stored in config files. This allows rotation without service restarts.
 - **`pool`** — Conservative settings (5 open / 2 idle) appropriate for a tutorial dataset. Production would scale based on concurrency needs.
 - **`limits`** — Safety guardrails. `maxRows: 10000` prevents accidental full-table scans from overwhelming the response.
 
