@@ -2,31 +2,46 @@
 
 ## Connections
 
-A **connection** is a named reference to a database with its type, credentials, pool settings, and query limits. The service supports 7 backends: PostgreSQL, MySQL, SQLite, SQL Server, Oracle, Snowflake, and Databricks. Connections are defined in `connections.yaml` or managed via the Admin API.
+A **connection** is a named reference to a database with its type, credentials, pool settings, and query limits. The service supports 7 backends: PostgreSQL, MySQL, SQLite, SQL Server, Oracle, Snowflake, and Databricks. Connections are managed via the Admin API.
 
 Connections never store credentials directly — they reference environment variable names. This allows credential rotation without restarting the service.
 
-```yaml
-connections:
-  - name: warehouse
-    type: postgresql
-    config:
-      host: warehouse.internal
-      port: 5432
-      database: analytics
-      sslMode: require
-    credentials:
-      method: env
-      envMappings:
-        username: PG_WAREHOUSE_USER
-        password: PG_WAREHOUSE_PASSWORD
-    pool:
-      maxOpen: 25
-      maxIdle: 5
-      maxLifetime: 30m
-    limits:
-      maxRows: 100000
-      queryTimeout: 30s
+```json
+{
+  "name": "warehouse",
+  "type": "postgresql",
+  "config": {
+    "host": "warehouse.internal",
+    "port": 5432,
+    "database": "analytics",
+    "sslMode": "require"
+  },
+  "credentials": {
+    "method": "env",
+    "envMappings": {
+      "username": "PG_WAREHOUSE_USER",
+      "password": "PG_WAREHOUSE_PASSWORD"
+    }
+  },
+  "pool": {
+    "maxOpen": 25,
+    "maxIdle": 5,
+    "maxLifetime": "30m"
+  },
+  "limits": {
+    "maxRows": 100000,
+    "queryTimeout": "30s"
+  }
+}
+```
+
+Create it via the Admin API:
+
+```bash
+curl -X POST http://localhost:8080/admin/connections \
+  -H "x-api-key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d @warehouse-connection.json
 ```
 
 ## AST Queries

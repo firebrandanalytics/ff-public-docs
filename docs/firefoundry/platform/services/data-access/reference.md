@@ -842,11 +842,7 @@ function_blacklist:
 |----------|---------|-------------|
 | `GRPC_PORT` | `50051` | gRPC server port |
 | `HTTP_PORT` | `8080` | HTTP server port (admin + REST gateway) |
-| `CONNECTIONS_FILE` | `configs/connections.yaml` | Connection configuration file |
-| `ACL_FILE` | `configs/acl.yaml` | ACL rules file |
 | `API_KEY` | `dev-api-key` | API key for authentication |
-| `VIEWS_FILE` | — | Optional stored definitions file |
-| `ANNOTATIONS_FILE` | — | Optional annotations file (JSON seed for data dictionary) |
 | `PG_HOST` | — | FireFoundry PostgreSQL host (enables PG persistence for views, annotations, connections) |
 | `PG_PORT` | `5432` | FireFoundry PostgreSQL port |
 | `PG_PASSWORD` | — | Password for `fireread` user (read-only operations) |
@@ -905,7 +901,7 @@ Scratch pad connections follow the pattern `scratch:<identity>`:
 ### Kubernetes
 
 - **Single binary**: No runtime dependencies beyond database connectivity
-- **Stateless**: All state is in target databases, config files, and scratch pad directory
+- **Stateless**: All state is in target databases, the FireFoundry PostgreSQL backend, and scratch pad directory
 - **Liveness/readiness probes**: `/health/live` and `/health/ready`
 - **Credential injection**: Environment variables from Kubernetes secrets
 - **Credential rotation**: Call `/admin/connections/{name}/rotate` after secret updates
@@ -1127,7 +1123,7 @@ The client supports both `requests` and `httpx` as HTTP backends. Source: `clien
 
 | Issue | Cause | Resolution |
 |-------|-------|------------|
-| `PermissionDenied` on query | Identity not in ACL for connection | Add identity to `acl.yaml` |
+| `PermissionDenied` on query | Identity not in ACL for connection | Add identity via the ACL admin API |
 | `PermissionDenied` on table | Table in `tables_deny` list | Remove from deny list or use different identity |
 | `InvalidArgument: function blocked` | Function in blacklist | Use different function or adjust blacklist |
 | `InvalidArgument: AST validation` | Malformed AST structure | Check required fields, identifier format, depth |
@@ -1135,5 +1131,5 @@ The client supports both `requests` and `httpx` as HTTP backends. Source: `clien
 | `InvalidArgument: cycle detected` | Circular staged query dependencies | Remove circular references |
 | `ResourceExhausted: staged row limit` | Staged query returned too many rows | Add WHERE clause or increase limit |
 | Connection timeout | Database unreachable | Check network, credentials, pool config |
-| `NotFound: connection` | Connection not configured | Add to `connections.yaml` or create via admin API |
+| `NotFound: connection` | Connection not configured | Create via the admin API (`POST /admin/connections`) |
 | `save_warning` in response | Scratch pad save failed | Check `SCRATCH_DIR` permissions and disk space |
