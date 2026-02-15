@@ -571,6 +571,37 @@ Response:
 
 Limits: 50MB max file size, 100,000 max rows. First row must be column headers. All columns are imported as TEXT. Uploading to the same table name overwrites existing data.
 
+### CSV Export
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/scratch/{identity}/export?table={name}` | Export a scratch pad table as CSV |
+| POST | `/v1/export/query` | Execute a raw SQL query and return results as CSV |
+| POST | `/v1/export/query-ast` | Execute an AST query and return results as CSV |
+| POST | `/v1/export/query-sql` | Execute a SQL-to-AST query and return results as CSV |
+
+**Scratch pad export** downloads a materialized table from a scratch pad as a CSV file. No row limit — the data is already bounded.
+
+```bash
+curl -H "x-api-key: $API_KEY" \
+  "http://localhost:8080/admin/scratch/user:tutorial/export?table=regional_targets" \
+  -o regional_targets.csv
+```
+
+**Query CSV export** endpoints accept the same JSON request body as their non-CSV counterparts (`/v1/query`, `/v1/query-ast`, `/v1/query-sql`) but return `text/csv` instead of JSON. The same authentication, ACL, audit, and limit enforcement applies.
+
+```bash
+curl -X POST http://localhost:8080/v1/export/query \
+  -H "x-api-key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"connection":"firekicks","sql":"SELECT product_name, category, base_price FROM products ORDER BY base_price DESC LIMIT 20"}' \
+  -o products.csv
+```
+
+Response headers:
+- `Content-Type: text/csv`
+- `Content-Disposition: attachment; filename="{connection}_query.csv"`
+
 ### Pool Statistics
 
 | Method | Endpoint | Description |

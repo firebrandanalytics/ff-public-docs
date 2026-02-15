@@ -88,14 +88,16 @@ A query AST is a `SelectStatement` JSON object:
   },
   "groupBy": [{ "expr": { "column": { "column": "name" } } }],
   "orderBy": [{ "expr": { "column": { "column": "total" } }, "dir": "SORT_DESC" }],
-  "limit": 10
+  "limit": 10,
+  "offset": 20
 }
 ```
 
 The serializer produces SQL with the correct quoting and parameter style for each backend:
-- **PostgreSQL**: `SELECT "name", COUNT(*) AS "total" FROM "users" WHERE "active" = TRUE GROUP BY "name" ORDER BY "total" DESC LIMIT 10`
-- **MySQL**: `` SELECT `name`, COUNT(*) AS `total` FROM `users` WHERE `active` = TRUE GROUP BY `name` ORDER BY `total` DESC LIMIT 10 ``
-- **SQLite**: `SELECT "name", COUNT(*) AS "total" FROM "users" WHERE "active" = 1 GROUP BY "name" ORDER BY "total" DESC LIMIT 10`
+- **PostgreSQL**: `SELECT "name", COUNT(*) AS "total" FROM "users" WHERE "active" = TRUE GROUP BY "name" ORDER BY "total" DESC LIMIT 10 OFFSET 20`
+- **MySQL**: `` SELECT `name`, COUNT(*) AS `total` FROM `users` WHERE `active` = TRUE GROUP BY `name` ORDER BY `total` DESC LIMIT 10 OFFSET 20 ``
+- **SQLite**: `SELECT "name", COUNT(*) AS "total" FROM "users" WHERE "active" = 1 GROUP BY "name" ORDER BY "total" DESC LIMIT 10 OFFSET 20`
+- **SQL Server**: `SELECT "name", COUNT(*) AS "total" FROM "users" WHERE "active" = 1 GROUP BY "name" ORDER BY "total" DESC OFFSET 20 ROWS FETCH NEXT 10 ROWS ONLY`
 
 ### Supported SQL Constructs
 
@@ -108,12 +110,13 @@ The serializer produces SQL with the correct quoting and parameter style for eac
 | GROUP BY | Expressions, ROLLUP, CUBE, GROUPING SETS |
 | HAVING | Aggregate filter expressions |
 | ORDER BY | ASC/DESC with NULLS FIRST/LAST |
-| LIMIT/OFFSET | Pagination |
+| LIMIT/OFFSET | Pagination — `"limit": 10, "offset": 20` (serialized per-dialect: LIMIT/OFFSET for PG/MySQL/SQLite, TOP/OFFSET-FETCH for SQL Server, OFFSET-FETCH for Oracle) |
 | CTEs | Common Table Expressions (WITH, WITH RECURSIVE) |
 | Window Functions | ROW_NUMBER, RANK, LAG/LEAD, SUM OVER, frame specs |
 | Set Operations | UNION, INTERSECT, EXCEPT (with ALL) |
 | CASE | Simple and searched CASE expressions |
 | CAST | Type conversion |
+| Regex Match | First-class `regex_match` expression — pattern emitted as bind parameter, serialized per-dialect (`~` for PG, `REGEXP` for MySQL/SQLite) |
 | Functions | Any database-native function (pass-through with arity validation) |
 
 ### Who Generates ASTs?

@@ -56,7 +56,7 @@ The data dictionary (Layer 2) is particularly important for AI: it provides desc
 - **Admin API**: REST endpoints for connection CRUD, credential rotation, view management, annotation management, variable/mapping management, ontology management, and process management
 - **Dictionary Query API**: Non-admin read-only access to data dictionary with tag inclusion/exclusion, semantic type, and classification filters
 - **Named Entity Resolution (NER)**: Value stores with fuzzy matching engine — resolves user terms ("Microsoft") to database values ("MICROSOFT CORP") with ranked candidates, personalized scopes, and a learning loop
-- **CSV Upload**: Upload CSV files directly into scratch pads for ad-hoc analysis alongside database queries
+- **CSV Upload & Export**: Upload CSV files into scratch pads for ad-hoc analysis; export any query result or scratch pad table as CSV
 - **Audit API**: Query execution history with filtering by connection, identity, time range, slow queries, and error status
 - **Audit Logging**: All operations logged with identity, connection, SQL hash, and duration
 
