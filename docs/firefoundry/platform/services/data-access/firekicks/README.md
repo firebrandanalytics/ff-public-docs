@@ -134,7 +134,7 @@ The Data Access Service needs a connection definition to access FireKicks. The s
   "description": "FireKicks shoe company dataset (20 tables, ~131K orders)",
   "allow_raw_sql": true,
   "config": {
-    "host": "firebrand-ai4bi-pg.postgres.database.azure.com",
+    "host": "<your-postgresql-host>",
     "port": 5432,
     "database": "firekicks",
     "sslMode": "require"
