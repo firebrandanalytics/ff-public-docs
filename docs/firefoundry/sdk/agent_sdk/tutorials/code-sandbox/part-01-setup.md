@@ -153,10 +153,16 @@ async function startServer() {
 
     logger.info(`CoderBundle server running on port ${port}`);
     logger.info(`Health check: http://localhost:${port}/health`);
+    logger.info(`Ready check: http://localhost:${port}/ready`);
     logger.info(`Invoke endpoint: http://localhost:${port}/invoke`);
 
     process.on("SIGTERM", async () => {
       logger.info("SIGTERM received, shutting down gracefully");
+      process.exit(0);
+    });
+
+    process.on("SIGINT", async () => {
+      logger.info("SIGINT received, shutting down gracefully");
       process.exit(0);
     });
   } catch (error) {
@@ -228,8 +234,6 @@ export const CoderBundleConstructors = {
 > **ff-cli does the scaffolding** -- Always use `ff-cli application create` and `ff-cli agent-bundle create` for new projects. This ensures the correct monorepo structure, build configuration, and deployment files.
 
 > **No direct database access** -- All entity persistence goes through `createEntityClient()` which communicates with the Entity Service. Never connect directly to PostgreSQL from your agent bundle.
-
-> **Workspace overrides are a known issue** -- The `pnpm.overrides` workaround resolves `workspace:*` references in published packages. This will be fixed in a future SDK release.
 
 ---
 

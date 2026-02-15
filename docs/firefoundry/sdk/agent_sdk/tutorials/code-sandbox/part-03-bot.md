@@ -59,6 +59,7 @@ const coderPromptGroup = new PromptGroup<CODER_PTH>([
 // In a deployed environment, the service URL comes from environment variables.
 const sandboxClient = new CodeSandboxClient({
   baseUrl: process.env.CODE_SANDBOX_URL || "http://localhost:3001",
+  apiKey: process.env.CODE_SANDBOX_API_KEY,
 });
 
 /**
