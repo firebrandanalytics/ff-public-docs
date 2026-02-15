@@ -484,7 +484,7 @@ resources:
 Detailed documentation for each service:
 
 ### Tier 1: Core Runtime Services
-- [FF Broker](./ff-broker.md) - AI model routing and orchestration
+- [FF Broker](./ff-broker/README.md) - AI model routing and orchestration with industrial-scale subsystems
 - [Context Service](./context-service.md) - Working memory and blob storage
 - [Code Sandbox](./code-sandbox.md) - Secure code execution environment
 

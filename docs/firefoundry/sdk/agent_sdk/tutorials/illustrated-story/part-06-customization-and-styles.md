@@ -6,7 +6,7 @@ In this part, you'll add user-facing customization to the storybook pipeline. In
 - Defining constrained option types with TypeScript union types and const maps
 - Adding a `StoryCustomization` interface to the shared types package
 - Using `STYLE_DESCRIPTIONS` to map user-facing style names to detailed image generation prompt text
-- Making prompt sections dynamic with helper methods that read from request args
+- Making prompt sections dynamic with lambda children that read from request args at render time
 - Threading customization through the data flow: API request -> entity data -> bot request args -> prompt template
 - Updating the Zod output schema to prepare for reference image support (Part 7)
 
@@ -148,7 +148,26 @@ This field is declared but not used in this part. It prepares for Part 7, where 
 
 ## Step 2: Update the StoryWriterPrompt for Dynamic Customization
 
-The Part 2 `StoryWriterPrompt` was fully static -- every story got the same prompt regardless of user preferences. Now, the prompt reads customization values from request args and adapts three of its five sections dynamically.
+The Part 2 `StoryWriterPrompt` was fully static -- every story got the same prompt regardless of user preferences. Now, the prompt reads customization values from request args at render time and adapts three of its six sections dynamically.
+
+### Options vs Request Args
+
+Prompt nodes receive data through two distinct channels:
+
+| Channel | When Set | Lifetime | Access Pattern |
+|---------|----------|----------|----------------|
+| **Options** (`this.options`) | Construction time | Fixed for the prompt's lifetime | Direct property access in any method |
+| **Request args** (`request.args`) | Render time | Varies per bot invocation | Lambda children that receive `PromptNodeRequest` |
+
+**Options** are for static configuration -- pre-configuring a prompt template that never changes. For example, if you always wanted watercolor style, you could bake it in at construction time.
+
+**Request args** are for per-request data. Since customization varies per user request, this is the correct channel. The bot constructs the prompt once with `new StoryWriterPrompt('system', {})` -- empty options -- and reuses it across requests. The customization data arrives later, at render time, through request args.
+
+### Lambda Children (The Implementation)
+
+The SDK supports **lambda children** -- functions that receive the `PromptNodeRequest` at render time and return a string. Any child in a section's `children` array can be either a static string or a `(request) => string` function (the `Basic_Render_Function` type). The full union type for children is `PromptTemplateNodeChild`, which is `PromptTemplateNode | string | Basic_Render_Function`.
+
+At render time, the SDK iterates through each section's children. Static strings are used as-is. Lambda functions are called with the current `PromptNodeRequest`, whose `args` field carries the per-request data -- in this case, `{ customization?: StoryCustomization }`.
 
 **`apps/story-bundle/src/prompts/StoryWriterPrompt.ts`** (complete updated file):
 
@@ -186,25 +205,8 @@ export class StoryWriterPrompt extends Prompt<STORY_PTH> {
     this.add_section(this.get_Task_Section());
     this.add_section(this.get_Format_Section());
     this.add_section(this.get_ImagePrompt_Section());
+    // In Part 7, a get_ReferenceImage_Section() is added here
     this.add_section(this.get_Rules_Section());
-  }
-
-  // ─── Helper methods for reading customization ────────────
-
-  private getStyle(): IllustrationStyle {
-    return (this.options as any)?.request?.customization?.style || 'watercolor';
-  }
-
-  private getStyleDescription(): string {
-    return STYLE_DESCRIPTIONS[this.getStyle()];
-  }
-
-  private getAgeRange(): string {
-    return (this.options as any)?.request?.customization?.age_range || '3-10';
-  }
-
-  private getIllustrationCount(): number {
-    return (this.options as any)?.request?.customization?.illustration_count || 5;
   }
 
   // ─── Prompt sections ─────────────────────────────────────
@@ -215,22 +217,30 @@ export class StoryWriterPrompt extends Prompt<STORY_PTH> {
       content: 'Context:',
       children: [
         'You are a master children\'s storyteller and illustration director.',
-        `You create engaging, beautifully written stories for children aged ${this.getAgeRange()}.`,
+        (request) => {
+          const ageRange = request.args?.customization?.age_range || '3-10';
+          return `You create engaging, beautifully written stories for children aged ${ageRange}.`;
+        },
         'You also direct the illustration process by writing detailed image generation prompts.',
       ]
     });
   }
 
   protected get_Task_Section(): PromptTemplateNode<STORY_PTH> {
-    const count = this.getIllustrationCount();
     return new PromptTemplateSectionNode<STORY_PTH>({
       semantic_type: 'rule',
       content: 'Task:',
       children: [
         'Write a complete, illustrated children\'s story based on the provided topic.',
-        `The story should have ${count} scenes, each with an accompanying illustration.`,
+        (request) => {
+          const count = request.args?.customization?.illustration_count || 5;
+          return `The story should have ${count} scenes, each with an accompanying illustration.`;
+        },
         'Write the story as HTML with embedded CSS styling for a storybook look.',
-        `Use {{IMAGE_1}} through {{IMAGE_${count}}} as placeholders where illustrations should appear.`,
+        (request) => {
+          const count = request.args?.customization?.illustration_count || 5;
+          return `Use {{IMAGE_1}} through {{IMAGE_${count}}} as placeholders where illustrations should appear.`;
+        },
         'For each placeholder, provide a detailed image generation prompt.',
       ]
     });
@@ -253,13 +263,16 @@ export class StoryWriterPrompt extends Prompt<STORY_PTH> {
   }
 
   protected get_ImagePrompt_Section(): PromptTemplateNode<STORY_PTH> {
-    const styleDesc = this.getStyleDescription();
     return new PromptTemplateSectionNode<STORY_PTH>({
       semantic_type: 'rule',
       content: 'Image Prompt Guidelines:',
       children: [
         'Write detailed, vivid prompts suitable for AI image generation',
-        `Always include the art style in every prompt: "${styleDesc}"`,
+        (request) => {
+          const style = (request.args?.customization?.style || 'watercolor') as IllustrationStyle;
+          const desc = STYLE_DESCRIPTIONS[style] || STYLE_DESCRIPTIONS['watercolor'];
+          return `Always include the art style in every prompt: "${desc}"`;
+        },
         'Describe the scene composition, characters, setting, and mood',
         'Maintain visual consistency — describe recurring characters the same way each time',
         'Keep prompts family-friendly and whimsical',
@@ -267,6 +280,8 @@ export class StoryWriterPrompt extends Prompt<STORY_PTH> {
       ]
     });
   }
+
+  // get_ReferenceImage_Section() is added in Part 7
 
   protected get_Rules_Section(): PromptTemplateNode<STORY_PTH> {
     return new PromptTemplateSectionNode<STORY_PTH>({
@@ -276,7 +291,10 @@ export class StoryWriterPrompt extends Prompt<STORY_PTH> {
         new PromptTemplateListNode<STORY_PTH>({
           semantic_type: 'rule',
           children: [
-            `Use simple, clear language appropriate for ages ${this.getAgeRange()}`,
+            (request) => {
+              const ageRange = request.args?.customization?.age_range || '3-10';
+              return `Use simple, clear language appropriate for ages ${ageRange}`;
+            },
             'Create vivid descriptions that engage the senses and imagination',
             'Include natural dialogue that children can understand',
             'Structure with a clear beginning, middle, and end',
@@ -294,7 +312,7 @@ export class StoryWriterPrompt extends Prompt<STORY_PTH> {
 
 ### What Changed from Part 2
 
-Three sections now contain **dynamic interpolation** instead of static strings. The prompt reads customization values from `this.options` at construction time and interpolates them into the section children. Here is a side-by-side for each change:
+Three sections now contain **lambda children** instead of static strings. The lambdas receive the `PromptNodeRequest` at render time and read customization from `request.args`. Here is a side-by-side for each change:
 
 **Context section** -- age range is now dynamic:
 
@@ -302,8 +320,11 @@ Three sections now contain **dynamic interpolation** instead of static strings. 
 // Part 2 (static):
 'You create engaging, beautifully written stories for children aged 3-10.',
 
-// Part 6 (dynamic):
-`You create engaging, beautifully written stories for children aged ${this.getAgeRange()}.`,
+// Part 6 (lambda child):
+(request) => {
+  const ageRange = request.args?.customization?.age_range || '3-10';
+  return `You create engaging, beautifully written stories for children aged ${ageRange}.`;
+},
 ```
 
 **Task section** -- illustration count is now dynamic:
@@ -312,9 +333,11 @@ Three sections now contain **dynamic interpolation** instead of static strings. 
 // Part 2 (static):
 'The story should have 3-5 scenes, each with an accompanying illustration.',
 
-// Part 6 (dynamic):
-const count = this.getIllustrationCount();
-`The story should have ${count} scenes, each with an accompanying illustration.`,
+// Part 6 (lambda child):
+(request) => {
+  const count = request.args?.customization?.illustration_count || 5;
+  return `The story should have ${count} scenes, each with an accompanying illustration.`;
+},
 ```
 
 **ImagePrompt section** -- art style is now dynamic:
@@ -323,14 +346,17 @@ const count = this.getIllustrationCount();
 // Part 2 (static):
 'Always include the art style: "children\'s book illustration, watercolor style, warm and inviting colors, soft lighting"',
 
-// Part 6 (dynamic):
-const styleDesc = this.getStyleDescription();
-`Always include the art style in every prompt: "${styleDesc}"`,
+// Part 6 (lambda child):
+(request) => {
+  const style = (request.args?.customization?.style || 'watercolor') as IllustrationStyle;
+  const desc = STYLE_DESCRIPTIONS[style] || STYLE_DESCRIPTIONS['watercolor'];
+  return `Always include the art style in every prompt: "${desc}"`;
+},
 ```
 
 ### How Dynamic Sections Work
 
-The `StoryWriterPrompt` is constructed fresh for each bot request. The `StoryWriterBot` creates a new prompt instance with the current options each time. This means the helper methods can read from `this.options` at construction time and interpolate values directly into the section children as template strings.
+The `StoryWriterPrompt` is constructed **once** by the bot with `new StoryWriterPrompt('system', {})` -- empty options. The prompt instance is reused across requests. Dynamic behavior comes from lambda children that are evaluated at **render time**, not construction time.
 
 The rendering flow:
 
@@ -338,47 +364,203 @@ The rendering flow:
 Bot receives request with args: { customization: { style: 'anime', age_range: '5-8' } }
     |
     v
-Bot constructs new StoryWriterPrompt('system', { request: { customization: {...} } })
+Bot calls StoryWriterPrompt.render() with the PromptNodeRequest
     |
     v
-Constructor calls this.getAgeRange() -> reads this.options.request.customization.age_range -> '5-8'
-Constructor calls this.getStyleDescription() -> STYLE_DESCRIPTIONS['anime'] -> "children's book..."
+SDK iterates through each section's children:
+  - Static string "You are a master children's storyteller..." -> used as-is
+  - Lambda (request) => { ... age_range ... } -> called with request -> returns "...aged 5-8."
+  - Static string "You also direct..." -> used as-is
     |
     v
-Context section has:
-  "You create engaging, beautifully written stories for children aged 5-8."
+Context section renders as:
+  "You are a master children's storyteller and illustration director.
+   You create engaging, beautifully written stories for children aged 5-8.
+   You also direct the illustration process by writing detailed image generation prompts."
     |
-ImagePrompt section has:
+ImagePrompt section renders as:
   "Always include the art style in every prompt:
    children's book illustration, anime-inspired style, large expressive eyes,
    pastel colors, soft shading, kawaii aesthetic"
 ```
 
-### The Helper Method Pattern
+### The Lambda Children Pattern
 
-The four private helper methods (`getStyle`, `getStyleDescription`, `getAgeRange`, `getIllustrationCount`) follow a consistent pattern:
+Each lambda follows a consistent pattern:
 
 ```typescript
-private getStyle(): IllustrationStyle {
-  return (this.options as any)?.request?.customization?.style || 'watercolor';
+(request) => {
+  const style = (request.args?.customization?.style || 'watercolor') as IllustrationStyle;
+  const desc = STYLE_DESCRIPTIONS[style] || STYLE_DESCRIPTIONS['watercolor'];
+  return `Always include the art style in every prompt: "${desc}"`;
+},
+```
+
+Each lambda:
+
+1. **Receives `request`** -- the `PromptNodeRequest` provided by the SDK at render time
+2. **Reads from `request.args`** -- the per-request data that the entity placed in the bot request args
+3. **Navigates the optional chain** -- `request.args?.customization?.style` handles `undefined` at every level
+4. **Returns a sensible default** -- if the user did not specify a style, use `'watercolor'`
+5. **Returns a string** -- the rendered text that replaces the lambda in the children array
+
+Static children (plain strings) remain unchanged across requests. Only the values that vary per request use lambdas. This keeps the prompt readable -- most children are still plain strings, with lambdas only where needed.
+
+### Alternative: The SwitchNode Approach
+
+For the style section, a `PromptTemplateSwitchNode` provides a more structured alternative. This is useful when different cases have structurally different children -- not just different strings, but different counts or types of child nodes:
+
+```typescript
+import { PromptTemplateSwitchNode } from '@firebrandanalytics/ff-agent-sdk';
+
+protected get_ImagePrompt_Section(): PromptTemplateNode<STORY_PTH> {
+  return new PromptTemplateSectionNode<STORY_PTH>({
+    semantic_type: 'rule',
+    content: 'Image Prompt Guidelines:',
+    children: [
+      'Write detailed, vivid prompts suitable for AI image generation',
+      new PromptTemplateSwitchNode<STORY_PTH, IllustrationStyle>({
+        semantic_type: 'rule',
+        expression_func: (request) =>
+          (request.args?.customization?.style || 'watercolor') as IllustrationStyle,
+        cases: {
+          'watercolor': `Always include the art style: "${STYLE_DESCRIPTIONS['watercolor']}"`,
+          'digital-art': `Always include the art style: "${STYLE_DESCRIPTIONS['digital-art']}"`,
+          'colored-pencil': `Always include the art style: "${STYLE_DESCRIPTIONS['colored-pencil']}"`,
+          'storybook-classic': `Always include the art style: "${STYLE_DESCRIPTIONS['storybook-classic']}"`,
+          'anime': `Always include the art style: "${STYLE_DESCRIPTIONS['anime']}"`,
+          'paper-cutout': `Always include the art style: "${STYLE_DESCRIPTIONS['paper-cutout']}"`,
+        },
+        default_case: `Always include the art style: "${STYLE_DESCRIPTIONS['watercolor']}"`,
+      }),
+      'Describe the scene composition, characters, setting, and mood',
+      // ...
+    ]
+  });
 }
 ```
 
-Each method:
+How the SwitchNode works:
 
-1. **Reads from `this.options`** -- the prompt options passed at construction time
-2. **Navigates the optional chain** -- `(this.options as any)?.request?.customization?.style` handles `undefined` at every level
-3. **Returns a sensible default** -- if the user did not specify a style, use `'watercolor'`
+- **`expression_func`** evaluates at render time and returns a key (in this case, the `IllustrationStyle` string)
+- **`cases`** maps keys to children -- each case can be a string, a node, or any valid `PromptTemplateNodeChild`
+- **`default_case`** is used when no case matches the expression result
 
-This pattern keeps the section children clean. Instead of inline optional chaining and defaults inside each template string, the section calls a named method:
+For this specific scenario, the lambda approach is simpler -- it is just a map lookup. The SwitchNode shines when cases have different structures. For example, a watercolor scene might need different compositional guidance than an anime scene:
 
 ```typescript
-// Without helper (verbose, duplicated logic):
-`... for children aged ${(this.options as any)?.request?.customization?.age_range || '3-10'}.`
-
-// With helper (clean, reusable):
-`... for children aged ${this.getAgeRange()}.`
+cases: {
+  'watercolor': new PromptTemplateSectionNode<STORY_PTH>({
+    semantic_type: 'rule',
+    content: 'Watercolor Guidelines:',
+    children: [
+      `Use the style: "${STYLE_DESCRIPTIONS['watercolor']}"`,
+      'Emphasize soft edges and bleeding colors between elements',
+      'Describe ambient lighting and atmospheric effects',
+    ]
+  }),
+  'anime': new PromptTemplateSectionNode<STORY_PTH>({
+    semantic_type: 'rule',
+    content: 'Anime Guidelines:',
+    children: [
+      `Use the style: "${STYLE_DESCRIPTIONS['anime']}"`,
+      'Use expressive character poses and dynamic compositions',
+      'Include sparkle effects and dramatic lighting for emotional moments',
+      'Describe eye expressions in detail for each character',
+    ]
+  }),
+}
 ```
+
+### Alternative: Polymorphic Prompt Subclasses
+
+For the most complex customization scenarios, you can create prompt subclasses that override entire sections. The protected section methods in `StoryWriterPrompt` are designed for this:
+
+```typescript
+// Base class — the sections are protected and overrideable
+export class StoryWriterPrompt extends Prompt<STORY_PTH> {
+  // ... (constructor adds sections including this.get_ImagePrompt_Section())
+
+  protected get_ImagePrompt_Section(): PromptTemplateNode<STORY_PTH> {
+    // Default: watercolor
+    return new PromptTemplateSectionNode<STORY_PTH>({
+      semantic_type: 'rule',
+      content: 'Image Prompt Guidelines:',
+      children: [
+        'Write detailed, vivid prompts suitable for AI image generation',
+        `Always include the art style: "${STYLE_DESCRIPTIONS['watercolor']}"`,
+        'Describe the scene composition, characters, setting, and mood',
+        // ...
+      ]
+    });
+  }
+}
+
+// Subclass per style
+export class AnimeStoryWriterPrompt extends StoryWriterPrompt {
+  protected override get_ImagePrompt_Section(): PromptTemplateNode<STORY_PTH> {
+    return new PromptTemplateSectionNode<STORY_PTH>({
+      semantic_type: 'rule',
+      content: 'Image Prompt Guidelines:',
+      children: [
+        'Write detailed, vivid prompts suitable for AI image generation',
+        `Always include the art style: "${STYLE_DESCRIPTIONS['anime']}"`,
+        'Use expressive character poses and dynamic compositions typical of anime illustration',
+        'Describe the scene composition, characters, setting, and mood',
+        // ...
+      ]
+    });
+  }
+}
+```
+
+The bot then selects the right prompt using `DiscriminatedUnionPrompt` -- the SDK's built-in class for prompt-level variant selection:
+
+```typescript
+import {
+  DiscriminatedUnionPrompt,
+  PromptGroup,
+} from '@firebrandanalytics/ff-agent-sdk';
+
+// DiscriminatedUnionPrompt evaluates a discriminator function at render time
+// and delegates to the matching prompt variant. This is the Prompt-level
+// analogue of PromptTemplateSwitchNode.
+const storyPrompt = new DiscriminatedUnionPrompt<STORY_PTH, IllustrationStyle>(
+  'system', {},
+  (request) => (request.args?.customization?.style || 'watercolor') as IllustrationStyle,
+  {
+    'watercolor': new StoryWriterPrompt('system'),
+    'anime': new AnimeStoryWriterPrompt('system'),
+    'digital-art': new DigitalArtStoryWriterPrompt('system'),
+    // ... one entry per style
+  },
+);
+
+// Add to the prompt group as a single named prompt:
+const baseGroup = new PromptGroup<STORY_PTH>([
+  { name: 'story_writer', prompt: storyPrompt },
+]);
+```
+
+The discriminator function receives the `PromptNodeRequest` at render time (just like lambda children), evaluates which variant to use, and delegates rendering to the matched prompt. If the key is not found, it returns `undefined` (or throws in strict mode). An optional `default_case` parameter provides a fallback.
+
+The polymorphic approach has distinct advantages for complex systems:
+
+- Each subclass can have structurally different sections, not just different strings
+- An anime prompt might add extra guidance about composition; a paper-cutout prompt might add guidance about layering
+- Each variant is self-contained and independently testable
+
+The tradeoff is more code to maintain. Use this when the prompt structure genuinely differs per variant, not just a few interpolated values.
+
+### Which Approach to Use
+
+| Approach | When to Use |
+|----------|------------|
+| **Lambda children** | Values change per request but section structure stays the same. Simplest pattern -- use this by default. |
+| **SwitchNode** | Different cases need structurally different children (different count, different nodes). Good middle ground. |
+| **Polymorphic subclasses** + `DiscriminatedUnionPrompt` | Entire sections differ significantly between variants. Each variant has its own testing and evolution lifecycle. `DiscriminatedUnionPrompt` handles variant selection at render time. Best for complex multi-variant systems. |
+
+The illustrated-story tutorial uses the **lambda children** approach because the section structure is identical across all styles -- only specific values (age range, illustration count, style description) change per request.
 
 ### The Updated PromptTypeHelper
 
@@ -408,7 +590,7 @@ Task:
 Write a complete, illustrated children's story based on the provided topic.
 The story should have 4 scenes, each with an accompanying illustration.
 Write the story as HTML with embedded CSS styling for a storybook look.
-Use {{IMAGE_1}}, {{IMAGE_2}}, etc. as placeholders where illustrations should appear.
+Use {{IMAGE_1}} through {{IMAGE_4}} as placeholders where illustrations should appear.
 For each placeholder, provide a detailed image generation prompt.
 
 Image Prompt Guidelines:
@@ -432,54 +614,13 @@ Always include the art style in every prompt: "children's book illustration,
   dreamy atmosphere"
 ```
 
-The structural skeleton is identical -- only three specific values change. This is the strength of the helper method approach: the prompt's architecture remains stable while specific instructions adapt to user preferences.
+The structural skeleton is identical -- only three specific values change. This is the strength of the lambda children approach: the prompt's architecture remains stable while specific instructions adapt to user preferences.
 
 ---
 
-## Step 3: Update the StoryOutputSchema
+## Step 3: Verify the StoryOutputSchema
 
-The output schema needs two new fields to prepare for reference image support in Part 7. Add them alongside the existing fields.
-
-**`apps/story-bundle/src/schemas.ts`** (update the `StoryOutputSchema`):
-
-```typescript
-export const StoryOutputSchema = withSchemaMetadata(
-  z.object({
-    title: z.string()
-      .describe('The story title'),
-    html_content: z.string()
-      .describe('Complete HTML story with {{IMAGE_1}}, {{IMAGE_2}} etc. placeholders where illustrations should appear. Include embedded CSS for storybook styling.'),
-    image_prompts: z.array(z.object({
-      placeholder: z.string()
-        .describe('The placeholder string used in the HTML, e.g. {{IMAGE_1}}'),
-      prompt: z.string()
-        .describe('Detailed image generation prompt for this scene illustration'),
-      alt_text: z.string().optional().default('Story illustration')
-        .describe('Short alt text describing the illustration'),
-    }))
-      .describe('Image generation prompts for each placeholder in the HTML'),
-    moral: z.string()
-      .describe('The moral or lesson of the story'),
-    age_range: z.string()
-      .describe('Target age range, e.g. "3-7 years"'),
-    needs_reference_image: z.boolean().optional().default(false)
-      .describe('Whether a reference character sheet should be generated first for visual consistency. Set to true when the story has a recurring main character who appears in multiple illustrations.'),
-    reference_image_description: z.string().optional()
-      .describe('If needs_reference_image is true, a detailed visual description of the main character to use as a reference sheet prompt. Include physical appearance, clothing, distinctive features, and coloring.'),
-  }),
-  'StoryOutput',
-  'An illustrated children\'s story with image placeholders and generation prompts'
-);
-```
-
-### What Changed
-
-Two new fields were added as top-level fields of the schema (not inside each image prompt):
-
-| Field | Type | Default | Purpose |
-|-------|------|---------|---------|
-| `needs_reference_image` | `boolean` (optional) | `false` | Tells the pipeline whether a character reference sheet should be generated before scene illustrations |
-| `reference_image_description` | `string` (optional) | `undefined` | A detailed visual description of the main character for generating a reference sheet |
+No schema changes are needed in this part. The schema from Part 2 already has the fields the pipeline needs (`title`, `html_content`, `image_prompts`, `moral`, `age_range`). In Part 7, you'll add `needs_reference_image` and `reference_image_description` fields when implementing reference image support.
 
 The `needs_reference_image` field uses `.optional().default(false)`, following the defensive pattern from Part 2. The LLM may or may not produce these fields depending on whether a reference image was mentioned in the prompt. By defaulting `needs_reference_image` to `false`, existing stories (without reference images) work without any changes to downstream code.
 
@@ -630,15 +771,16 @@ StoryWriterEntity.get_bot_request_args_impl() reads dto.data.customization
 Returns { input: "Write an illustrated...", args: { request: { customization: { style: 'anime', age_range: '5-8' } } } }
     |
     v
-StoryWriterBot passes args.request to StoryWriterPrompt.render()
+StoryWriterBot passes request args to StoryWriterPrompt.render()
     |
     v
-StoryWriterPrompt's constructor reads options = { request: { customization: { style: 'anime', age_range: '5-8' } } }
+StoryWriterPrompt.render() receives PromptNodeRequest with args.customization
     |
     v
-this.getStyle()      -> 'anime'
-this.getAgeRange()   -> '5-8'
-this.getStyleDescription() -> "children's book illustration, anime-inspired style, ..."
+Lambda children are called with the request:
+  (request) => request.args?.customization?.style  -> 'anime'
+  (request) => request.args?.customization?.age_range -> '5-8'
+  (request) => STYLE_DESCRIPTIONS[style] -> "children's book illustration, anime-inspired style, ..."
 ```
 
 The `as any` cast on the args object is a pragmatic choice. The full type path from `StoryWriterRETH['enh']['eth']['bth']['pth']['args']['request']` would need to match the updated `StoryWriterPromptArgs['request']` type exactly. Since the prompt's type helper was updated in Step 2 and the bot's type helper references it, the types are consistent at runtime. The `as any` avoids a verbose type assertion that adds no safety beyond what the prompt's own type checking provides.
@@ -782,7 +924,7 @@ data: { topic } as StoryEntityData,
 data: { topic, customization } as StoryEntityData,
 ```
 
-The validation is minimal -- no need to validate the `customization` object's fields here because the types are union types that TypeScript checks at compile time, and the prompt's helper methods provide defaults for any missing fields. If a caller sends `"style": "invalid-style"`, TypeScript will flag it at compile time (for typed clients) and at runtime the `getStyle()` helper will fall through to the default because `STYLE_DESCRIPTIONS['invalid-style']` is `undefined`, which the optional chaining handles gracefully.
+The validation is minimal -- no need to validate the `customization` object's fields here because the types are union types that TypeScript checks at compile time, and the prompt's lambda children provide defaults for any missing fields. If a caller sends `"style": "invalid-style"`, TypeScript will flag it at compile time (for typed clients) and at runtime the lambda will fall through to the default because `STYLE_DESCRIPTIONS['invalid-style']` is `undefined`, which the fallback `|| STYLE_DESCRIPTIONS['watercolor']` handles gracefully.
 
 ---
 
@@ -932,7 +1074,7 @@ The single `customization` object from the API request serves three different co
 
 | Consumer | Fields Used | How |
 |----------|------------|-----|
-| **StoryWriterPrompt** | `style`, `age_range`, `illustration_count` | Read via helper methods at construction time |
+| **StoryWriterPrompt** | `style`, `age_range`, `illustration_count` | Read via lambda children at render time from `request.args` |
 | **ImageGenerationEntity** | `image_quality`, `aspect_ratio` | Read from entity data, mapped to broker enums |
 | **Future: Reference image (Part 7)** | `reference_image_base64` | Will be passed to ImageGenerationEntity for reference-guided generation |
 
@@ -1076,9 +1218,9 @@ StoryWriterBot
   -> passes request args to StoryWriterPrompt.render()
     |
     v
-StoryWriterPrompt (constructed with options containing customization)
-  -> ImagePrompt section interpolates this.getStyleDescription()
-  -> getStyle() returns 'anime'
+StoryWriterPrompt (render() called with PromptNodeRequest containing customization in args)
+  -> ImagePrompt section's lambda child reads request.args.customization.style
+  -> style resolves to 'anime'
   -> STYLE_DESCRIPTIONS['anime'] returns:
      "children's book illustration, anime-inspired style,
       large expressive eyes, pastel colors, soft shading, kawaii aesthetic"
@@ -1104,7 +1246,7 @@ Seven layers from user choice to rendered image. Each layer has a single respons
 - **Pipeline entity**: Reads and distributes customization to child entities
 - **Writer entity**: Bridges entity data to bot request args
 - **Bot**: Passes request args to prompt
-- **Prompt**: Reads values via helpers, renders dynamic sections
+- **Prompt**: Lambda children read `request.args` at render time, producing dynamic sections
 - **LLM**: Follows the style instructions in the prompt
 - **Image generation entity**: Uses quality and aspect ratio from customization
 
@@ -1116,13 +1258,13 @@ Seven layers from user choice to rendered image. Each layer has a single respons
 
 2. **`STYLE_DESCRIPTIONS` centralizes prompt-level detail.** Image generation models need rich, descriptive prompts -- not single-word labels. A const map bridges the gap between user-facing simplicity (`'anime'`) and model-facing specificity (`"children's book illustration, anime-inspired style, large expressive eyes, pastel colors, soft shading, kawaii aesthetic"`).
 
-3. **Construction-time interpolation makes prompt sections dynamic.** Since the prompt is constructed fresh for each bot request, helper methods can read from `this.options` and interpolate values directly into template strings. This is simple and effective when the prompt is not a shared singleton.
+3. **Lambda children make prompt sections dynamic at render time.** Any child in a section's `children` array can be a `(request) => string` function. The SDK calls these lambdas with the `PromptNodeRequest` at render time, so they can read per-request data from `request.args`. This keeps the prompt instance reusable across requests -- the bot constructs it once, and each render produces different output based on the current request's customization.
 
-4. **Helper methods on the prompt class keep sections clean.** Instead of inline optional chaining and defaults in every template string, extract the logic into private methods like `getStyle()`, `getAgeRange()`, and `getIllustrationCount()`. Each method handles `undefined` at every level and returns a sensible default.
+4. **Lambda children keep sections readable by colocating logic with output.** Each lambda reads from `request.args` with optional chaining and provides a sensible default. The pattern -- read, default, interpolate, return -- is consistent across all dynamic children. Static children (plain strings) remain as-is, so the section's structure is still visible at a glance.
 
-5. **Customization flows through the entity data -> request args -> prompt template chain.** The API stores customization in entity data. The entity's `get_bot_request_args_impl()` reads it from the DTO and puts it in request args. The prompt reads from its construction options (which carry the request args). This is a general pattern for threading any dynamic configuration to the LLM.
+5. **Customization flows through the entity data -> request args -> prompt render chain.** The API stores customization in entity data. The entity's `get_bot_request_args_impl()` reads it from the DTO and puts it in request args. The prompt's lambda children read from `request.args` at render time. This is a general pattern for threading any dynamic per-request configuration to the LLM.
 
-6. **All customization fields should be optional with defaults.** This ensures backward compatibility -- existing callers that do not send customization continue to work. Defaults are applied at the lowest layer (the prompt helper methods), not at the API boundary.
+6. **All customization fields should be optional with defaults.** This ensures backward compatibility -- existing callers that do not send customization continue to work. Defaults are applied at the lowest layer (the prompt's lambda children), not at the API boundary.
 
 7. **Expand the schema before expanding the behavior.** Adding `needs_reference_image` and `reference_image_description` to the Zod schema now (with safe defaults) means Part 7 can start consuming these fields immediately. Schema changes deployed ahead of behavior changes are easier to validate as non-breaking.
 

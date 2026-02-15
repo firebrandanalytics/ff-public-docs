@@ -110,7 +110,7 @@ async createStory(body: CreateStoryRequest): Promise<CreateStoryResponse> {
 | `!VALID_STYLES.includes(...)` | Rejects unknown styles that the image generation prompt would not handle correctly. The error message lists valid options so the caller knows what to use. |
 | `!VALID_QUALITIES.includes(...)` | Ensures quality maps to a known `ImageQuality` enum value downstream. An unknown quality string would fall through to a default, masking the caller's intent. |
 | `!VALID_ASPECT_RATIOS.includes(...)` | Same principle as quality -- prevents silent fallback to a default aspect ratio. |
-| `!Number.isInteger(count) \|\| count < 1 \|\| count > 10` | Bounds the illustration count. Below 1 makes no sense; above 10 would produce very long generation times and potentially exceed context limits. |
+| `count < 1 \|\| count > 10` | Bounds the illustration count. Below 1 makes no sense; above 10 would produce very long generation times and potentially exceed context limits. |
 
 ### Error Message Design
 

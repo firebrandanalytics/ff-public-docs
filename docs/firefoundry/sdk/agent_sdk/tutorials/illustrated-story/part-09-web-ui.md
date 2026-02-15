@@ -13,7 +13,7 @@ In this part, you'll build a Next.js web application that serves as the frontend
 
 **What you'll build:** A Next.js frontend with a story form component, four API route proxies (`create`, `status`, `progress`, `download`), server-side configuration for the bundle client, and a custom Tailwind theme.
 
-**Starting point:** Completed code from [Part 8: Input Validation & Customization](./part-08-input-validation.md). You should have a fully working backend with content safety, story generation, parallel image generation, customization options, and input validation.
+**Starting point:** Completed code from [Part 8: Input Validation & Error Handling](./part-08-input-validation.md). You should have a fully working backend with content safety, story generation, parallel image generation, customization options, and input validation.
 
 ---
 
@@ -93,9 +93,9 @@ illustrated-story/
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev --port 3000",
+    "dev": "next dev --port 3002",
     "build": "next build",
-    "start": "next start --port 3000"
+    "start": "next start --port 3002"
   },
   "dependencies": {
     "next": "^15.0.0",
@@ -632,9 +632,18 @@ export default function RootLayout({
 **`apps/story-gui/src/app/page.tsx`**:
 
 ```tsx
+'use client';
+
 import { StoryForm } from '@/components/StoryForm';
+import { createStory } from '@/lib/storyApi';
 
 export default function HomePage() {
+  const handleSubmit = async (topic: string, customization?: any) => {
+    const result = await createStory(topic, customization);
+    console.log('Story created:', result.entity_id);
+    // In Part 10, this is replaced with the useStoryGeneration hook
+  };
+
   return (
     <main className="max-w-4xl mx-auto px-4 py-8">
       <header className="text-center mb-8">
@@ -647,13 +656,13 @@ export default function HomePage() {
         </p>
       </header>
 
-      <StoryForm />
+      <StoryForm onSubmit={handleSubmit} />
     </main>
   );
 }
 ```
 
-The page is deliberately simple. The `StoryForm` component handles user input and triggers story creation. In Part 10, you will add `ProgressPanel` and `ResultPanel` components that appear after submission.
+The page is deliberately simple. It passes a submission handler to `StoryForm` and logs the result. In Part 10, the `handleSubmit` function is replaced with the `useStoryGeneration` hook, and `ProgressPanel` and `ResultPanel` components are added to show real-time progress and results.
 
 ---
 
@@ -668,8 +677,7 @@ The form is the primary user interaction point. It collects a topic and optional
 
 import { useState } from 'react';
 import { Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
-import { createStory } from '@/lib/storyApi';
-import type { StoryFormData } from '@/types';
+import type { StoryCustomization } from '@shared/types';
 
 const STYLE_OPTIONS = [
   { value: 'watercolor', label: 'Watercolor' },
@@ -702,7 +710,11 @@ const AGE_RANGE_OPTIONS = [
 
 const ILLUSTRATION_COUNTS = [3, 4, 5, 6, 8];
 
-export function StoryForm() {
+interface StoryFormProps {
+  onSubmit: (topic: string, customization?: StoryCustomization) => void;
+}
+
+export function StoryForm({ onSubmit }: StoryFormProps) {
   const [topic, setTopic] = useState('');
   const [showCustomization, setShowCustomization] = useState(false);
   const [style, setStyle] = useState('watercolor');
@@ -721,22 +733,17 @@ export function StoryForm() {
     setError(null);
 
     try {
-      const formData: StoryFormData = {
-        topic: topic.trim(),
-        customization: showCustomization
-          ? {
-              style,
-              image_quality: quality,
-              aspect_ratio: aspectRatio,
-              age_range: ageRange,
-              illustration_count: numIllustrations,
-            }
-          : undefined,
-      };
+      const customization = showCustomization
+        ? {
+            style,
+            image_quality: quality,
+            aspect_ratio: aspectRatio,
+            age_range: ageRange,
+            illustration_count: numIllustrations,
+          }
+        : undefined;
 
-      const result = await createStory(formData.topic, formData.customization);
-      console.log('Story created:', result.entity_id);
-      // In Part 10, this will trigger progress streaming
+      onSubmit(topic.trim(), customization as StoryCustomization | undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create story');
     } finally {
@@ -828,14 +835,7 @@ export function StoryForm() {
                         : 'bg-gray-100 text-storybook-text hover:bg-gray-200'
                     }`}
                 >
-                  <div className="font-medium">{opt.label}</div>
-                  <div className={`text-xs ${
-                    quality === opt.value
-                      ? 'text-white/80'
-                      : 'text-storybook-muted'
-                  }`}>
-                    {opt.description}
-                  </div>
+                  {opt.label}
                 </button>
               ))}
             </div>
@@ -859,14 +859,7 @@ export function StoryForm() {
                         : 'bg-gray-100 text-storybook-text hover:bg-gray-200'
                     }`}
                 >
-                  <div className="font-medium">{opt.label}</div>
-                  <div className={`text-xs ${
-                    aspectRatio === opt.value
-                      ? 'text-white/80'
-                      : 'text-storybook-muted'
-                  }`}>
-                    {opt.description}
-                  </div>
+                  {opt.label}
                 </button>
               ))}
             </div>
@@ -1095,4 +1088,4 @@ In [Part 10: Real-Time Streaming & Downloads](./part-10-streaming-and-downloads.
 
 ---
 
-**Previous:** [Part 8: Input Validation & Customization](./part-08-input-validation.md) | **Next:** [Part 10: Real-Time Streaming & Downloads](./part-10-streaming-and-downloads.md)
+**Previous:** [Part 8: Input Validation & Error Handling](./part-08-input-validation.md) | **Next:** [Part 10: Real-Time Streaming & Downloads](./part-10-streaming-and-downloads.md)

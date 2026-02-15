@@ -89,7 +89,7 @@ pnpm install
 By the end of this tutorial series, the `src/` directory will contain several subdirectories. Create the folder structure now:
 
 ```bash
-mkdir -p apps/story-bundle/src/{bots,entities,prompts,services}
+mkdir -p apps/story-bundle/src/{bots,entities,prompts}
 ```
 
 The final structure will look like this:
@@ -109,8 +109,6 @@ apps/story-bundle/src/
 ├── prompts/
 │   ├── ContentSafetyPrompt.ts
 │   └── StoryWriterPrompt.ts
-└── services/
-    └── image-service.ts
 ```
 
 In this part, you'll create the files related to content safety: `schemas.ts`, `ContentSafetyPrompt.ts`, `ContentSafetyBot.ts`, `ContentSafetyCheckEntity.ts`, and update `constructors.ts`.
