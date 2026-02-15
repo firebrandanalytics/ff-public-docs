@@ -700,6 +700,47 @@ WHERE order_date BETWEEN '2025-10-01' AND '2025-12-31'
 
 The business rules prevented the AI from including cancelled and pending orders. The calendar context ensured the correct date range. The annotation confirmed the right column.
 
+## Process Discovery and Stored Definitions
+
+Process models and stored definitions ([Part 2](./02-stored-definitions.md)) are two sides of the same learning loop. When an AI agent discovers a pattern — through repeated user interactions, recurring questions, or common query shapes — that pattern has two aspects:
+
+1. **The queryable asset** — A stored view that encodes the joins, filters, and aggregations. This is what the agent queries next time.
+2. **The business reasoning** — A process model entry that documents *why* the query is structured this way, what business rules govern it, and when it's appropriate to use.
+
+### How Discovery Works
+
+Consider an AI agent that keeps getting asked about "order fulfillment turnaround time." Over several conversations, it learns:
+
+- The calculation requires joining `orders`, `shipping_performance`, and sometimes `returns`
+- Cancelled orders must be excluded (business rule)
+- "Turnaround" means order_date to delivered_date, not ship_date
+- Wholesale orders have different SLAs than retail orders (tribal knowledge)
+
+The agent captures this as:
+
+**Stored definition** (Part 2): A `fulfillment_turnaround` view that pre-joins the right tables and calculates the metric correctly. See [AI-Generated Views: The Learning Loop](./02-stored-definitions.md#ai-generated-views-the-learning-loop).
+
+**Process model entries** (this part):
+- A **business rule**: "Exclude cancelled orders from fulfillment metrics" (hard_enforced)
+- An **annotation**: "Wholesale orders have negotiated SLAs — don't compare turnaround times across channels without adjusting for channel type"
+- A **tribal note** on the shipping step: "delivered_date, not ship_date, is the correct end point for turnaround calculation"
+
+Neither capture alone is complete. The view gives the agent a reliable query. The process model gives it the context to use that query correctly — and to explain its reasoning to the user.
+
+### From Ad-Hoc to Curated
+
+The progression from discovery to production typically follows this path:
+
+| Stage | Where It Lives | Who Maintains It |
+|-------|---------------|-----------------|
+| Ad-hoc query | Agent's conversation context | AI agent |
+| Agent-private view | `agent:report-bot` namespace | AI agent |
+| Agent-private rule | Process model with agent scope | AI agent |
+| Promoted view | `system` namespace | Human reviewer |
+| Official business rule | Process model, `hard_enforced` | Business analyst |
+
+The namespace and enforcement systems make this promotion safe. An agent can experiment freely in its own namespace. A human promotes the valuable discoveries to shared visibility after review.
+
 ## Summary
 
 You've learned how to:
@@ -710,5 +751,6 @@ You've learned how to:
 4. **Configure** calendar context — fiscal calendar for date-based query interpretation
 5. **Load** everything into DAS — processes, steps, rules, annotations, calendars
 6. **Validate** for consistency — check references, sequences, and table names
+7. **Connect** to stored definitions — process models document the *why* behind the *how* of stored views
 
 In [Part 5](./05-querying.md), you'll bring all five layers together — schema, dictionary, stored definitions, ontology, and process models — to build queries that leverage the full knowledge architecture.

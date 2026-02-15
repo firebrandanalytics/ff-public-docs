@@ -453,6 +453,115 @@ If a `quarterly_revenue_by_segment` view existed, the query simplifies to:
 
 All the joins, filters, and aggregation are pre-encoded in the view. The AI just queries a flat table.
 
+## Identity and Row-Level Security in Practice
+
+The `X-On-Behalf-Of` header isn't just for ACL checks — it flows all the way through to stored definition expansion, enabling row-level security (RLS) that filters data per caller transparently. This section shows the end-to-end flow.
+
+### The Setup
+
+In [Part 2](./02-stored-definitions.md#identity-and-row-level-security), we defined a `my_orders` view with a security predicate that filters by caller identity. Let's see what happens when different callers query it.
+
+### Caller A: Customer 42
+
+```bash
+curl -s -X POST "$DA_URL/v1/connections/firekicks/query-ast" \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: user:42" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "select": {
+      "columns": [
+        { "expr": { "column": { "column": "order_id" } } },
+        { "expr": { "column": { "column": "order_date" } } },
+        { "expr": { "column": { "column": "total_amount" } } }
+      ],
+      "from": { "table": { "table": "my_orders" } },
+      "orderBy": [{ "expr": { "column": { "column": "order_date" } }, "dir": "SORT_DESC" }],
+      "limit": 5
+    }
+  }' | jq
+```
+
+The service expands `my_orders`, injects the security predicate with `customer_id = 42`, and returns only customer 42's orders.
+
+### Caller B: Customer 99
+
+The same query with a different identity:
+
+```bash
+curl -s -X POST "$DA_URL/v1/connections/firekicks/query-ast" \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: user:99" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "select": {
+      "columns": [{ "expr": { "star": {} } }],
+      "from": { "table": { "table": "my_orders" } }
+    }
+  }' | jq
+```
+
+Same view, same query, different results — customer 99 sees only their orders.
+
+### What the AI Sees vs What Actually Runs
+
+Use `TranslateAST` to see the expanded SQL:
+
+```bash
+curl -s -X POST "$DA_URL/v1/connections/firekicks/translate-ast" \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: user:42" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "select": {
+      "columns": [{ "expr": { "star": {} } }],
+      "from": { "table": { "table": "my_orders" } },
+      "where": {
+        "binary": {
+          "op": "BINARY_OP_GT",
+          "left": { "column": { "column": "total_amount" } },
+          "right": { "literal": { "numberValue": 100 } }
+        }
+      }
+    }
+  }' | jq
+```
+
+Response:
+```json
+{
+  "sql": "SELECT * FROM (SELECT \"order_id\", \"order_date\", \"order_status\", \"total_amount\", \"order_channel\" FROM \"orders\" WHERE \"customer_id\" = 42) AS \"my_orders\" WHERE \"total_amount\" > 100",
+  "dialect": "postgresql"
+}
+```
+
+The caller's query (`WHERE total_amount > 100`) is applied *on top of* the security predicate (`WHERE customer_id = 42`). The caller can add filters to further restrict their own data, but they cannot bypass the security predicate to see other customers' data.
+
+### Multi-Tenant Agent Pattern
+
+In a typical multi-tenant deployment, multiple AI agents serve different customers or business units, all using the same stored definitions:
+
+```
+Agent for Customer A  →  X-On-Behalf-Of: customer:A  →  sees only A's data
+Agent for Customer B  →  X-On-Behalf-Of: customer:B  →  sees only B's data
+Admin agent           →  X-On-Behalf-Of: user:admin   →  no predicate, sees all data
+```
+
+The agents don't need to know about the security filter. They query `my_orders`, `my_returns`, `my_shipments` as if they were regular tables. The service handles the multi-tenancy transparently.
+
+### Identity Beyond Customer ID
+
+Security predicates aren't limited to customer IDs. Common patterns:
+
+| Identity Type | Predicate Filters On | Use Case |
+|--------------|---------------------|----------|
+| `customer:123` | `customer_id` | Customer portal — see only your orders |
+| `partner:acme` | `retail_partner_id` | Partner portal — see only your stores' sales |
+| `region:west` | `sales_region` | Regional manager — see only your region |
+| `app:sales-agent` | *(no predicate)* | Internal agent — full access per ACL |
+
+The same `orders` data serves all these audiences through different views with different security predicates, all resolved from the caller's identity.
+
 ## The Complete Agent Workflow
 
 Here's how an AI agent uses all five layers end-to-end:
