@@ -878,14 +878,57 @@ The caller never sees the security predicate. They query `my_orders` and get bac
 
 ### Implicit Variables
 
-Security predicates can reference **implicit variables** that come from the request context rather than from explicit query parameters. The most important is the caller's identity:
+Security predicates reference **variables** — named values resolved at query time from the request context. The variable expression `{ "variable": { "name": "..." } }` is a first-class AST node type, resolved before the query reaches the database.
+
+#### Built-in Variables
 
 | Variable | Source | Description |
 |----------|--------|-------------|
-| Caller identity | `X-On-Behalf-Of` header | The authenticated identity of the request sender |
-| Caller namespace | Derived from identity | The namespace scope for view resolution |
+| `caller_identity` | `X-On-Behalf-Of` header | The authenticated identity of the request sender |
+| `caller_connection` | Request `connection` field | The connection being queried |
 
-These are "implicit" because the caller doesn't pass them as query parameters — the service injects them from the request context.
+These are always available and don't require any configuration.
+
+#### Custom Variables
+
+Beyond built-ins, the service supports custom variables with different resolution strategies:
+
+| Strategy | How It Resolves | Use Case |
+|----------|----------------|----------|
+| `direct` | Uses the caller identity value as-is | When the identity header matches the database value |
+| `lookup` | Translates via a mapping table | When the identity format differs from the database (e.g., email → customer_id) |
+
+Mapping tables are DAS-managed key-value lookups that translate between identity systems. For example, if your callers authenticate with email addresses but your database uses numeric customer IDs, a mapping table bridges the gap:
+
+```bash
+# Create a mapping table
+curl -s -X POST "$ADMIN_URL/admin/mappings" \
+  -H "X-API-Key: $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "email_to_customer",
+    "keyColumn": "email",
+    "valueColumn": "customer_id",
+    "entries": [
+      { "key": "alice@example.com", "value": "42" },
+      { "key": "bob@example.com", "value": "99" }
+    ]
+  }'
+
+# Create a variable that uses the mapping table
+curl -s -X POST "$ADMIN_URL/admin/variables" \
+  -H "X-API-Key: $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "customer_id",
+    "resolution": "lookup",
+    "lookupTable": "email_to_customer",
+    "lookupKey": "email",
+    "lookupValue": "customer_id"
+  }'
+```
+
+Now a security predicate using `{ "variable": { "name": "customer_id" } }` will automatically translate the caller's email to the correct customer ID at query time.
 
 ### Defining a Security Predicate
 
@@ -912,19 +955,19 @@ ff-da admin views create --file - <<'EOF'
       "binary": {
         "op": "BINARY_OP_EQ",
         "left": { "column": { "column": "customer_id" } },
-        "right": { "callerIdentity": {} }
+        "right": { "variable": { "name": "caller_identity" } }
       }
     }
 }
 EOF
 ```
 
-When `user:42` queries `my_orders`, the service expands it to:
+When `user:42` queries `my_orders`, the service resolves `caller_identity` to `42` (from the `X-On-Behalf-Of` header) and expands the query to:
 
 ```sql
 SELECT order_id, order_date, order_status, total_amount, order_channel
 FROM orders
-WHERE customer_id = 42  -- injected from X-On-Behalf-Of
+WHERE customer_id = 42  -- resolved from caller_identity variable
 ```
 
 When `user:99` queries the same view, they get `WHERE customer_id = 99`. Same view definition, different results per caller.
@@ -960,6 +1003,43 @@ WHERE customer_id = 42                          -- security predicate
 The caller wrote a one-line query. The service layered in security and business rules automatically.
 
 Security predicates are validated by the same AST validator that checks queries, so they can't introduce injection vulnerabilities. See [Part 5](./05-querying.md#identity-and-row-level-security-in-practice) for end-to-end examples of identity-driven queries.
+
+### Lookup Variables for Cross-System Identity
+
+In practice, the caller's identity format often doesn't match the database column. For example, callers authenticate with email addresses (`alice@acme.com`), but the `orders` table uses numeric `customer_id` values. A lookup variable bridges this gap:
+
+```bash
+ff-da admin views create --file - <<'EOF'
+{
+    "name": "my_orders",
+    "namespace": "system",
+    "connection": "firekicks",
+    "description": "Orders filtered by caller — identity resolved via lookup table",
+    "ast": {
+      "columns": [
+        { "expr": { "column": { "column": "order_id" } } },
+        { "expr": { "column": { "column": "order_date" } } },
+        { "expr": { "column": { "column": "total_amount" } } }
+      ],
+      "from": { "table": { "table": "orders" } }
+    },
+    "securityPredicate": {
+      "binary": {
+        "op": "BINARY_OP_EQ",
+        "left": { "column": { "column": "customer_id" } },
+        "right": { "variable": { "name": "customer_id" } }
+      }
+    }
+}
+EOF
+```
+
+When `alice@acme.com` queries this view, the service:
+1. Resolves the `customer_id` variable using the `email_to_customer` mapping table
+2. Finds `alice@acme.com` → `42`
+3. Injects `WHERE customer_id = 42`
+
+The caller doesn't need to know their numeric customer ID. The view definition doesn't embed the mapping logic. The mapping table is managed separately and can be updated without modifying any views.
 
 ## Summary
 
