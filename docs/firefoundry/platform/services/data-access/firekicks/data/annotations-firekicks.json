@@ -50,7 +50,7 @@
     {
       "connection": "firekicks",
       "table": "customers",
-      "description": "Customer master data including demographics, segmentation, and lifetime value. Contains approximately 10,000 customers segmented into Premium, Standard, and Budget tiers based on purchasing behavior. Includes PostGIS geography point for location-based analytics.",
+      "description": "Customer master data including demographics, segmentation, and lifetime value. Contains approximately 10,000 customers segmented into Premium (10%), Athlete (20%), Regular (40%), and Bargain-Hunter (30%) tiers based on purchasing behavior. Includes PostGIS geography point for location-based analytics.",
       "businessName": "Customer Profiles",
       "tags": ["customer", "master-data"],
       "grain": "One row per customer",
@@ -111,7 +111,7 @@
         { "targetTable": "shipping_performance", "type": "parent", "description": "Each order has a shipment record", "joinHint": "orders.order_id = shipping_performance.order_id" },
         { "targetTable": "daily_sales_summary", "type": "parent", "description": "Orders aggregate into daily sales summary by channel", "joinHint": "orders.order_date = daily_sales_summary.summary_date AND orders.order_channel = daily_sales_summary.channel" }
       ],
-      "qualityNotes": { "knownIssues": ["All orders have status='completed' -- no filtering needed on order_status", "retail_partner_id is NULL for online and direct orders (~65% null)"], "completeness": "100%", "freshness": "daily batch" },
+      "qualityNotes": { "knownIssues": ["retail_partner_id is NULL for online and direct orders (~65% null)"], "completeness": "100%", "freshness": "daily batch" },
       "usageNotes": "Primary fact table for sales analysis. Use order_date for business reporting, NOT created_at. Use daily_sales_summary for pre-aggregated daily metrics instead of aggregating this table when only channel-level daily totals are needed. For item-level detail, join to order_items."
     },
     {
@@ -207,7 +207,7 @@
     {
       "connection": "firekicks",
       "table": "customer_segments_history",
-      "description": "Historical record of customer segment changes over time. Tracks when customers move between Premium, Standard, and Budget tiers with the reason for each change. Enables cohort analysis and segment migration tracking.",
+      "description": "Historical record of customer segment changes over time. Tracks when customers move between Premium, Athlete, Regular, and Bargain-Hunter tiers with the reason for each change. Enables cohort analysis and segment migration tracking.",
       "businessName": "Customer Segment History",
       "tags": ["customer", "segmentation", "historical"],
       "grain": "One row per customer per segment period",
@@ -660,15 +660,16 @@
       "connection": "firekicks",
       "table": "orders",
       "column": "order_status",
-      "description": "Current status of the order. In this dataset all orders have status 'completed'",
+      "description": "Current status of the order in the fulfillment lifecycle",
       "semanticType": "dimension",
       "businessName": "Order Status",
-      "tags": ["sales"],
+      "tags": ["sales", "fulfillment"],
       "dataClassification": "public",
-      "statistics": { "distinctCount": 1, "nullCount": 0 },
-      "valuePattern": "Always 'completed'",
-      "constraints": { "notNull": true, "enum": ["completed"] },
-      "usageNotes": "All orders in this dataset have status 'completed'. No filtering on this column is needed. It exists for schema compatibility."
+      "sampleValues": ["shipped", "delivered", "pending", "processing", "cancelled"],
+      "statistics": { "distinctCount": 5, "nullCount": 0 },
+      "valuePattern": "Lowercase status string",
+      "constraints": { "notNull": true, "enum": ["pending", "processing", "shipped", "delivered", "cancelled"] },
+      "usageNotes": "Filter to shipped+delivered for revenue reports. Use pending+processing for pipeline analysis. Cancelled orders should be excluded from financial aggregations."
     },
     {
       "connection": "firekicks",
@@ -894,15 +895,15 @@
       "connection": "firekicks",
       "table": "customers",
       "column": "customer_segment",
-      "description": "Current customer tier classification. Values: 'Premium', 'Standard', 'Budget'. Determined by purchase history and lifetime value",
+      "description": "Current customer tier classification. Values: 'Premium', 'Athlete', 'Regular', 'Bargain-Hunter'. Determined by purchase history, activity, and price sensitivity",
       "semanticType": "dimension",
       "businessName": "Customer Segment",
       "tags": ["customer", "segmentation"],
       "dataClassification": "public",
-      "statistics": { "distinctCount": 3, "nullCount": 0 },
+      "statistics": { "distinctCount": 4, "nullCount": 0 },
       "valuePattern": "Title-case segment name",
-      "constraints": { "notNull": true, "enum": ["Premium", "Standard", "Budget"] },
-      "usageNotes": "This is the CURRENT segment. For historical segment changes, use customer_segments_history. Distribution is approximately Premium ~20%, Standard ~50%, Budget ~30%.",
+      "constraints": { "notNull": true, "enum": ["Premium", "Athlete", "Regular", "Bargain-Hunter"] },
+      "usageNotes": "This is the CURRENT segment. For historical segment changes, use customer_segments_history. Distribution is approximately Premium ~10%, Athlete ~20%, Regular ~40%, Bargain-Hunter ~30%.",
       "relationships": [
         { "targetTable": "customer_segments_history", "targetColumn": "segment", "description": "Values match segment history records", "matchType": "exact" },
         { "targetTable": "campaigns", "targetColumn": "target_segment", "description": "Campaigns may target specific segments", "matchType": "exact" }
@@ -1218,14 +1219,14 @@
       "connection": "firekicks",
       "table": "customer_segments_history",
       "column": "segment",
-      "description": "The customer segment assigned during this period. Values: 'Premium', 'Standard', 'Budget'",
+      "description": "The customer segment assigned during this period. Values: 'Premium', 'Athlete', 'Regular', 'Bargain-Hunter'",
       "semanticType": "dimension",
       "businessName": "Segment",
       "tags": ["customer", "segmentation"],
       "dataClassification": "public",
-      "statistics": { "distinctCount": 3, "nullCount": 0 },
+      "statistics": { "distinctCount": 4, "nullCount": 0 },
       "valuePattern": "Title-case segment name",
-      "constraints": { "notNull": true, "enum": ["Premium", "Standard", "Budget"] },
+      "constraints": { "notNull": true, "enum": ["Premium", "Athlete", "Regular", "Bargain-Hunter"] },
       "relationships": [
         { "targetTable": "customers", "targetColumn": "customer_segment", "description": "Values match the current segment in customer master", "matchType": "exact" }
       ]
@@ -1355,14 +1356,14 @@
       "connection": "firekicks",
       "table": "campaigns",
       "column": "target_segment",
-      "description": "Customer segment this campaign is targeting. Values: 'Premium', 'Standard', 'Budget', or NULL for untargeted",
+      "description": "Customer segment this campaign is targeting. Values: 'Premium', 'Athlete', 'Regular', 'Bargain-Hunter', or NULL for untargeted",
       "semanticType": "dimension",
       "businessName": "Target Segment",
       "tags": ["marketing", "segmentation"],
       "dataClassification": "public",
-      "statistics": { "distinctCount": 3, "nullCount": 16 },
+      "statistics": { "distinctCount": 4, "nullCount": 16 },
       "valuePattern": "Title-case segment name or NULL",
-      "constraints": { "enum": ["Premium", "Standard", "Budget"] },
+      "constraints": { "enum": ["Premium", "Athlete", "Regular", "Bargain-Hunter"] },
       "qualityNotes": { "nullRate": 0.20, "knownIssues": ["NULL means the campaign targets all segments, not missing data"] },
       "relationships": [
         { "targetTable": "customers", "targetColumn": "customer_segment", "description": "Values match customer segment dimension", "matchType": "exact" }
@@ -2719,14 +2720,14 @@
       "connection": "firekicks",
       "table": "customer_nearest_store",
       "column": "customer_segment",
-      "description": "Customer's current segment tier (Premium, Standard, Budget)",
+      "description": "Customer's current segment tier (Premium, Athlete, Regular, Bargain-Hunter)",
       "semanticType": "dimension",
       "businessName": "Customer Segment",
       "tags": ["customer", "segmentation"],
       "dataClassification": "public",
-      "statistics": { "distinctCount": 3, "nullCount": 0 },
+      "statistics": { "distinctCount": 4, "nullCount": 0 },
       "valuePattern": "Title-case segment name",
-      "constraints": { "notNull": true, "enum": ["Premium", "Standard", "Budget"] }
+      "constraints": { "notNull": true, "enum": ["Premium", "Athlete", "Regular", "Bargain-Hunter"] }
     },
     {
       "connection": "firekicks",

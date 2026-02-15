@@ -56,15 +56,15 @@ Business concepts that map to one or more database tables. Each entity type has 
   "name": "Customer",
   "domain": "customer",
   "description": "Individual or business that purchases products",
-  "contextClues": ["buyer", "purchaser", "account", "segment"],
-  "isAbstract": false,
-  "disambiguationPrompt": "Customer refers to end buyers, not retail partners or suppliers"
+  "context_clues": ["buyer", "purchaser", "account", "segment"],
+  "is_abstract": false,
+  "disambiguation_prompt": "Customer refers to end buyers, not retail partners or suppliers"
 }
 ```
 
 Key fields:
-- **contextClues** — Words that hint at this entity type when they appear in user queries. "Show me buyer segments" → resolves to Customer.
-- **isAbstract** — Abstract entity types can't be queried directly. They serve as parents in IS_A hierarchies (e.g., "Party" → Customer, Supplier).
+- **context_clues** — Words that hint at this entity type when they appear in user queries. "Show me buyer segments" → resolves to Customer.
+- **is_abstract** — Abstract entity types can't be queried directly. They serve as parents in IS_A hierarchies (e.g., "Party" → Customer, Supplier).
 - **disambiguationPrompt** — When the term is ambiguous, this text helps the AI choose correctly.
 
 #### Column Mappings
@@ -73,13 +73,13 @@ Map entity types to specific database columns, with a **role** indicating how th
 
 ```json
 {
-  "entityType": "Customer",
+  "entity_type": "Customer",
   "domain": "customer",
   "connection": "firekicks",
   "table": "customers",
   "column": "customer_id",
   "role": "id",
-  "isPrimary": true,
+  "is_primary": true,
   "confidence": 1.0
 }
 ```
@@ -106,15 +106,15 @@ Abstract business ideas that may or may not correspond directly to a column. Con
   "name": "Revenue",
   "domain": "sales",
   "description": "Total income from shipped and delivered orders",
-  "calculationRule": "SUM(orders.total_amount) WHERE order_status IN ('shipped', 'delivered')",
+  "calculation_rule": "SUM(orders.total_amount) WHERE order_status IN ('shipped', 'delivered')",
   "unit": "USD",
-  "timeSensitive": true
+  "time_sensitive": true
 }
 ```
 
 Key fields:
-- **calculationRule** — Human-readable formula. The AI uses this to construct the correct query.
-- **timeSensitive** — If true, the concept's value changes based on the time period queried.
+- **calculation_rule** — Human-readable formula. The AI uses this to construct the correct query.
+- **time_sensitive** — If true, the concept's value changes based on the time period queried.
 - **dependsOn** — Other concepts this one depends on (e.g., "Profit" depends on "Revenue" and "COGS").
 
 ### Edge Types
@@ -301,9 +301,9 @@ ff-da admin ontology entity-types create --file - <<'EOF'
   "name": "Customer",
   "domain": "customer",
   "description": "Individual or business that purchases FireKicks products",
-  "contextClues": ["customer", "buyer", "purchaser", "account", "segment"],
-  "isAbstract": false,
-  "disambiguationPrompt": "Customer refers to end buyers who purchase products. Not to be confused with retail partners (stores that carry FireKicks) or suppliers (manufacturers)."
+  "context_clues": ["customer", "buyer", "purchaser", "account", "segment"],
+  "is_abstract": false,
+  "disambiguation_prompt": "Customer refers to end buyers who purchase products. Not to be confused with retail partners (stores that carry FireKicks) or suppliers (manufacturers)."
 }
 EOF
 ```
@@ -314,9 +314,9 @@ ff-da admin ontology entity-types create --file - <<'EOF'
   "name": "Order",
   "domain": "sales",
   "description": "A customer purchase transaction with one or more line items",
-  "contextClues": ["order", "purchase", "transaction", "sale", "checkout"],
-  "isAbstract": false,
-  "disambiguationPrompt": "An Order is a completed purchase transaction. Use order_date for business date filtering. total_amount is the final amount including tax and shipping."
+  "context_clues": ["order", "purchase", "transaction", "sale", "checkout"],
+  "is_abstract": false,
+  "disambiguation_prompt": "An Order is a completed purchase transaction. Use order_date for business date filtering. total_amount is the final amount including tax and shipping."
 }
 EOF
 ```
@@ -327,9 +327,9 @@ ff-da admin ontology entity-types create --file - <<'EOF'
   "name": "Product",
   "domain": "product",
   "description": "An athletic shoe product in the FireKicks catalog",
-  "contextClues": ["product", "shoe", "sneaker", "item", "SKU", "model"],
-  "isAbstract": false,
-  "disambiguationPrompt": "Product refers to items in the shoe catalog. Categories: running, basketball, casual, training, kids."
+  "context_clues": ["product", "shoe", "sneaker", "item", "SKU", "model"],
+  "is_abstract": false,
+  "disambiguation_prompt": "Product refers to items in the shoe catalog. Categories: running, basketball, casual, training, kids."
 }
 EOF
 ```
@@ -338,15 +338,15 @@ EOF
 
 ```bash
 # Customer ID mapping
-echo '{"entityType":"Customer","domain":"customer","connection":"firekicks","table":"customers","column":"customer_id","role":"id","isPrimary":true,"confidence":1.0}' \
+echo '{"entity_type":"Customer","domain":"customer","connection":"firekicks","table":"customers","column":"customer_id","role":"id","is_primary":true,"confidence":1.0}' \
   | ff-da admin ontology columns create
 
 # Customer segment mapping
-echo '{"entityType":"Customer","domain":"customer","connection":"firekicks","table":"customers","column":"customer_segment","role":"category","isPrimary":true,"confidence":1.0}' \
+echo '{"entity_type":"Customer","domain":"customer","connection":"firekicks","table":"customers","column":"customer_segment","role":"category","is_primary":true,"confidence":1.0}' \
   | ff-da admin ontology columns create
 
 # Order total amount mapping
-echo '{"entityType":"Order","domain":"sales","connection":"firekicks","table":"orders","column":"total_amount","role":"amount","isPrimary":true,"confidence":1.0}' \
+echo '{"entity_type":"Order","domain":"sales","connection":"firekicks","table":"orders","column":"total_amount","role":"amount","is_primary":true,"confidence":1.0}' \
   | ff-da admin ontology columns create
 ```
 
@@ -355,18 +355,19 @@ echo '{"entityType":"Order","domain":"sales","connection":"firekicks","table":"o
 ```bash
 ff-da admin ontology relationships create --file - <<'EOF'
 {
-  "fromEntity": "Customer",
-  "toEntity": "Order",
+  "domain": "sales",
+  "from_entity": "Customer",
+  "to_entity": "Order",
   "verb": "places",
   "cardinality": "1:N",
-  "joinHints": [{
-    "fromConnection": "firekicks",
-    "fromTable": "customers",
-    "fromColumn": "customer_id",
-    "toConnection": "firekicks",
-    "toTable": "orders",
-    "toColumn": "customer_id",
-    "joinType": "INNER"
+  "join_hints": [{
+    "from_connection": "firekicks",
+    "from_table": "customers",
+    "from_column": "customer_id",
+    "to_connection": "firekicks",
+    "to_table": "orders",
+    "to_column": "customer_id",
+    "join_type": "INNER"
   }],
   "confidence": 1.0
 }
@@ -376,18 +377,19 @@ EOF
 ```bash
 ff-da admin ontology relationships create --file - <<'EOF'
 {
-  "fromEntity": "Order",
-  "toEntity": "OrderItem",
+  "domain": "sales",
+  "from_entity": "Order",
+  "to_entity": "OrderItem",
   "verb": "contains",
   "cardinality": "1:N",
-  "joinHints": [{
-    "fromConnection": "firekicks",
-    "fromTable": "orders",
-    "fromColumn": "order_id",
-    "toConnection": "firekicks",
-    "toTable": "order_items",
-    "toColumn": "order_id",
-    "joinType": "INNER"
+  "join_hints": [{
+    "from_connection": "firekicks",
+    "from_table": "orders",
+    "from_column": "order_id",
+    "to_connection": "firekicks",
+    "to_table": "order_items",
+    "to_column": "order_id",
+    "join_type": "INNER"
   }],
   "confidence": 1.0
 }
@@ -402,9 +404,9 @@ ff-da admin ontology concepts create --file - <<'EOF'
   "name": "Revenue",
   "domain": "sales",
   "description": "Total income from completed (shipped or delivered) orders",
-  "calculationRule": "SUM(orders.total_amount) WHERE order_status IN ('shipped', 'delivered')",
+  "calculation_rule": "SUM(orders.total_amount) WHERE order_status IN ('shipped', 'delivered')",
   "unit": "USD",
-  "timeSensitive": true
+  "time_sensitive": true
 }
 EOF
 ```
@@ -415,10 +417,10 @@ ff-da admin ontology concepts create --file - <<'EOF'
   "name": "Average Order Value",
   "domain": "sales",
   "description": "Mean order total across all completed orders",
-  "calculationRule": "AVG(orders.total_amount) WHERE order_status IN ('shipped', 'delivered')",
+  "calculation_rule": "AVG(orders.total_amount) WHERE order_status IN ('shipped', 'delivered')",
   "unit": "USD",
-  "timeSensitive": true,
-  "dependsOn": ["Revenue"]
+  "time_sensitive": true,
+  "depends_on": ["Revenue"]
 }
 EOF
 ```
@@ -429,9 +431,9 @@ ff-da admin ontology concepts create --file - <<'EOF'
   "name": "Campaign ROI",
   "domain": "marketing",
   "description": "Return on investment for marketing campaigns",
-  "calculationRule": "(SUM(campaign_performance.revenue_attributed) - SUM(campaign_performance.spend)) / SUM(campaign_performance.spend) * 100",
+  "calculation_rule": "(SUM(campaign_performance.revenue_attributed) - SUM(campaign_performance.spend)) / SUM(campaign_performance.spend) * 100",
   "unit": "percent",
-  "timeSensitive": true
+  "time_sensitive": true
 }
 EOF
 ```
@@ -447,44 +449,45 @@ ff-da admin ontology import --domain sales --file - <<'EOF'
     "name": "sales",
     "description": "Order processing, line items, and retail distribution"
   },
-  "entityTypes": [
+  "entity_types": [
     {
       "name": "Order",
       "domain": "sales",
       "description": "A customer purchase transaction",
-      "contextClues": ["order", "purchase", "transaction", "sale"]
+      "context_clues": ["order", "purchase", "transaction", "sale"]
     },
     {
       "name": "OrderItem",
       "domain": "sales",
       "description": "A line item within an order",
-      "contextClues": ["line item", "item", "SKU"]
+      "context_clues": ["line item", "item", "SKU"]
     }
   ],
-  "columnMappings": [
+  "column_mappings": [
     {
-      "entityType": "Order",
+      "entity_type": "Order",
       "domain": "sales",
       "connection": "firekicks",
       "table": "orders",
       "column": "order_id",
       "role": "id",
-      "isPrimary": true,
+      "is_primary": true,
       "confidence": 1.0
     }
   ],
   "relationships": [
     {
-      "fromEntity": "Order",
-      "toEntity": "OrderItem",
+      "domain": "sales",
+      "from_entity": "Order",
+      "to_entity": "OrderItem",
       "verb": "contains",
       "cardinality": "1:N",
-      "joinHints": [{
-        "fromTable": "orders",
-        "fromColumn": "order_id",
-        "toTable": "order_items",
-        "toColumn": "order_id",
-        "joinType": "INNER"
+      "join_hints": [{
+        "from_table": "orders",
+        "from_column": "order_id",
+        "to_table": "order_items",
+        "to_column": "order_id",
+        "join_type": "INNER"
       }]
     }
   ],
@@ -493,9 +496,9 @@ ff-da admin ontology import --domain sales --file - <<'EOF'
       "name": "Revenue",
       "domain": "sales",
       "description": "Total income from completed orders",
-      "calculationRule": "SUM(orders.total_amount) WHERE order_status IN ('shipped', 'delivered')",
+      "calculation_rule": "SUM(orders.total_amount) WHERE order_status IN ('shipped', 'delivered')",
       "unit": "USD",
-      "timeSensitive": true
+      "time_sensitive": true
     }
   ]
 }
@@ -532,6 +535,12 @@ Validation checks:
 
 The admin API is for building the ontology. The agent-facing API is for querying it at runtime. AI agents use these gRPC endpoints to resolve business terms and discover data structures.
 
+> **Setup:** The gRPC examples below use `$API_KEY` and `$IDENTITY`. Set them if you haven't already:
+> ```bash
+> export API_KEY=dev-api-key
+> export IDENTITY=user:tutorial
+> ```
+
 ### GetOntologyContext
 
 Returns a domain-level overview for injection into the AI's system prompt:
@@ -540,6 +549,7 @@ Returns a domain-level overview for injection into the AI's system prompt:
 # gRPC
 grpcurl -plaintext \
   -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: $IDENTITY" \
   -d '{"domain": "sales", "connection": "firekicks"}' \
   localhost:50051 ontology.v1.OntologyService/GetOntologyContext
 ```
@@ -569,7 +579,7 @@ Response:
     {
       "name": "Revenue",
       "description": "Total income from completed orders",
-      "timeSensitive": true,
+      "time_sensitive": true,
       "unit": "USD"
     }
   ]
@@ -585,6 +595,7 @@ Resolves a business term to one or more entity type candidates:
 ```bash
 grpcurl -plaintext \
   -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: $IDENTITY" \
   -d '{"term": "customer revenue", "domain": "sales", "connection": "firekicks"}' \
   localhost:50051 ontology.v1.OntologyService/ResolveEntity
 ```
@@ -619,6 +630,7 @@ Discovers join paths between entities:
 ```bash
 grpcurl -plaintext \
   -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: $IDENTITY" \
   -d '{"entityType": "Customer", "domain": "customer"}' \
   localhost:50051 ontology.v1.OntologyService/GetEntityRelationships
 ```
@@ -669,6 +681,7 @@ Returns all column mappings for an entity, including cross-database equivalences
 ```bash
 grpcurl -plaintext \
   -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: $IDENTITY" \
   -d '{"entityType": "Order", "domain": "sales", "connection": "firekicks"}' \
   localhost:50051 ontology.v1.OntologyService/GetEntityColumns
 ```
