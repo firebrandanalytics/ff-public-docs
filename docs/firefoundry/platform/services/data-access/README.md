@@ -134,6 +134,10 @@ Specialized databases with their own adapters:
 - **[FireKicks Tutorial](./firekicks/)** — Multi-part walkthrough using the FireKicks retail dataset: connection setup, data dictionary, stored definitions, ontology, process models, context-aware querying, NER value resolution, and CSV upload
 - **[Reference](./reference.md)** — API reference: gRPC/REST endpoints, dictionary query API, admin API, proto messages, config, env vars, error codes
 
+## Guides & References
+
+- **[Regex Pattern Library](./regex-patterns.md)** — Curated, cross-database regex patterns for use with the AST `regex_match` expression: email, phone, financial, date/time, identifiers, URLs, and data quality checks
+
 ## Related
 
 - [Platform Services Overview](../README.md)
