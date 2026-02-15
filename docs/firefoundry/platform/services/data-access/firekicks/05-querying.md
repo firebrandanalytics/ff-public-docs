@@ -18,15 +18,18 @@ ff-da query --connection firekicks --sql "
 
 ### Parameterized Queries
 
-Use positional parameters (`$1`, `$2`) to avoid SQL injection:
+The gRPC API supports positional parameters (`$1`, `$2`) to avoid SQL injection:
 
 ```bash
-ff-da query --connection firekicks --sql "
-  SELECT product_name, category, base_price
-  FROM products
-  WHERE category = \$1 AND base_price > \$2
-  ORDER BY base_price DESC" \
-  --params '["running", 100]'
+grpcurl -plaintext \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: $IDENTITY" \
+  -d '{
+    "connection": "firekicks",
+    "sql": "SELECT product_name, category, base_price FROM products WHERE category = $1 AND base_price > $2 ORDER BY base_price DESC",
+    "params": [{"stringValue": "running"}, {"numberValue": 100}]
+  }' \
+  localhost:50051 dataaccess.v1.DataAccessService/QuerySQL
 ```
 
 > **Note:** Parameter placeholders are database-specific. PostgreSQL uses `$1`, `$2`. MySQL and SQLite use `?`. The AST API handles this automatically.
@@ -476,11 +479,11 @@ Learns: `total_amount` (measure, financial) — "Final order total including sub
 
 ```bash
 # Agent resolves "revenue" and "Premium customers"
-grpcurl -plaintext -H "X-API-Key: $API_KEY" \
+grpcurl -plaintext -H "X-API-Key: $API_KEY" -H "X-On-Behalf-Of: $IDENTITY" \
   -d '{"term": "revenue", "domain": "sales"}' \
   localhost:50051 ontology.v1.OntologyService/ResolveEntity
 
-grpcurl -plaintext -H "X-API-Key: $API_KEY" \
+grpcurl -plaintext -H "X-API-Key: $API_KEY" -H "X-On-Behalf-Of: $IDENTITY" \
   -d '{"term": "Premium customers", "domain": "customer"}' \
   localhost:50051 ontology.v1.OntologyService/ResolveEntity
 ```
@@ -491,12 +494,12 @@ Learns: Revenue → Order entity, amount role, calculation rule. Premium → Cus
 
 ```bash
 # Agent checks rules for the tables it will query
-grpcurl -plaintext -H "X-API-Key: $API_KEY" \
+grpcurl -plaintext -H "X-API-Key: $API_KEY" -H "X-On-Behalf-Of: $IDENTITY" \
   -d '{"domain": "sales", "viewName": "orders"}' \
   localhost:50051 process.v1.ProcessService/GetBusinessRules
 
 # Agent gets fiscal calendar for "this quarter"
-grpcurl -plaintext -H "X-API-Key: $API_KEY" \
+grpcurl -plaintext -H "X-API-Key: $API_KEY" -H "X-On-Behalf-Of: $IDENTITY" \
   -d '{"domain": "finance"}' \
   localhost:50051 process.v1.ProcessService/GetCalendarContext
 ```

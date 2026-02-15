@@ -125,7 +125,7 @@ If you have query logs, analyze which columns are most frequently used together.
 
 ### 5. Automate with FireIQ
 
-[FireIQ](https://firefoundry.io/marketplace/fireiq), a product in the FireFoundry marketplace, provides AI agents that can analyze your schema, sample data, and existing documentation to bootstrap dictionary annotations automatically. The agents profile each table, detect enum values, infer semantic types, and generate draft annotations for human review.
+[FireIQ](../../../../../fireiq/README.md), a product in the FireFoundry marketplace, provides AI agents that can analyze your schema, sample data, and existing documentation to bootstrap dictionary annotations automatically. The agents profile each table, detect enum values, infer semantic types, and generate draft annotations for human review.
 
 This tutorial walks through the manual process so you understand what goes into a dictionary and why.
 

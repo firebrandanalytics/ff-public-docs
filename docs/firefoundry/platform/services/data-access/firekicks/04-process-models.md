@@ -41,11 +41,11 @@ A named business workflow with timing, actors, and optional status probes.
   "description": "End-to-end order lifecycle from placement through delivery and return window",
   "timing": {
     "frequency": "continuous",
-    "typicalPeriod": "per-order",
-    "durationDays": 14
+    "typical_period": "per-order",
+    "duration_days": 14
   },
   "actors": ["order_system", "warehouse", "shipping_carrier", "customer"],
-  "statusHint": "Check order_status column on orders table for current fulfillment state"
+  "status_hint": "Check order_status column on orders table for current fulfillment state"
 }
 ```
 
@@ -58,12 +58,12 @@ Ordered stages within a process. Each step declares what data it reads and write
 ```json
 {
   "name": "payment_processed",
-  "processName": "order_fulfillment",
+  "process_name": "order_fulfillment",
   "domain": "sales",
   "description": "Payment is verified and captured",
   "sequence": 2,
   "actors": ["payment_system"],
-  "tribalNote": "Payment processing happens within minutes of order placement. If order_status is still 'pending' after 1 hour, something went wrong.",
+  "tribal_note": "Payment processing happens within minutes of order placement. If order_status is still 'pending' after 1 hour, something went wrong.",
   "reads": [
     { "connection": "firekicks", "table": "orders", "columns": ["total_amount", "payment_method"] }
   ],
@@ -86,19 +86,19 @@ Constraints that govern how data should be queried. Each rule has an **enforceme
   "name": "exclude_cancelled_from_revenue",
   "domain": "sales",
   "description": "Revenue calculations must exclude cancelled orders",
-  "ruleType": "filter",
+  "rule_type": "filter",
   "enforcement": "hard_enforced",
   "conditions": [
     {
       "type": "exclude",
       "column": "order_status",
       "operator": "not_in",
-      "listValues": ["cancelled"],
+      "list_values": ["cancelled"],
       "reason": "Cancelled orders have been refunded and should never appear in revenue figures"
     }
   ],
-  "appliesTo": ["orders", "daily_sales_summary"],
-  "processName": "order_fulfillment"
+  "applies_to": ["orders", "daily_sales_summary"],
+  "process_name": "order_fulfillment"
 }
 ```
 
@@ -121,8 +121,8 @@ Contextual interpretation notes triggered by query content. Unlike business rule
   "name": "campaign_roi_lag",
   "domain": "marketing",
   "description": "Campaign ROI figures are unreliable during and immediately after a campaign",
-  "contextTrigger": "campaign ROI",
-  "appliesTo": ["campaign_performance", "campaign_roi_summary"],
+  "context_trigger": "campaign ROI",
+  "applies_to": ["campaign_performance", "campaign_roi_summary"],
   "importance": "high"
 }
 ```
@@ -138,13 +138,13 @@ Fiscal calendar definitions that help the AI interpret time-based queries correc
   "name": "firekicks_fiscal_calendar",
   "domain": "finance",
   "description": "FireKicks fiscal year runs January-December with standard quarters",
-  "fiscalYearStartMonth": 1,
-  "yearFormat": "CY",
-  "quarterMapping": {
-    "Q1": { "startMonth": 1, "endMonth": 3 },
-    "Q2": { "startMonth": 4, "endMonth": 6 },
-    "Q3": { "startMonth": 7, "endMonth": 9 },
-    "Q4": { "startMonth": 10, "endMonth": 12 }
+  "fiscal_year_start_month": 1,
+  "year_format": "CY",
+  "quarter_mapping": {
+    "Q1": { "start_month": 1, "end_month": 3 },
+    "Q2": { "start_month": 4, "end_month": 6 },
+    "Q3": { "start_month": 7, "end_month": 9 },
+    "Q4": { "start_month": 10, "end_month": 12 }
   }
 }
 ```
@@ -256,10 +256,21 @@ How customers move through segments over time.
 
 ## Loading Process Models into DAS
 
-### Create the Domain
+### Create the Domains
+
+The process models span four domains. Create them all before adding processes:
 
 ```bash
 echo '{"name":"sales","description":"Order processing, line items, and retail distribution","owner":"sales-team"}' \
+  | ff-da admin processes domains create
+
+echo '{"name":"marketing","description":"Campaign management, attribution, and customer engagement","owner":"marketing-team"}' \
+  | ff-da admin processes domains create
+
+echo '{"name":"finance","description":"Financial reporting, close process, and fiscal calendar","owner":"finance-team"}' \
+  | ff-da admin processes domains create
+
+echo '{"name":"customer","description":"Customer lifecycle, segmentation, and lifetime value","owner":"customer-team"}' \
   | ff-da admin processes domains create
 ```
 
@@ -273,11 +284,11 @@ ff-da admin processes create --file - <<'EOF'
   "description": "End-to-end order lifecycle from placement through delivery and return window",
   "timing": {
     "frequency": "continuous",
-    "typicalPeriod": "per-order",
-    "durationDays": 14
+    "typical_period": "per-order",
+    "duration_days": 14
   },
   "actors": ["order_system", "warehouse", "shipping_carrier", "customer"],
-  "statusHint": "Check orders.order_status for current state: pending → processing → shipped → delivered. Cancelled is a terminal state."
+  "status_hint": "Check orders.order_status for current state: pending → processing → shipped → delivered. Cancelled is a terminal state."
 }
 EOF
 ```
@@ -290,11 +301,28 @@ ff-da admin processes create --file - <<'EOF'
   "description": "Monthly aggregation, reconciliation, and publication of financial figures",
   "timing": {
     "frequency": "monthly",
-    "typicalPeriod": "monthly",
-    "durationDays": 10
+    "typical_period": "monthly",
+    "duration_days": 10
   },
   "actors": ["finance_system", "finance_team", "finance_manager"],
-  "statusHint": "Check monthly_financials for the month. If row exists and is_closed = true, the month is finalized. Otherwise figures are provisional."
+  "status_hint": "Check monthly_financials for the month. If row exists and is_closed = true, the month is finalized. Otherwise figures are provisional."
+}
+EOF
+```
+
+```bash
+ff-da admin processes create --file - <<'EOF'
+{
+  "name": "campaign_management",
+  "domain": "marketing",
+  "description": "Marketing campaign lifecycle from planning through post-analysis and ROI attribution",
+  "timing": {
+    "frequency": "on-demand",
+    "typical_period": "per-campaign",
+    "duration_days": 60
+  },
+  "actors": ["marketing_team", "analytics_team"],
+  "status_hint": "Check campaign_performance for campaign status. ROI is only meaningful 30 days after campaign end."
 }
 EOF
 ```
@@ -305,12 +333,12 @@ EOF
 ff-da admin processes steps create --domain sales --process order_fulfillment --file - <<'EOF'
 {
   "name": "order_placed",
-  "processName": "order_fulfillment",
+  "process_name": "order_fulfillment",
   "domain": "sales",
   "description": "Customer submits an order through online, retail, wholesale, or direct channel",
   "sequence": 1,
   "actors": ["customer", "order_system"],
-  "tribalNote": "Orders from the wholesale channel are typically bulk orders with higher quantities and negotiated pricing. Do not compare wholesale AOV with retail AOV directly.",
+  "tribal_note": "Orders from the wholesale channel are typically bulk orders with higher quantities and negotiated pricing. Do not compare wholesale AOV with retail AOV directly.",
   "reads": [
     { "connection": "firekicks", "table": "products", "columns": ["product_id", "base_price", "is_active"] },
     { "connection": "firekicks", "table": "inventory", "columns": ["stock_quantity"] }
@@ -327,12 +355,12 @@ EOF
 ff-da admin processes steps create --domain sales --process order_fulfillment --file - <<'EOF'
 {
   "name": "shipping",
-  "processName": "order_fulfillment",
+  "process_name": "order_fulfillment",
   "domain": "sales",
   "description": "Order is handed to carrier for delivery",
   "sequence": 4,
   "actors": ["shipping_carrier"],
-  "tribalNote": "Three carriers: FedEx (60%), UPS (30%), USPS (10%). FedEx handles priority, USPS handles economy. on_time rates differ significantly by carrier.",
+  "tribal_note": "Three carriers: FedEx (60%), UPS (30%), USPS (10%). FedEx handles priority, USPS handles economy. on_time rates differ significantly by carrier.",
   "reads": [
     { "connection": "firekicks", "table": "orders", "columns": ["order_id", "shipping_method"] }
   ],
@@ -351,19 +379,19 @@ ff-da admin processes rules create --file - <<'EOF'
   "name": "exclude_cancelled_from_revenue",
   "domain": "sales",
   "description": "Revenue calculations must exclude cancelled orders. Cancelled orders have been fully refunded.",
-  "ruleType": "filter",
+  "rule_type": "filter",
   "enforcement": "hard_enforced",
   "conditions": [
     {
       "type": "exclude",
       "column": "order_status",
       "operator": "not_in",
-      "listValues": ["cancelled"],
+      "list_values": ["cancelled"],
       "reason": "Cancelled orders are fully refunded and must never appear in revenue calculations"
     }
   ],
-  "appliesTo": ["orders", "order_items"],
-  "processName": "order_fulfillment"
+  "applies_to": ["orders", "order_items"],
+  "process_name": "order_fulfillment"
 }
 EOF
 ```
@@ -374,7 +402,7 @@ ff-da admin processes rules create --file - <<'EOF'
   "name": "use_revenue_attributed_for_roi",
   "domain": "marketing",
   "description": "Campaign ROI must use revenue_attributed column, not total order revenue",
-  "ruleType": "guidance",
+  "rule_type": "guidance",
   "enforcement": "soft_enforced",
   "conditions": [
     {
@@ -383,8 +411,8 @@ ff-da admin processes rules create --file - <<'EOF'
       "reason": "revenue_attributed uses last-touch attribution. Using total_amount from orders would double-count revenue across campaigns."
     }
   ],
-  "appliesTo": ["campaign_performance", "campaign_roi_summary"],
-  "processName": "campaign_management"
+  "applies_to": ["campaign_performance", "campaign_roi_summary"],
+  "process_name": "campaign_management"
 }
 EOF
 ```
@@ -395,7 +423,7 @@ ff-da admin processes rules create --file - <<'EOF'
   "name": "provisional_financials_warning",
   "domain": "finance",
   "description": "Monthly financials for the current month are provisional and may change until close is complete",
-  "ruleType": "advisory",
+  "rule_type": "advisory",
   "enforcement": "advisory",
   "conditions": [
     {
@@ -403,8 +431,8 @@ ff-da admin processes rules create --file - <<'EOF'
       "reason": "Figures for the current month are provisional. Only use monthly_financials for closed months in official reports. The close process typically completes by the 10th business day of the following month."
     }
   ],
-  "appliesTo": ["monthly_financials"],
-  "processName": "monthly_financial_close"
+  "applies_to": ["monthly_financials"],
+  "process_name": "monthly_financial_close"
 }
 EOF
 ```
@@ -417,8 +445,8 @@ ff-da admin processes annotations create --file - <<'EOF'
   "name": "campaign_roi_lag",
   "domain": "marketing",
   "description": "Campaign ROI is only meaningful 30 days after campaign end date. During the campaign and shortly after, attribution is incomplete and ROI will appear artificially low.",
-  "contextTrigger": "campaign ROI",
-  "appliesTo": ["campaign_performance", "campaign_roi_summary"],
+  "context_trigger": "campaign ROI",
+  "applies_to": ["campaign_performance", "campaign_roi_summary"],
   "importance": "high"
 }
 EOF
@@ -430,8 +458,8 @@ ff-da admin processes annotations create --file - <<'EOF'
   "name": "segment_lag",
   "domain": "customer",
   "description": "Customer segment changes lag approximately 30 days behind behavioral changes. A customer who recently increased spending may still show as Bargain-Hunter until the next segment evaluation.",
-  "contextTrigger": "customer segment",
-  "appliesTo": ["customers", "customer_segments_history"],
+  "context_trigger": "customer segment",
+  "applies_to": ["customers", "customer_segments_history"],
   "importance": "medium"
 }
 EOF
@@ -443,8 +471,8 @@ ff-da admin processes annotations create --file - <<'EOF'
   "name": "ltv_definition",
   "domain": "customer",
   "description": "lifetime_value is cumulative actual spending updated daily. It is NOT a predicted future value or a modeled LTV. For predictive LTV, compute it from order history.",
-  "contextTrigger": "lifetime value",
-  "appliesTo": ["customers"],
+  "context_trigger": "lifetime value",
+  "applies_to": ["customers"],
   "importance": "high"
 }
 EOF
@@ -458,13 +486,13 @@ ff-da admin processes calendars create --file - <<'EOF'
   "name": "firekicks_fiscal_calendar",
   "domain": "finance",
   "description": "FireKicks uses a calendar fiscal year (Jan-Dec) with standard quarters",
-  "fiscalYearStartMonth": 1,
-  "yearFormat": "CY",
-  "quarterMapping": {
-    "Q1": { "startMonth": 1, "endMonth": 3 },
-    "Q2": { "startMonth": 4, "endMonth": 6 },
-    "Q3": { "startMonth": 7, "endMonth": 9 },
-    "Q4": { "startMonth": 10, "endMonth": 12 }
+  "fiscal_year_start_month": 1,
+  "year_format": "CY",
+  "quarter_mapping": {
+    "Q1": { "start_month": 1, "end_month": 3 },
+    "Q2": { "start_month": 4, "end_month": 6 },
+    "Q3": { "start_month": 7, "end_month": 9 },
+    "Q4": { "start_month": 10, "end_month": 12 }
   }
 }
 EOF
@@ -485,9 +513,9 @@ The JSON file follows the `DomainExport` structure:
   "domain": { "name": "sales", "description": "..." },
   "processes": [...],
   "steps": [...],
-  "businessRules": [...],
+  "business_rules": [...],
   "annotations": [...],
-  "calendarContexts": [...]
+  "calendar_contexts": [...]
 }
 ```
 
@@ -501,13 +529,19 @@ Validation checks:
 - All steps reference valid processes
 - Step sequences are contiguous (no gaps)
 - Data touchpoints reference valid connections and tables
-- Business rules reference valid tables in `appliesTo`
+- Business rules reference valid tables in `applies_to`
 - Calendar context has valid month ranges (1-12)
 - Process names referenced by rules and annotations exist
 
 ## Agent-Facing Process API
 
 AI agents use these gRPC endpoints to get process context at query time.
+
+> **Setup:** The gRPC examples below use `$API_KEY` and `$IDENTITY`. Set them if you haven't already:
+> ```bash
+> export API_KEY=dev-api-key
+> export IDENTITY=user:tutorial
+> ```
 
 ### GetProcessContext
 
@@ -516,6 +550,7 @@ Returns a domain-level overview of processes, rules, and annotations:
 ```bash
 grpcurl -plaintext \
   -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: $IDENTITY" \
   -d '{"domain": "sales"}' \
   localhost:50051 process.v1.ProcessService/GetProcessContext
 ```
@@ -534,7 +569,7 @@ Response:
       "governedByRules": ["exclude_cancelled_from_revenue", "filter_completed_for_financials"]
     }
   ],
-  "businessRules": [
+  "rules": [
     {
       "name": "exclude_cancelled_from_revenue",
       "description": "Revenue calculations must exclude cancelled orders",
@@ -552,7 +587,7 @@ Response:
       "appliesTo": ["returns", "orders"]
     }
   ],
-  "calendarContexts": [...]
+  "calendar": {...}
 }
 ```
 
@@ -563,6 +598,7 @@ Get rules that apply to specific tables or views:
 ```bash
 grpcurl -plaintext \
   -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: $IDENTITY" \
   -d '{"domain": "sales", "viewName": "orders"}' \
   localhost:50051 process.v1.ProcessService/GetBusinessRules
 ```
@@ -572,6 +608,7 @@ The `viewName` field filters to rules whose `appliesTo` list includes the specif
 ```bash
 grpcurl -plaintext \
   -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: $IDENTITY" \
   -d '{"domain": "sales", "viewName": "orders", "minEnforcement": "ENFORCEMENT_SOFT_ENFORCED"}' \
   localhost:50051 process.v1.ProcessService/GetBusinessRules
 ```
@@ -585,6 +622,7 @@ Get rules for multiple tables in a single call:
 ```bash
 grpcurl -plaintext \
   -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: $IDENTITY" \
   -d '{"domain": "sales", "viewNames": ["orders", "order_items", "daily_sales_summary"]}' \
   localhost:50051 process.v1.ProcessService/BatchGetBusinessRules
 ```
@@ -598,6 +636,7 @@ Retrieve contextual notes triggered by a query topic:
 ```bash
 grpcurl -plaintext \
   -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: $IDENTITY" \
   -d '{"domain": "marketing", "contextTrigger": "campaign ROI"}' \
   localhost:50051 process.v1.ProcessService/GetAnnotations
 ```
@@ -611,6 +650,7 @@ Get the fiscal calendar for date interpretation:
 ```bash
 grpcurl -plaintext \
   -H "X-API-Key: $API_KEY" \
+  -H "X-On-Behalf-Of: $IDENTITY" \
   -d '{"domain": "finance"}' \
   localhost:50051 process.v1.ProcessService/GetCalendarContext
 ```
