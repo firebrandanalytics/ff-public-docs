@@ -637,6 +637,16 @@ Simpler query, fewer tokens, no risk of getting the join or aggregation wrong.
 
 This isn't just caching — it's **knowledge accumulation**. Each saved view represents a learned fact: "this is how you answer questions about X." Over time, the agent builds a library of reliable, validated query patterns that make it faster and more accurate. The stored definition system is the persistence layer for this accumulated knowledge.
 
+### Connection to Process Models
+
+The learning loop has two outputs. The *queryable asset* (a stored view) is what Part 2 covers. But the *business reasoning* behind it — why this join exists, what business process it reflects, which rules govern the data — belongs in the process model layer covered in [Part 4](./04-process-models.md).
+
+For example, when an agent discovers that revenue queries must always filter `order_status IN ('shipped', 'delivered')`, that's both:
+- A **view design decision** — the `product_performance` view bakes in this filter
+- A **business rule** — "exclude cancelled orders from revenue" is a hard-enforced rule in the order fulfillment process
+
+The two layers are complementary. Stored definitions encode *how* to query correctly. Process models encode *why* — the business context that makes the query correct. An agent that captures both builds a richer, more defensible knowledge base. See [Part 4: Process Discovery](./04-process-models.md#process-discovery-and-stored-definitions) for the process model side of this loop.
+
 ## Creating UDFs
 
 Scalar UDFs compute a single value from inputs. They're useful when the same calculation appears in multiple places.
@@ -850,26 +860,106 @@ After stored definitions:
 
 No joins. No aggregation. No guessing. The stored definition did the hard work, and the dictionary told the AI which definition to use.
 
-## Security Predicates
+## Identity and Row-Level Security
 
-Stored definitions can include an optional security predicate — a row-level security (RLS) filter that is automatically applied when the view is expanded. This ensures that the view only returns rows the caller is authorized to see.
+Every request to the Data Access Service carries a caller identity via the `X-On-Behalf-Of` header. This identity flows through the entire query pipeline — from ACL checks to stored definition expansion. Stored definitions can use this identity to implement **row-level security (RLS)**: automatic filters that restrict which rows a caller can see, without the caller needing to know the filter exists.
 
-```json
+### How Identity Flows
+
+When an AI agent (or any caller) sends a query:
+
+1. **Request arrives** with `X-On-Behalf-Of: user:alice` (or `app:sales-agent`, `agent:report-bot`, etc.)
+2. **ACL check** — Does this identity have access to this connection? To these tables? To raw SQL?
+3. **View expansion** — If the query references a stored definition, expand it
+4. **Security predicate injection** — If the stored definition has a security predicate, inject it as a WHERE clause using the caller's identity
+5. **Query execution** — Run the filtered query against the database
+
+The caller never sees the security predicate. They query `my_orders` and get back only their rows. The service handles the filtering transparently.
+
+### Implicit Variables
+
+Security predicates can reference **implicit variables** that come from the request context rather than from explicit query parameters. The most important is the caller's identity:
+
+| Variable | Source | Description |
+|----------|--------|-------------|
+| Caller identity | `X-On-Behalf-Of` header | The authenticated identity of the request sender |
+| Caller namespace | Derived from identity | The namespace scope for view resolution |
+
+These are "implicit" because the caller doesn't pass them as query parameters — the service injects them from the request context.
+
+### Defining a Security Predicate
+
+A security predicate is an AST expression attached to a stored definition. It's injected as a WHERE clause whenever the view is expanded.
+
+```bash
+ff-da admin views create --file - <<'EOF'
 {
-  "name": "my_orders",
-  "namespace": "system",
-  "connection": "firekicks",
-  "securityPredicate": {
-    "binary": {
-      "op": "BINARY_OP_EQ",
-      "left": { "column": { "column": "customer_id" } },
-      "right": { "param": { "position": 1 } }
+    "name": "my_orders",
+    "namespace": "system",
+    "connection": "firekicks",
+    "description": "Orders visible to the calling customer — automatically filtered by caller identity",
+    "ast": {
+      "columns": [
+        { "expr": { "column": { "column": "order_id" } } },
+        { "expr": { "column": { "column": "order_date" } } },
+        { "expr": { "column": { "column": "order_status" } } },
+        { "expr": { "column": { "column": "total_amount" } } },
+        { "expr": { "column": { "column": "order_channel" } } }
+      ],
+      "from": { "table": { "table": "orders" } }
+    },
+    "securityPredicate": {
+      "binary": {
+        "op": "BINARY_OP_EQ",
+        "left": { "column": { "column": "customer_id" } },
+        "right": { "callerIdentity": {} }
+      }
     }
-  }
 }
+EOF
 ```
 
-Security predicates are validated by the same AST validator that checks queries, so they can't introduce injection vulnerabilities.
+When `user:42` queries `my_orders`, the service expands it to:
+
+```sql
+SELECT order_id, order_date, order_status, total_amount, order_channel
+FROM orders
+WHERE customer_id = 42  -- injected from X-On-Behalf-Of
+```
+
+When `user:99` queries the same view, they get `WHERE customer_id = 99`. Same view definition, different results per caller.
+
+### Why This Matters for AI Agents
+
+Without RLS, every agent that queries customer data needs to be trusted not to access other customers' records. The application must inject the right `WHERE customer_id = ?` filter into every query — and if the AI forgets or gets it wrong, data leaks.
+
+With RLS via security predicates:
+- The view definition enforces the filter — the AI can't forget it
+- The identity comes from the request context — the AI can't forge it
+- The same view serves all callers — no per-caller view definitions needed
+- The AI queries `my_orders` with `SELECT *` and gets exactly the right rows
+
+This is especially important in multi-tenant scenarios where different AI agents serve different customers or business units, all sharing the same stored definitions.
+
+### Combining Security with Business Rules
+
+Security predicates compose naturally with the business rules from [Part 4](./04-process-models.md). For example, the `my_orders` view filters by caller identity (security), and the `exclude_cancelled_from_revenue` business rule adds an additional status filter (business logic). Both are injected transparently:
+
+```sql
+-- What the AI queries:
+SELECT * FROM my_orders WHERE total_amount > 100
+
+-- What actually runs (after expansion):
+SELECT order_id, order_date, order_status, total_amount, order_channel
+FROM orders
+WHERE customer_id = 42                          -- security predicate
+  AND order_status != 'cancelled'               -- business rule (hard_enforced)
+  AND total_amount > 100                        -- caller's filter
+```
+
+The caller wrote a one-line query. The service layered in security and business rules automatically.
+
+Security predicates are validated by the same AST validator that checks queries, so they can't introduce injection vulnerabilities. See [Part 5](./05-querying.md#identity-and-row-level-security-in-practice) for end-to-end examples of identity-driven queries.
 
 ## Summary
 
@@ -879,9 +969,10 @@ You've learned how to:
 2. **Choose** the right type — views for pre-built tables, UDFs for reusable calculations, TVFs for parameterized queries
 3. **Create from SQL** — the easiest path for human-authored definitions, with auto-detected parameters
 4. **Create from AST** — the programmatic path for AI-generated definitions, with composable JSON structures
-5. **Enable AI self-improvement** — agent namespaces let AI discover and save query patterns over time
+5. **Enable AI self-improvement** — agent namespaces let AI discover and save query patterns over time, with process models capturing the business reasoning ([Part 4](./04-process-models.md))
 6. **Use namespaces** — system, app, and agent scoping with resolution order
-7. **Integrate** with the dictionary — annotate views with tags, descriptions, and usage notes
-8. **Route AI agents** — curated views as the primary query surface, raw tables hidden by tags
+7. **Enforce row-level security** — identity-driven predicates that filter data per caller automatically
+8. **Integrate** with the dictionary — annotate views with tags, descriptions, and usage notes
+9. **Route AI agents** — curated views as the primary query surface, raw tables hidden by tags
 
 In [Part 3](./03-ontology.md), you'll build an ontology that maps business concepts — like "Customer", "Revenue", and "Premium segment" — to the database structures and stored definitions you've created.
