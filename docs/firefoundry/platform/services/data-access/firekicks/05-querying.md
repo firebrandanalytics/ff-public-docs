@@ -670,7 +670,12 @@ The agent now has a comparison table showing each category's total revenue, Prem
 
 ## Next Steps
 
-You've completed the FireKicks tutorial. Here's what to explore next:
+Continue with the remaining tutorial parts:
+
+- **[Part 6: Named Entity Resolution](./06-value-resolution.md)** — Value stores, fuzzy matching, personalized scopes, and the learning loop
+- **[Part 7: CSV Upload & Ad-Hoc Data](./07-csv-upload.md)** — Upload CSV files, join with database data, system vs user scratch pads
+
+Or explore the reference documentation:
 
 - **[DAS Overview](../README.md)** — Service architecture, supported databases, deployment
 - **[Concepts](../concepts.md)** — Deep dive into AST queries, SQL serialization, ACL, staged queries

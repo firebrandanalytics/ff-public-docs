@@ -453,6 +453,142 @@ Response:
 
 Mapping tables are used by `lookup`-type variables to translate caller identities into database values. When a mapping table is saved, all existing entries are replaced with the new set.
 
+### Value Store Management (NER)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/value-stores` | List all value store configs |
+| POST | `/admin/value-stores` | Create a value store config |
+| GET | `/admin/value-stores/{name}` | Get a value store config |
+| DELETE | `/admin/value-stores/{name}` | Delete a value store and its data |
+| POST | `/admin/value-stores/{name}/refresh` | Trigger a manual data refresh |
+
+#### Value Store Config Body
+
+```json
+{
+  "name": "vendors",
+  "description": "Vendor name resolution",
+  "domain": "product",
+  "entity_types": ["Vendor"],
+  "connection": "firekicks",
+  "source_query": "SELECT supplier_id, supplier_name FROM product_suppliers",
+  "match_columns": ["supplier_name"],
+  "schedule": ""
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Unique value store name |
+| `description` | string | Human-readable description |
+| `domain` | string | Ontology domain filter (optional) |
+| `entity_types` | string[] | Entity types this store serves |
+| `connection` | string | Source database connection name |
+| `source_query` | string | SQL query to pull canonical values |
+| `match_columns` | string[] | Which result columns to index for fuzzy matching |
+| `schedule` | string | Refresh schedule (e.g., `daily:07:00`) or empty for manual only |
+
+### Value Resolution (NER Data Plane)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/v1/resolve-values` | Bulk resolve entity values via fuzzy matching |
+| POST | `/v1/confirm-match` | Confirm a match (learning loop) |
+
+#### POST /v1/resolve-values
+
+```json
+{
+  "queries": [
+    {"term": "Microsoft", "entity_types": ["Vendor"], "exclude_values": []}
+  ],
+  "domain": "",
+  "max_candidates": 5,
+  "min_score": 0.3
+}
+```
+
+Response:
+```json
+{
+  "results": [{
+    "term": "Microsoft",
+    "by_entity_type": {
+      "Vendor": {
+        "candidates": [{
+          "row": {"supplier_id": 456, "supplier_name": "MICROSOFT CORP"},
+          "matched_term": "MICROSOFT CORP",
+          "matched_column": "supplier_name",
+          "score": 0.92,
+          "strategy": "prefix",
+          "source": "primary"
+        }]
+      }
+    }
+  }]
+}
+```
+
+#### POST /v1/confirm-match
+
+```json
+{
+  "term": "MSFT",
+  "value_row_id": 456,
+  "store_name": "vendors",
+  "scope": "user:bob"
+}
+```
+
+Scope must start with `user:` or `team:`. Direct `system` or `primary` scope assignment is rejected — system scope is earned via automatic promotion after N distinct users confirm the same mapping.
+
+### CSV Upload
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/admin/scratch/{identity}/upload` | Upload CSV file to a scratch pad |
+
+Query parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `table` | string | Required. Table name to create in the scratch pad |
+
+Request: multipart/form-data with a `file` field containing the CSV file.
+
+Response:
+```json
+{
+  "identity": "user:tutorial",
+  "table": "regional_targets",
+  "rows": 5,
+  "columns": ["region", "q4_target", "q4_actual", "variance_pct"],
+  "truncated": false,
+  "filename": "regional_targets.csv"
+}
+```
+
+Limits: 50MB max file size, 100,000 max rows. First row must be column headers. All columns are imported as TEXT. Uploading to the same table name overwrites existing data.
+
+### Pool Statistics
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/connections/pool-stats` | Pool stats for all connections |
+| GET | `/admin/connections/{name}/pool-stats` | Pool stats for a specific connection |
+
+Response includes `utilization_pct` and `health` indicator (`OK`, `WARNING` at >80%, `CRITICAL` at >95%).
+
+### Schema Sampling
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/connections/{name}/tables/{table}/sample` | Sample rows from a table |
+| GET | `/admin/connections/{name}/tables/{table}/stats` | Table statistics (row count, columns) |
+
+Sample query parameters: `limit` (default 10), `offset` (default 0).
+
 ### Audit API
 
 The audit API provides read access to query execution history, backed by the telemetry service.
@@ -473,6 +609,9 @@ Query parameters:
 | `identity` | string | Filter by caller identity |
 | `since` | string | Duration filter (e.g., `24h`, `7d`) |
 | `errors` | bool | Only show errors |
+| `slowms` | int | Only show queries slower than this (milliseconds) |
+| `sort` | string | Sort field: `timestamp` (default), `duration` |
+| `order` | string | Sort direction: `desc` (default), `asc` |
 | `page` | int | Page number (1-based) |
 | `page_size` | int | Results per page (default 50, max 200) |
 
@@ -937,6 +1076,52 @@ All data plane operations are logged with:
 - `rowCount` — Rows returned or affected
 
 Staged query operations log each staged query individually with the same fields plus tier number.
+
+## Client Libraries
+
+### Python
+
+Install the Python client:
+
+```bash
+pip install ff-data-access
+# or with httpx backend:
+pip install ff-data-access[httpx]
+```
+
+Usage:
+
+```python
+from ff_data_access import DataAccessClient
+
+client = DataAccessClient("http://localhost:8080", api_key="dev-api-key")
+
+# Query data
+result = client.query("firekicks", "SELECT * FROM products LIMIT 10")
+
+# AST query
+result = client.query_ast("firekicks", {
+    "from": {"table": "products"},
+    "columns": [{"column": "product_name"}, {"column": "price"}],
+    "limit": 10
+})
+
+# Schema inspection
+tables = client.get_tables("firekicks")
+
+# NER: resolve values
+matches = client.resolve_values(
+    queries=[{"term": "Nike", "entity_types": ["Vendor"]}],
+    max_candidates=5,
+    min_score=0.3,
+)
+
+# Admin operations
+connections = client.list_connections()
+client.test_connection("firekicks", verbose=True)
+```
+
+The client supports both `requests` and `httpx` as HTTP backends. Source: `clients/python/ff_data_access.py` in the DAS repository.
 
 ## Troubleshooting
 

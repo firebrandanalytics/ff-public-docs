@@ -627,7 +627,7 @@ curl -s -X POST "$DA_HOST/admin/variables/resolve" \
 
 ## Next Steps
 
-- Read [Concepts](./concepts.md) for deeper understanding of the data dictionary, ACL, staged queries, stored definitions, variables/RLS, ontology, and process models
-- Read [Reference](./reference.md) for the full API specification including all admin, ontology, and process model endpoints
-- Follow the [FireKicks Tutorial](./firekicks/) for a comprehensive end-to-end walkthrough using a real dataset
+- Read [Concepts](./concepts.md) for deeper understanding of the data dictionary, ACL, staged queries, stored definitions, variables/RLS, ontology, process models, and NER
+- Read [Reference](./reference.md) for the full API specification including all admin, ontology, process model, NER, and CSV upload endpoints
+- Follow the [FireKicks Tutorial](./firekicks/) for a comprehensive end-to-end walkthrough using a real dataset, including NER value resolution and CSV upload
 - Install the AI skills to enable AI agents to generate AST queries automatically

@@ -14,6 +14,8 @@ By the end of this tutorial, you'll have:
 4. An ontology mapping business concepts to database structures
 5. Process models encoding business rules and tribal knowledge
 6. A querying workflow that uses all five layers for context-aware analysis
+7. Named entity resolution with value stores and fuzzy matching
+8. CSV upload workflows for ad-hoc analysis with external data
 
 ## The FireKicks Company
 
@@ -306,6 +308,8 @@ These queries work — but an AI agent generating them would need to know that `
 | [3](./03-ontology.md) | **Ontology** | Layer 3 | Model business concepts, entity types, relationships, and cross-database mappings |
 | [4](./04-process-models.md) | **Process Models** | Layer 4 | Encode business processes, rules, tribal knowledge, and calendar context |
 | [5](./05-querying.md) | **Querying & Analysis** | All | AST and SQL queries, scratch pad, context-aware analysis using all five layers |
+| [6](./06-value-resolution.md) | **Named Entity Resolution** | NER | Value stores, fuzzy matching, personalized scopes, and the learning loop |
+| [7](./07-csv-upload.md) | **CSV Upload & Ad-Hoc Data** | Scratch Pad | Upload CSV files, join with database data, system vs user scratch pads |
 
 Each part builds on the previous — the dictionary informs stored definitions, stored definitions feed the ontology, the ontology connects to process models, and querying brings it all together.
 

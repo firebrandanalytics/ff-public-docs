@@ -55,7 +55,9 @@ The data dictionary (Layer 2) is particularly important for AI: it provides desc
 - **Credential Management**: Environment-variable-based credentials with zero-downtime rotation
 - **Admin API**: REST endpoints for connection CRUD, credential rotation, view management, annotation management, variable/mapping management, ontology management, and process management
 - **Dictionary Query API**: Non-admin read-only access to data dictionary with tag inclusion/exclusion, semantic type, and classification filters
-- **Audit API**: Query execution history with filtering by connection, identity, time range, and error status
+- **Named Entity Resolution (NER)**: Value stores with fuzzy matching engine — resolves user terms ("Microsoft") to database values ("MICROSOFT CORP") with ranked candidates, personalized scopes, and a learning loop
+- **CSV Upload**: Upload CSV files directly into scratch pads for ad-hoc analysis alongside database queries
+- **Audit API**: Query execution history with filtering by connection, identity, time range, slow queries, and error status
 - **Audit Logging**: All operations logged with identity, connection, SQL hash, and duration
 
 ## Architecture Overview
@@ -129,7 +131,7 @@ Specialized databases with their own adapters:
 
 - **[Concepts](./concepts.md)** — Core concepts: AST queries, staged queries, scratch pad, ACL model, stored definitions, data dictionary
 - **[Getting Started](./getting-started.md)** — Step-by-step tutorial from first connection to cross-database federation and building a data dictionary
-- **[FireKicks Tutorial](./firekicks/)** — Multi-part walkthrough using the FireKicks retail dataset: connection setup, data dictionary, stored definitions, ontology, process models, and context-aware querying
+- **[FireKicks Tutorial](./firekicks/)** — Multi-part walkthrough using the FireKicks retail dataset: connection setup, data dictionary, stored definitions, ontology, process models, context-aware querying, NER value resolution, and CSV upload
 - **[Reference](./reference.md)** — API reference: gRPC/REST endpoints, dictionary query API, admin API, proto messages, config, env vars, error codes
 
 ## Related

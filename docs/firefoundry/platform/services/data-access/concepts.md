@@ -664,6 +664,41 @@ Calendar definitions tell AI agents how to interpret time-based business terms:
 
 AI agents call `GetProcessContext` to learn about business processes, rules, and calendar definitions for a domain. This is typically done at the start of a data analysis session, alongside dictionary and ontology queries, to build a complete understanding of the business context.
 
+## Named Entity Resolution (NER)
+
+### What Is NER?
+
+Named Entity Resolution bridges the gap between user terms and actual database values. While the ontology resolves entity *types* (is "Chase" a Vendor, Customer, or Bank?), NER resolves entity *values* (matching "Microsoft" to the database row "MICROSOFT CORP" despite spelling differences).
+
+### Value Stores
+
+A value store is a searchable index of canonical values from a source database. Each value store consists of:
+- A **value table** with full rows from the source database, stored in a system SQLite scratch pad
+- A **search table** with all matchable terms, linked back to value rows via rowid
+- An **FTS5 index** for fast candidate retrieval
+
+Value store configs (name, source query, match columns) are persisted in PostgreSQL. The actual data values never go to PostgreSQL — they live exclusively in SQLite scratch pads.
+
+### Fuzzy Matching
+
+The matching engine uses six strategies implemented as SQLite custom functions: prefix matching, Levenshtein edit distance, initials comparison, reverse initials (acronym detection), word-level Jaccard similarity, and phonetic matching. A composite score (`ff_match_score`) combines all strategies with configurable weights.
+
+Matching uses a two-pass approach: FTS5 pre-filtering narrows to ~100 candidates, then custom scoring functions rank them. This avoids full table scans on large value sets.
+
+### Personalized Scopes
+
+Each search entry has a `scope` controlling its visibility:
+1. `user:<identity>` — personal synonyms for one user
+2. `team:<name>` — shared within a team
+3. `system` — universal synonyms (admin-managed or auto-promoted)
+4. `primary` — from source data (rebuilt on refresh)
+
+The caller's identity (from `X-On-Behalf-Of`) determines which scopes are visible during resolution. Learned synonyms (user, team, system scopes) survive value store refreshes — only primary scope entries are rebuilt.
+
+### Learning Loop
+
+When an agent confirms a match, a new entry is added to the search table with the caller's scope. After N distinct users confirm the same term-to-value mapping, it auto-promotes to system scope. This creates a feedback loop where the system gets smarter with use.
+
 ## Security Model
 
 - **No inline credentials**: Admin API rejects connections with inline passwords
