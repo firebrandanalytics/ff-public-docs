@@ -282,15 +282,21 @@ apps/my-service/
 │   ├── entities/            # Domain entities (empty)
 │   ├── bots/                # LLM orchestration (empty)
 │   └── prompts/             # Dynamic prompts (empty)
+├── helm/                    # Helm chart for Kubernetes deployment
+│   ├── Chart.yaml           # Helm chart metadata
+│   ├── values.yaml          # Base Helm values (cloud defaults)
+│   ├── values.local.yaml    # Local minikube overrides (pullPolicy: Never)
+│   ├── secrets.yaml.template # Secrets template
+│   └── templates/           # Kubernetes manifest templates
 ├── package.json             # Bundle dependencies
 ├── tsconfig.json            # TypeScript configuration
 ├── Dockerfile               # Production build
 ├── firefoundry.json         # FireFoundry metadata
-├── values.local.yaml        # Kubernetes config (local)
-├── secrets.yaml.template    # Secrets template
 ├── README.md                # Bundle documentation
 └── AGENTS.md                # Agent documentation
 ```
+
+> **Note:** `agent-bundle create` generates only `values.local.yaml` by default. Create additional values files (e.g., `values.dev.yaml`) for other environments as needed. See [Values Files](#values-files) below.
 
 #### Files Generated
 
@@ -465,6 +471,91 @@ ff-cli agent-bundle add service-b --port 3001
 ff-cli agent-bundle add service-c --from-example workflow-engine
 ```
 
+## Adding a Web UI
+
+### `ff-cli gui add` Command
+
+#### Purpose
+
+Add a Next.js web UI application to an existing FireFoundry project. The web UI is created in the `apps/` directory alongside agent bundles, with its own Helm chart and Dockerfile for Kubernetes deployment.
+
+#### Usage
+
+```bash
+cd my-project/
+ff-cli gui add <name> [OPTIONS]
+```
+
+#### Prerequisites
+
+- Must be run from **within a FireFoundry project** (directory with `pnpm-workspace.yaml`)
+
+#### Options and Flags
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--verbose, -v` | Enable verbose logging | false |
+
+#### What It Generates
+
+```
+apps/<name>/
+├── src/                    # Next.js application source
+├── public/                 # Static assets
+├── Dockerfile              # Production container build
+├── package.json            # Dependencies and scripts
+├── next.config.js          # Next.js configuration
+├── tsconfig.json           # TypeScript configuration
+└── helm/
+    ├── Chart.yaml          # Helm chart metadata
+    ├── values.yaml         # Base Helm values
+    ├── values.local.yaml   # Local minikube overrides
+    └── templates/          # Kubernetes manifests
+```
+
+#### Examples
+
+**Add a web UI to an existing project:**
+
+```bash
+cd my-project/
+ff-cli gui add dashboard --verbose
+# Creates apps/dashboard/ with Next.js scaffold, Helm chart, and Dockerfile
+```
+
+**Create a project with a web UI from the start:**
+
+```bash
+ff-cli project create my-project --with-web-ui my-ui
+# Creates project with apps/my-ui/ web UI included
+```
+
+**Full-stack project with agent bundle and web UI:**
+
+```bash
+ff-cli project create my-app --agent-name api-service --with-web-ui frontend
+# Creates apps/api-service/ (agent bundle) and apps/frontend/ (web UI)
+```
+
+#### pnpm Monorepo Considerations
+
+When deploying a Next.js web UI in a pnpm monorepo to Kubernetes, two configuration items are important:
+
+- **`outputFileTracingRoot`** in `next.config.js` - Must point to the monorepo root so Next.js standalone output includes workspace dependencies
+- **`shamefully-hoist=true`** in `.npmrc` - Some Next.js dependencies require hoisted `node_modules` to resolve correctly in container builds
+
+See [ff-cli-go#43](https://github.com/user/ff-cli-go/issues/43) for details on these requirements.
+
+#### Deployment
+
+Web UIs are deployed the same way as agent bundles using `ops deploy`:
+
+```bash
+ff-cli ops deploy dashboard -y --namespace ff-test
+```
+
+---
+
 ## Using Examples
 
 ### `ff-cli examples` Command
@@ -587,12 +678,17 @@ FireFoundry projects follow this structure:
 
 ```
 my-project/                           # Project root
-├── apps/                            # Agent bundles (workspaces)
+├── apps/                            # Agent bundles and web UIs (workspaces)
 │   ├── service-a/                  # Agent bundle
 │   │   ├── src/
+│   │   ├── helm/                  # Helm chart directory
+│   │   │   ├── Chart.yaml
+│   │   │   ├── values.yaml        # Base values (cloud defaults)
+│   │   │   ├── values.local.yaml  # Local minikube overrides
+│   │   │   ├── secrets.yaml.template
+│   │   │   └── templates/
 │   │   ├── package.json           # Workspace package
-│   │   ├── Dockerfile             # Service container
-│   │   └── values.local.yaml      # Helm values
+│   │   └── Dockerfile             # Service container
 │   └── service-b/                  # Another agent bundle
 ├── packages/                        # Shared packages (workspaces)
 │   ├── shared-types/              # Shared TypeScript types
@@ -603,6 +699,8 @@ my-project/                           # Project root
 ├── pnpm-workspace.yaml            # Workspace configuration
 └── turbo.json                     # Build orchestration
 ```
+
+> **Note:** Web UI apps created with `ff-cli gui add` are placed in `apps/`, not `packages/`. They are full workspace members alongside agent bundles.
 
 ### Bundle Organization
 
@@ -623,6 +721,12 @@ apps/my-service/
 │   ├── agent-bundle.ts           # Main bundle class
 │   ├── constructors.ts           # Entity registry
 │   └── index.ts                  # Server entry
+├── helm/                          # Helm chart for deployment
+│   ├── Chart.yaml                # Chart metadata
+│   ├── values.yaml               # Base values (cloud defaults)
+│   ├── values.local.yaml         # Local minikube overrides
+│   ├── secrets.yaml.template     # Secrets template
+│   └── templates/                # Kubernetes manifests
 ├── package.json
 ├── tsconfig.json
 ├── Dockerfile
@@ -852,25 +956,63 @@ See [ops.md](ops.md) for complete build documentation.
 
 ### Deploying to Environments
 
-Use `ff-cli ops install` after scaffolding:
+The recommended way to build and deploy in one step is `ff-cli ops deploy`:
 
 ```bash
-# Install to Kubernetes
-ff-cli ops install my-service
+# Build and deploy locally (single command)
+ff-cli ops deploy my-service -y
 
-# Upgrade existing deployment
-ff-cli ops upgrade my-service
+# Deploy with explicit values file variant
+ff-cli ops deploy my-service -y --values local
 
-# Install with custom values
-ff-cli ops install my-service \
-  -f apps/my-service/values.local.yaml \
-  -f apps/my-service/secrets.yaml
+# Deploy to specific namespace
+ff-cli ops deploy my-service -y --namespace ff-test
 ```
 
-Each scaffolded bundle includes:
-- **values.local.yaml** - Local Kubernetes configuration
+Or use separate install/upgrade commands:
+
+```bash
+# Fresh install to Kubernetes
+ff-cli ops install my-service --namespace ff-test
+
+# Upgrade existing deployment
+ff-cli ops upgrade my-service --namespace ff-test
+
+# Upgrade without restarting pods
+ff-cli ops upgrade my-service --no-restart
+```
+
+Each scaffolded bundle includes (under `helm/`):
+- **values.yaml** - Base Helm values (cloud defaults)
+- **values.local.yaml** - Local minikube overrides (`pullPolicy: Never`)
 - **secrets.yaml.template** - Template for secrets
-- **Dockerfile** - Production build configuration
+- **Dockerfile** - Production build configuration (at app root)
+
+### Values Files
+
+Values files live in the `helm/` subdirectory of each agent bundle and follow a naming convention:
+
+| File | Purpose |
+|------|---------|
+| `helm/values.yaml` | Base values with cloud defaults. Always applied first when present. |
+| `helm/values.local.yaml` | Local minikube overrides (e.g., `pullPolicy: Never`). Generated by default. |
+| `helm/values.dev.yaml` | Dev cloud environment overrides. Create manually as needed. |
+| `helm/values.<name>.yaml` | Any custom environment variant (e.g., `values.staging.yaml`). |
+| `helm/secrets.yaml.template` | Template for secrets — copy to `secrets.yaml` and fill in values. |
+
+The `--values` flag on `ops deploy`, `ops install`, and `ops upgrade` selects which variant to use:
+
+```bash
+# Uses helm/values.local.yaml (default for minikube profiles)
+ff-cli ops deploy my-service -y --values local
+
+# Uses helm/values.dev.yaml
+ff-cli ops deploy my-service -y --values dev
+```
+
+When a base `helm/values.yaml` exists, it is chained automatically: the CLI applies `-f values.yaml -f values.<name>.yaml`, so the variant file only needs to contain overrides.
+
+If `--values` is not specified, the CLI auto-detects the variant from the active profile's registry type (e.g., minikube profiles default to `local`).
 
 ## Best Practices
 

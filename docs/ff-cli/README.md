@@ -8,8 +8,11 @@ The `ff-cli` tool provides command-line interfaces for managing FireFoundry proj
 - **[Cluster Management](cluster-management.md)** - Initialize Kubernetes clusters, install control plane, check cluster status
 - **[Environment Management](environment-management.md)** - Create and manage isolated development/production environments (namespaces with services)
 
+### Authentication
+- **[Authentication](authentication.md)** - Exchange FireFoundry license for npm registry token (required before installing `@firebrandanalytics` packages)
+
 ### Project Development
-- **[Project and Agent Bundle Scaffolding](project-and-bundle-scaffolding.md)** - Create new projects and agent bundles with templates and examples
+- **[Project and Agent Bundle Scaffolding](project-and-bundle-scaffolding.md)** - Create new projects, agent bundles, and web UIs with templates and examples
 - **[Profile Management](profiles.md)** - Manage Docker registry authentication profiles for different environments
 
 ### Deployment & Operations
@@ -76,8 +79,9 @@ From project creation to deployment:
 # 1. Create project with example
 ff-cli project create my-ai-app --with-example haiku-service
 
-# 2. Enter project and install dependencies
+# 2. Enter project, authenticate, and install dependencies
 cd my-ai-app
+ff-cli auth npm -y
 pnpm install
 
 # 3. Add another agent bundle

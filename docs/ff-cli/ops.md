@@ -6,11 +6,103 @@ The `ops` commands in `ff-cli` handle building Docker images and deploying agent
 
 Operations commands integrate with [profiles](profiles.md) to provide seamless Docker registry authentication and image management. They handle:
 
+- **Building and deploying** agent bundles in a single step (`ops deploy`)
 - Building Docker images for agent bundles
 - Authenticating with container registries
 - Installing agent bundles to Kubernetes using Helm
 - Upgrading existing deployments
 - Checking prerequisites
+
+## Deploy Command
+
+Build and deploy an agent bundle in one step. This is the **primary command** for development — it builds the Docker image and then either installs (first time) or upgrades (subsequent runs) the Helm release automatically.
+
+### Basic Usage
+
+```bash
+# Build and deploy locally (most common)
+ff-cli ops deploy my-bundle -y
+
+# Deploy with explicit values file variant
+ff-cli ops deploy my-bundle -y --values local
+
+# Deploy to specific namespace
+ff-cli ops deploy my-bundle -y --namespace ff-test
+
+# Verbose output for debugging
+ff-cli ops deploy my-bundle -y --verbose
+```
+
+### Command Options
+
+```bash
+ff-cli ops deploy <name> [OPTIONS]
+
+Options:
+  --namespace, -n <ns>        Kubernetes namespace (default: from values or ff-dev)
+  --tag, -t <tag>             Docker image tag (default: latest)
+  --values <name>             Values file variant (e.g., local, dev) — see below
+  --local-chart               Use local helm chart (./apps/<name>/helm/)
+  --yes                       Skip confirmation prompts
+  --verbose, -v               Verbose output for debugging
+```
+
+### Values File Resolution
+
+The `--values` flag selects environment-specific Helm values files from your agent bundle's `helm/` directory:
+
+- `--values local` → uses `helm/values.local.yaml`
+- `--values dev` → uses `helm/values.dev.yaml`
+- If omitted, auto-detected from the active profile's registry type:
+  - **Minikube profiles** → defaults to `local`
+  - **Cloud profiles** (GCP, Azure, Standard) → defaults to `dev`
+
+**File chaining:** If a `helm/values.yaml` base file exists alongside the variant file, both are applied in order:
+
+```
+-f values.yaml -f values.<name>.yaml
+```
+
+This lets you keep shared defaults in `values.yaml` and environment-specific overrides in the variant file.
+
+**Secrets fallback:** The CLI also looks for secrets files, trying `secrets.<name>.yaml` first and falling back to `secrets.yaml`.
+
+### imagePullPolicy by Environment
+
+The scaffolded values files set `imagePullPolicy` appropriately for each environment:
+
+- **`values.local.yaml`** — sets `imagePullPolicy: Never`. Images are loaded directly into minikube's Docker daemon, so Kubernetes should never attempt a registry pull.
+- **`values.dev.yaml`** — sets `imagePullPolicy: Always`. Cloud deployments pull from a remote registry and should always fetch the latest image for a given tag.
+
+### Deploy Process
+
+1. **Build** the Docker image (same as `ops build`)
+2. **Load** the image into minikube (for minikube profiles) or push to registry (for cloud profiles)
+3. **Install or upgrade** the Helm release — if the release already exists, it upgrades; otherwise, it installs fresh
+4. **Apply values** using the resolved values file chain
+
+### Examples
+
+**Local development (minikube):**
+
+```bash
+ff-cli ops deploy my-bundle -y
+# Builds image, loads into minikube, installs/upgrades Helm release
+# Auto-selects values.local.yaml for minikube profile
+```
+
+**Explicit values file:**
+
+```bash
+ff-cli ops deploy my-bundle -y --values local --namespace ff-test
+```
+
+**Verbose output for debugging:**
+
+```bash
+ff-cli ops deploy my-bundle -y --verbose
+# Shows Docker build output, Helm commands, and values file resolution
+```
 
 ## Build Command
 
@@ -180,6 +272,7 @@ ff-cli ops install <name> [OPTIONS]
 
 Options:
   --namespace, -n <ns>        Kubernetes namespace (default: ff-dev)
+  --values <name>             Values file variant (e.g., local, dev) — see Deploy Command for resolution logic
   --chart-version <version>   Helm chart version
   --yes                       Skip confirmation prompts
   --local-chart               Use local chart (./apps/<name>/helm/) instead of remote
@@ -188,10 +281,11 @@ Options:
 ### Installation Process
 
 1. **Validates workspace** structure
-2. **Prompts for confirmation** (unless `--yes` is used)
-3. **Adds Helm repository** (FireFoundry charts)
-4. **Installs Helm chart** for the agent bundle
-5. **Deploys to Kubernetes** namespace
+2. **Resolves values files** based on `--values` flag or profile auto-detection
+3. **Prompts for confirmation** (unless `--yes` is used)
+4. **Adds Helm repository** (FireFoundry charts)
+5. **Installs Helm chart** for the agent bundle with the resolved values
+6. **Deploys to Kubernetes** namespace
 
 ## Upgrade Command
 
@@ -220,6 +314,7 @@ ff-cli ops upgrade <name> [OPTIONS]
 
 Options:
   --namespace, -n <ns>        Kubernetes namespace (default: ff-dev)
+  --values <name>             Values file variant (e.g., local, dev) — see Deploy Command for resolution logic
   --chart-version <version>   Helm chart version
   --yes                       Skip confirmation prompts
   --no-restart                Disable restart annotations
@@ -298,7 +393,37 @@ This command verifies:
 
 ## Workflow Examples
 
+### Local Development Workflow (Recommended)
+
+Use `ops deploy` for the fastest iteration cycle:
+
+**1. Create minikube profile:**
+
+```bash
+ff-cli profile create minikube-local
+# Select "Minikube" type
+ff-cli profile select minikube-local
+```
+
+**2. Build and deploy in one step:**
+
+```bash
+ff-cli ops deploy my-bundle -y --namespace ff-dev
+# Builds image, loads into minikube, installs/upgrades Helm release
+# Auto-selects values.local.yaml (imagePullPolicy: Never)
+```
+
+**3. Iterate — rebuild and redeploy:**
+
+```bash
+# Make code changes, then:
+ff-cli ops deploy my-bundle -y --namespace ff-dev
+# Automatically upgrades the existing release
+```
+
 ### Complete Deployment Workflow
+
+For production or cloud deployments where you want more control:
 
 **1. Create and configure profile:**
 
@@ -318,7 +443,7 @@ ff-cli ops build my-bundle --tag 1.0.0
 **3. Install to Kubernetes:**
 
 ```bash
-ff-cli ops install my-bundle --namespace production
+ff-cli ops install my-bundle --namespace production --values dev
 ```
 
 **4. Upgrade deployment:**
@@ -328,29 +453,7 @@ ff-cli ops install my-bundle --namespace production
 ff-cli ops build my-bundle --tag 1.1.0
 
 # Upgrade deployment
-ff-cli ops upgrade my-bundle --namespace production
-```
-
-### Local Development Workflow
-
-**1. Create minikube profile:**
-
-```bash
-ff-cli profile create minikube-local
-# Select "Minikube" type
-ff-cli profile select minikube-local
-```
-
-**2. Build for local testing:**
-
-```bash
-ff-cli ops build my-bundle --minikube --tag local
-```
-
-**3. Install to minikube:**
-
-```bash
-ff-cli ops install my-bundle --namespace ff-dev
+ff-cli ops upgrade my-bundle --namespace production --values dev
 ```
 
 ## Integration with Profiles
