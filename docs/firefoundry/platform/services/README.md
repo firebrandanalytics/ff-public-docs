@@ -25,6 +25,7 @@ Extended Services provide specialized capabilities that enhance agent functional
 - **Entity Service** - Entity graph management with vector-based semantic search
 - **Data Access Service** - Secure multi-database SQL access with AST query translation and fine-grained ACL
 - **Document Processing Service** - Document extraction, generation, and transformation
+- **Virtual Worker Manager** - CLI coding agent orchestration with managed sessions and persistent workspaces
 
 ### Tier 3: Supporting Services
 
@@ -46,6 +47,7 @@ Supporting Services include services under active development that extend platfo
 | **Document Processing** | 0.1.10 | Beta | Document extraction, OCR, generation, transformation | Extended | REST |
 | **Doc Proc Python Worker** | 0.1.0 | Planning | Advanced ML-based document processing backends | Supporting | gRPC |
 | **Web Search Service** | 0.1.0 | Beta | Provider-agnostic web search with Bing integration | Supporting | REST |
+| **Virtual Worker Manager** | 0.1.0 | Beta | CLI coding agent orchestration with managed sessions and persistent workspaces | Extended | REST |
 
 ## How Services Work Together
 
@@ -96,6 +98,7 @@ graph TB
     subgraph "Extended Services - Tier 2"
         Entity[Entity Service]
         DocProc[Document Processing]
+        VWM[Virtual Worker Manager]
     end
     
     subgraph "Supporting Services - Tier 3"
@@ -113,6 +116,7 @@ graph TB
     AB -->|Execute code| Sandbox
     AB -->|Entity CRUD| Entity
     AB -->|Document ops| DocProc
+    AB -->|Coding agents| VWM
     
     Broker -->|Track requests| PG
     Broker -->|Model API calls| AI
@@ -129,7 +133,11 @@ graph TB
     DocProc -->|Logs & cache| PG
     DocProc -->|Advanced ops| PyWorker
     DocProc -->|Store results| Context
-    
+
+    VWM -->|Job state| PG
+    VWM -->|Create jobs/pods| K8s[Kubernetes]
+    VWM -->|Skill blobs| Blob
+
     PyWorker -->|OCR & tables| DocProc
 ```
 
@@ -142,6 +150,7 @@ graph TB
 - **Context Service** and **Document Processing** depend on blob storage
 - **FF Broker** depends on external AI provider APIs
 - **Entity Service** is self-contained with only PostgreSQL dependency
+- **Virtual Worker Manager** depends on PostgreSQL, Kubernetes (for jobs/pods), and blob storage (for skills)
 
 ## Common Data Flows
 
@@ -303,6 +312,10 @@ graph TD
 | **Document Processing** | PostgreSQL | SQL | Cache results, log requests |
 | **Document Processing** | Context Service | gRPC | Store/retrieve document data (planned) |
 | **Document Processing** | Doc Proc Python Worker | gRPC | Delegate advanced OCR and table extraction |
+| **Virtual Worker Manager** | PostgreSQL | SQL | Store worker configs, sessions, jobs, telemetry |
+| **Virtual Worker Manager** | Kubernetes | REST | Create/manage jobs, pods, PVCs for worker sessions |
+| **Virtual Worker Manager** | Blob Storage | Cloud SDK | Download skill packages for worker pods |
+| **Agent Bundle** | Virtual Worker Manager | REST | Create sessions, execute prompts, manage files |
 | **Doc Proc Python Worker** | (None) | N/A | Stateless processing, no external dependencies |
 
 ## Configuration and Deployment Overview
@@ -492,6 +505,7 @@ Detailed documentation for each service:
 - [Data Access Service](./data-access/README.md) - Multi-database SQL access with AST queries, staged federation, and scratch pad
 - [Entity Service](./entity-service.md) - Entity graph with vector search
 - [Document Processing Service](./doc-proc-service.md) - Document operations
+- [Virtual Worker Manager](./virtual-workers/README.md) - CLI coding agent orchestration with managed sessions
 
 ### Tier 3: Supporting Services
 - [Document Processing Python Worker](./doc-proc-pyworker.md) - ML-based processing
