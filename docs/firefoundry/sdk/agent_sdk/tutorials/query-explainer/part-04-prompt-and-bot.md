@@ -1,15 +1,261 @@
 # Part 4: Prompt & Bot
 
-In this part you'll create the system prompt that instructs the LLM to call tools before answering, then build the bot class that combines tool calling with structured output validation.
+In this part you'll create a structured system prompt using the SDK's prompt framework, then build the bot class that combines tool calling with structured output validation.
 
 **What you'll learn:**
-- Designing system prompts for tool-calling bots
+- Building prompts with `PromptTemplateSectionNode`, `PromptTemplateListNode`, and `PromptTemplateStructDataNode`
+- Using semantic types (`context`, `rule`, `sample_output`) to organize prompt sections
 - Using `ComposeMixins` to combine `MixinBot` with `StructuredOutputBotMixin`
-- Why explicit field name instructions improve schema validation reliability
 - The `get_semantic_label` workaround for `ComposeMixins`
 - Using `@RegisterBot` for auto-registration
 
 **What you'll build:** A `QueryExplainerBot` that calls DAS tools, then produces a Zod-validated JSON analysis with performance and semantic sections.
+
+## Concepts: The Prompt Framework
+
+The SDK provides a structured prompt framework that goes beyond plain strings. Instead of a single large text block, you compose prompts from typed nodes:
+
+| Node Type | Purpose |
+|-----------|---------|
+| `PromptTemplateSectionNode` | Groups related content with a `semantic_type` (e.g., `context`, `rule`, `sample_output`) |
+| `PromptTemplateTextNode` | Static or dynamic text content |
+| `PromptTemplateListNode` | Ordered or unordered lists with a `list_label_function` |
+| `PromptTemplateStructDataNode` | JSON examples rendered from data objects |
+
+Each section has a `semantic_type` that communicates its purpose to the framework:
+- `context` — role definition, available tools, background information
+- `rule` — instructions the LLM must follow
+- `sample_output` — example output formats and schemas
+
+### Why Use the Framework?
+
+1. **Composability** — Sections can be added, removed, or overridden in subclasses
+2. **Testability** — Individual sections can be validated independently
+3. **Semantics** — The framework understands the purpose of each section
+4. **Consistency** — All prompts across your organization follow the same patterns
+
+## Step 1: Create the System Prompt
+
+The prompt class extends `Prompt` and builds its sections in the constructor using protected helper methods — one per logical section.
+
+**`apps/query-bundle/src/prompts/QueryExplainerPrompt.ts`**:
+
+```typescript
+import {
+  Prompt,
+  PromptTemplateSectionNode,
+  PromptTemplateTextNode,
+  PromptTemplateListNode,
+  PromptTemplateStructDataNode,
+  PromptTemplateNode,
+} from '@firebrandanalytics/ff-agent-sdk';
+import type { PromptTypeHelper } from '@firebrandanalytics/ff-agent-sdk';
+
+export type QueryExplainerPTH = PromptTypeHelper<
+  string,
+  { static: Record<string, never>; request: Record<string, never> },
+  any
+>;
+
+/**
+ * Example tables_used item shown to the LLM so it knows the expected
+ * shape of the JSON array entries.
+ */
+const EXAMPLE_TABLES_USED_ITEM = {
+  table_name: 'customers',
+  business_name: 'Customer Directory',
+  role_in_query: 'Source of customer names for the aggregation',
+};
+
+export class QueryExplainerPrompt extends Prompt<QueryExplainerPTH> {
+  constructor() {
+    super({
+      role: 'system',
+      static_args: {} as any,
+    });
+
+    this.add_section(this.get_Context_Section());
+    this.add_section(this.get_Process_Section());
+    this.add_section(this.get_Performance_Section());
+    this.add_section(this.get_Semantic_Section());
+    this.add_section(this.get_Output_Schema_Section());
+  }
+```
+
+### The Context Section
+
+The first section defines the bot's role and what tools are available. It uses `semantic_type: 'context'`:
+
+```typescript
+  /**
+   * Context section — role definition and available tools.
+   */
+  protected get_Context_Section(): PromptTemplateNode<QueryExplainerPTH> {
+    return new PromptTemplateSectionNode<QueryExplainerPTH>({
+      semantic_type: 'context',
+      name: 'context',
+      children: [
+        'You are a SQL Query Analyst that provides both performance analysis and semantic interpretation of SQL queries.',
+        new PromptTemplateTextNode<QueryExplainerPTH>({
+          name: 'tools_context',
+          content: `You have access to tools that connect to the Data Access Service (DAS), which provides:
+- Query execution plans (EXPLAIN/ANALYZE)
+- Data dictionary with table and column descriptions, business names, and tags
+- Schema information with column types and relationships`,
+        }),
+      ],
+    });
+  }
+```
+
+**Key points:**
+- `semantic_type: 'context'` marks this as background information
+- `children` accepts both plain strings and typed nodes
+- Named children (e.g., `name: 'tools_context'`) can be targeted for overrides in subclasses
+
+### The Process Section
+
+Numbered steps the LLM must follow, using `PromptTemplateListNode`:
+
+```typescript
+  /**
+   * Process section — numbered steps the LLM must follow.
+   */
+  protected get_Process_Section(): PromptTemplateNode<QueryExplainerPTH> {
+    return new PromptTemplateSectionNode<QueryExplainerPTH>({
+      semantic_type: 'rule',
+      name: 'process',
+      content: 'When given a SQL query, follow these steps:',
+      children: [
+        new PromptTemplateListNode<QueryExplainerPTH>({
+          semantic_type: 'rule',
+          children: [
+            'Run EXPLAIN ANALYZE on the query using the explain_query tool to get the execution plan.',
+            'Identify tables referenced in the query, then look up their semantic meaning using the get_dictionary_tables tool.',
+            'Look up column details for the referenced tables using the get_dictionary_columns tool.',
+            'Get the schema for type information using the get_schema tool.',
+            'Synthesize your analysis into the Performance Analysis and Semantic Analysis sections described below.',
+          ],
+          list_label_function: (_req: any, _child: any, idx: number) => `${idx + 1}. `,
+        }),
+      ],
+    });
+  }
+```
+
+**Key points:**
+- `PromptTemplateListNode` generates a numbered list using `list_label_function`
+- The function receives the request context, the child node, and the zero-based index
+- For bullet lists, use `() => '- '` instead
+
+### The Performance Section
+
+Rules for performance analysis:
+
+```typescript
+  /**
+   * Performance rules section — what the performance analysis must cover.
+   */
+  protected get_Performance_Section(): PromptTemplateNode<QueryExplainerPTH> {
+    return new PromptTemplateSectionNode<QueryExplainerPTH>({
+      semantic_type: 'rule',
+      name: 'performance_analysis',
+      content: 'Performance Analysis:',
+      children: [
+        new PromptTemplateListNode<QueryExplainerPTH>({
+          semantic_type: 'rule',
+          children: [
+            'Summarize what the execution plan reveals',
+            'Identify bottlenecks (sequential scans on large tables, missing indexes, expensive joins)',
+            'Provide specific, actionable optimization suggestions (e.g., "Add an index on orders.customer_id")',
+            'Note the estimated cost and actual execution time if available',
+          ],
+          list_label_function: (_req: any, _child: any, _idx: number) => '- ',
+        }),
+      ],
+    });
+  }
+```
+
+### The Semantic Section
+
+Rules for semantic analysis, plus important notes:
+
+```typescript
+  /**
+   * Semantic rules section — what the semantic analysis must cover.
+   */
+  protected get_Semantic_Section(): PromptTemplateNode<QueryExplainerPTH> {
+    return new PromptTemplateSectionNode<QueryExplainerPTH>({
+      semantic_type: 'rule',
+      name: 'semantic_analysis',
+      content: 'Semantic Analysis:',
+      children: [
+        new PromptTemplateListNode<QueryExplainerPTH>({
+          semantic_type: 'rule',
+          children: [
+            'State the business question this query answers in plain English',
+            'Explain the business domain context (e.g., "This query operates in the sales/customer analytics domain")',
+            'For each table, explain its business role in the query',
+            'Identify the business entities involved and their relationships',
+            'If dictionary annotations are available, use the business_name and description fields to enrich your explanation',
+          ],
+          list_label_function: (_req: any, _child: any, _idx: number) => '- ',
+        }),
+        new PromptTemplateTextNode<QueryExplainerPTH>({
+          name: 'important_notes',
+          content: `Important Notes:
+- Always call tools to gather information before producing your analysis
+- If dictionary annotations are not available for some tables, use the table and column names to infer semantic meaning
+- Focus on practical, actionable insights
+- The business_question should be something a non-technical stakeholder would understand`,
+        }),
+      ],
+    });
+  }
+```
+
+### The Output Schema Section
+
+The exact field names the LLM must use, plus a JSON example via `PromptTemplateStructDataNode`:
+
+```typescript
+  /**
+   * Output schema section — exact field names required in the JSON output,
+   * plus an example of the tables_used structure.
+   */
+  protected get_Output_Schema_Section(): PromptTemplateNode<QueryExplainerPTH> {
+    return new PromptTemplateSectionNode<QueryExplainerPTH>({
+      semantic_type: 'sample_output',
+      name: 'output_schema',
+      content: 'Output JSON Field Names (IMPORTANT — use these exact names):',
+      children: [
+        new PromptTemplateTextNode<QueryExplainerPTH>({
+          name: 'field_names',
+          content: `Your JSON output MUST use these exact field names:
+- performance.summary, performance.bottlenecks, performance.optimization_suggestions
+- performance.estimated_cost (optional), performance.execution_time_ms (optional)
+- semantics.business_question, semantics.domain_context
+- semantics.tables_used (array of objects with: table_name, business_name, role_in_query)
+- semantics.entities_involved (array of strings)
+- semantics.relationships (array of strings)`,
+        }),
+        new PromptTemplateTextNode<QueryExplainerPTH>({
+          content: 'Example tables_used item:',
+        }),
+        new PromptTemplateStructDataNode<QueryExplainerPTH>({
+          data: EXAMPLE_TABLES_USED_ITEM,
+        }),
+      ],
+    });
+  }
+}
+```
+
+**Key points:**
+- `semantic_type: 'sample_output'` marks this as expected output format
+- `PromptTemplateStructDataNode` renders the `EXAMPLE_TABLES_USED_ITEM` object as JSON in the prompt
+- This is better than embedding JSON strings manually — the framework handles formatting
 
 ## Concepts: Structured Output with Tool Calling
 
@@ -30,105 +276,7 @@ The mixin doesn't use JSON Schema mode (`response_format`). Instead, it:
 4. Validates against the Zod schema using `safeParse()`
 5. If validation fails and `max_tries > 1`, retries with the error feedback
 
-Because the schema is communicated as natural language (not a formal constraint), the LLM may produce slightly different field names. Adding explicit field name instructions to the prompt dramatically improves reliability.
-
-## Step 1: Create the System Prompt
-
-The prompt is the most important piece of a tool-calling bot. It must tell the LLM:
-- What tools are available and when to call them
-- The exact order of operations
-- What the final output should look like (including exact field names)
-
-**`apps/query-bundle/src/prompts/QueryExplainerPrompt.ts`**:
-
-```typescript
-import {
-  Prompt,
-  PromptTemplateTextNode,
-} from '@firebrandanalytics/ff-agent-sdk';
-import type { PromptTypeHelper } from '@firebrandanalytics/ff-agent-sdk';
-
-export type QueryExplainerPTH = PromptTypeHelper<
-  string,
-  { static: Record<string, never>; request: Record<string, never> },
-  any
->;
-
-export class QueryExplainerPrompt extends Prompt<QueryExplainerPTH> {
-  constructor() {
-    super({
-      role: 'system',
-      static_args: {} as any,
-    });
-
-    this.add_section(
-      new PromptTemplateTextNode<QueryExplainerPTH>({
-        content: () => SYSTEM_PROMPT,
-      })
-    );
-  }
-}
-```
-
-Now define the prompt text. This is the core instruction set:
-
-```typescript
-const SYSTEM_PROMPT = `You are a SQL Query Analyst that provides both performance analysis and semantic interpretation of SQL queries.
-
-You have access to tools that connect to the Data Access Service (DAS), which provides:
-- Query execution plans (EXPLAIN/ANALYZE)
-- Data dictionary with table and column descriptions, business names, and tags
-- Schema information with column types and relationships
-
-## Your Process
-
-When given a SQL query, follow these steps:
-
-1. **Run EXPLAIN ANALYZE** on the query using the explain_query tool to get the execution plan.
-
-2. **Identify tables** referenced in the query, then look up their semantic meaning using the get_dictionary_tables tool.
-
-3. **Look up column details** for the referenced tables using the get_dictionary_columns tool.
-
-4. **Get the schema** for type information using the get_schema tool.
-
-5. **Synthesize your analysis** into two sections:
-
-### Performance Analysis
-- Summarize what the execution plan reveals
-- Identify bottlenecks (sequential scans on large tables, missing indexes, expensive joins)
-- Provide specific, actionable optimization suggestions
-- Note the estimated cost and actual execution time if available
-
-### Semantic Analysis
-- State the business question this query answers in plain English
-- Explain the business domain context
-- For each table, explain its business role in the query
-- Identify the business entities involved and their relationships
-- If dictionary annotations are available, use the business_name and description fields
-
-## Important Notes
-- Always call tools to gather information before producing your analysis
-- If dictionary annotations are not available for some tables, use the table and column names to infer semantic meaning
-- Focus on practical, actionable insights
-- The business_question should be something a non-technical stakeholder would understand
-
-## Output JSON Field Names (IMPORTANT — use these exact names)
-Your JSON output MUST use these exact field names:
-- performance.summary, performance.bottlenecks, performance.optimization_suggestions
-- performance.estimated_cost (optional), performance.execution_time_ms (optional)
-- semantics.business_question, semantics.domain_context
-- semantics.tables_used (array of objects with: table_name, business_name, role_in_query)
-- semantics.entities_involved (array of strings)
-- semantics.relationships (array of strings)
-
-Example tables_used item: {"table_name": "customers", "business_name": "Customer Directory", "role_in_query": "Source of customer names for the aggregation"}`;
-```
-
-**Key points:**
-- The "Your Process" section with numbered steps guides the LLM to call tools in a specific order
-- The "Output JSON Field Names" section is critical — without it, the LLM may use different names (e.g., `tableName` instead of `table_name`) and fail Zod validation
-- The example `tables_used` item shows the LLM exactly what shape to produce
+Because the schema is communicated as natural language (not a formal constraint), the LLM may produce slightly different field names. Adding explicit field name instructions to the prompt (as we did in `get_Output_Schema_Section`) dramatically improves reliability.
 
 ## Step 2: Create the User Input Prompt
 
@@ -177,7 +325,7 @@ import {
   QueryExplainerPrompt,
   type QueryExplainerPTH,
 } from '../prompts/QueryExplainerPrompt.js';
-import { DASClient } from '../das-client.js';
+import { dasClient } from '../das-client.js';
 
 // ── Type helpers ────────────────────────────────────────────
 
@@ -188,17 +336,6 @@ export type QueryExplainerBTH = BotTypeHelper<
   any,
   BrokerTextContent
 >;
-
-// ── DAS Client singleton ────────────────────────────────────
-
-const DAS_URL = process.env.DAS_URL || 'http://localhost:8080';
-const DAS_API_KEY = process.env.DAS_API_KEY || 'dev-api-key';
-const DAS_IDENTITY = process.env.DAS_IDENTITY || 'user:admin';
-const dasClient = new DASClient({
-  baseUrl: DAS_URL,
-  apiKey: DAS_API_KEY,
-  identity: DAS_IDENTITY,
-});
 
 // ── Tool dispatch table (from Part 3) ───────────────────────
 

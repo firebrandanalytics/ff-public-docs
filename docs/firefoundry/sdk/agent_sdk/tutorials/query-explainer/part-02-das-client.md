@@ -1,245 +1,182 @@
 # Part 2: The DAS Client
 
-In this part you'll build an HTTP client wrapper for the Data Access Service. This client handles authentication, URL construction, and response normalization for the DAS endpoints your tools will call.
+In this part you'll configure the published `@firebrandanalytics/data-access-client` package to communicate with the Data Access Service. This client handles authentication, URL construction, error translation, and typed responses for every DAS endpoint.
 
 **What you'll learn:**
 - DAS API patterns (EXPLAIN, dictionary, schema endpoints)
-- Authentication with `X-API-Key` and `X-On-Behalf-Of` headers
+- How the published client handles authentication automatically
 - Configuring the client for different deployment environments
-- Response field normalization (camelCase to snake_case)
+- Key methods and types you'll use in your tools
 
-**What you'll build:** A `DASClient` class that wraps four DAS endpoints: `explainSQL`, `getSchema`, `getDictionaryTables`, and `getDictionaryColumns`.
+**What you'll build:** A configured `DataAccessClient` instance that your tools will call in Part 3.
 
 ## Concepts: The Data Access Service
 
 The **Data Access Service (DAS)** provides semantic mediation between databases and AI applications. For our query analyzer, we'll use three of its knowledge layers:
 
-| Layer | What It Provides | Endpoint Pattern |
-|-------|-----------------|------------------|
-| **Catalog** | Schema information (tables, columns, types, keys) | `GET /v1/connections/{conn}/schema` |
-| **Catalog** | Query execution plans | `POST /v1/connections/{conn}/explain-sql` |
-| **Dictionary** | Business names, descriptions, tags for tables and columns | `GET /v1/dictionary/tables`, `GET /v1/dictionary/columns` |
+| Layer | What It Provides | Client Method |
+|-------|-----------------|---------------|
+| **Catalog** | Schema information (tables, columns, types, keys) | `getSchema(connection)` |
+| **Catalog** | Query execution plans | `explainSQL(connection, request)` |
+| **Dictionary** | Business names, descriptions, tags for tables and columns | `dictionaryTables(options)`, `dictionaryColumns(options)` |
 
 ### Access Patterns
 
 Users access DAS differently depending on their environment:
 
-| Environment | `DAS_URL` | When to use |
-|-------------|-----------|-------------|
+| Environment | `FF_DATA_SERVICE_URL` | When to use |
+|-------------|----------------------|-------------|
 | Port-forward | `http://localhost:8080` | Local development with `kubectl port-forward` |
 | Kong gateway | `https://home.40.75.137.31.nip.io/das` | Remote access through the API gateway |
 | In-cluster | `http://ff-data-access.ff-dev.svc.cluster.local:8080` | Agent bundle running in the same Kubernetes cluster |
 
-## Step 1: Define the Client Interfaces
+## Step 1: Understand the Published Client
+
+The `@firebrandanalytics/data-access-client` package (installed in Part 1) provides a `DataAccessClient` class with typed methods for every DAS endpoint. You don't need to build an HTTP client from scratch.
 
 **`apps/query-bundle/src/das-client.ts`**:
 
 ```typescript
-import axios, { type AxiosInstance } from 'axios';
-import { logger } from '@firebrandanalytics/ff-agent-sdk';
+import { DataAccessClient } from '@firebrandanalytics/data-access-client';
 
-export interface DASClientOptions {
-  /** Base URL for the DAS HTTP API (e.g. http://localhost:8080) */
-  baseUrl: string;
-  /** API key for authentication */
-  apiKey?: string;
-  /** Identity header (X-On-Behalf-Of) */
-  identity?: string;
-  /** Timeout in ms */
-  timeout?: number;
-}
+const FF_DATA_SERVICE_URL = process.env.FF_DATA_SERVICE_URL || 'http://localhost:8080';
 
-export interface ExplainResult {
-  plan_lines: string[];
-  sql: string;
-  duration_ms?: number;
-}
-
-export interface DictionaryTable {
-  connection: string;
-  table_name: string;
-  business_name: string;
-  description: string;
-  tags: string[];
-  semantic_type: string;
-  data_classification: string;
-  row_count_estimate?: number;
-}
-
-export interface DictionaryColumn {
-  connection: string;
-  table_name: string;
-  column_name: string;
-  business_name: string;
-  description: string;
-  tags: string[];
-  semantic_type: string;
-  usage_notes?: string;
-}
-
-export interface SchemaTable {
-  name: string;
-  columns: SchemaColumn[];
-}
-
-export interface SchemaColumn {
-  name: string;
-  type: string;
-  nullable: boolean;
-  primary_key?: boolean;
-}
-```
-
-**Key points:**
-- All interfaces use `snake_case` field names — we normalize the DAS response in each method.
-- The `DASClientOptions` defaults make local development work out of the box.
-
-## Step 2: Implement the Client Class
-
-Add the class implementation to the same file:
-
-```typescript
-export class DASClient {
-  private http: AxiosInstance;
-
-  constructor(options: DASClientOptions) {
-    this.http = axios.create({
-      baseURL: options.baseUrl,
-      timeout: options.timeout ?? 30000,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': options.apiKey ?? 'dev-api-key',
-        'X-On-Behalf-Of': options.identity ?? 'user:admin',
-      },
-    });
-  }
-```
-
-The `X-API-Key` header authenticates with the DAS. The `X-On-Behalf-Of` header identifies who the request is being made for (used for access control).
-
-## Step 3: Implement explainSQL
-
-The EXPLAIN endpoint runs `EXPLAIN` or `EXPLAIN ANALYZE` on a SQL query and returns the execution plan:
-
-```typescript
-  /**
-   * Run EXPLAIN [ANALYZE] on a SQL query.
-   */
-  async explainSQL(
-    connection: string,
-    sql: string,
-    options?: { analyze?: boolean; verbose?: boolean }
-  ): Promise<ExplainResult> {
-    const response = await this.http.post(
-      `/v1/connections/${encodeURIComponent(connection)}/explain-sql`,
-      {
-        sql,
-        analyze: options?.analyze ?? false,
-        verbose: options?.verbose ?? false,
-      }
-    );
-    const data = response.data;
-    return {
-      plan_lines: data.planLines ?? data.plan_lines ?? [],
-      sql: data.sql,
-      duration_ms: data.durationMs ?? data.duration_ms,
-    };
-  }
-```
-
-**Key points:**
-- The URL path includes the connection name: `/v1/connections/{connection}/explain-sql`
-- The DAS returns camelCase fields (`planLines`, `durationMs`), so we normalize with `??` fallbacks
-- `encodeURIComponent` protects against connection names with special characters
-
-## Step 4: Implement getSchema
-
-The schema endpoint returns table and column metadata:
-
-```typescript
-  /**
-   * Get schema for a connection (tables + columns).
-   */
-  async getSchema(
-    connection: string,
-    table?: string
-  ): Promise<{ tables: SchemaTable[] }> {
-    const params = new URLSearchParams();
-    if (table) params.set('table', table);
-    const qs = params.toString();
-    const response = await this.http.get(
-      `/v1/connections/${encodeURIComponent(connection)}/schema${qs ? '?' + qs : ''}`
-    );
-    return response.data;
-  }
-```
-
-If you pass a `table` parameter, only that table's schema is returned. Otherwise you get all tables.
-
-## Step 5: Implement Dictionary Methods
-
-The dictionary endpoints return business annotations for tables and columns:
-
-```typescript
-  /**
-   * Get dictionary table annotations.
-   */
-  async getDictionaryTables(
-    connection: string,
-    options?: { tags?: string; excludeTags?: string }
-  ): Promise<DictionaryTable[]> {
-    const params = new URLSearchParams();
-    params.set('connection', connection);
-    if (options?.tags) params.set('tags', options.tags);
-    if (options?.excludeTags) params.set('excludeTags', options.excludeTags);
-    const response = await this.http.get(
-      `/v1/dictionary/tables?${params.toString()}`
-    );
-    return response.data.tables ?? response.data;
-  }
-
-  /**
-   * Get dictionary column annotations for specific tables.
-   */
-  async getDictionaryColumns(
-    connection: string,
-    tables?: string[]
-  ): Promise<DictionaryColumn[]> {
-    const params = new URLSearchParams();
-    params.set('connection', connection);
-    if (tables?.length) {
-      for (const t of tables) params.append('table', t);
-    }
-    const response = await this.http.get(
-      `/v1/dictionary/columns?${params.toString()}`
-    );
-    return response.data.columns ?? response.data;
-  }
-}
-```
-
-**Key points:**
-- Dictionary endpoints use query parameters rather than path parameters
-- `getDictionaryColumns` accepts multiple table names via repeated `table` query params
-- Response unwrapping handles both `{ tables: [...] }` and direct array formats
-
-## Step 6: Create the Client Singleton
-
-In your bot (which we'll build in Part 4), you'll create a single DASClient instance using environment variables:
-
-```typescript
-const DAS_URL = process.env.DAS_URL || 'http://localhost:8080';
-const DAS_API_KEY = process.env.DAS_API_KEY || 'dev-api-key';
-const DAS_IDENTITY = process.env.DAS_IDENTITY || 'user:admin';
-
-const dasClient = new DASClient({
-  baseUrl: DAS_URL,
-  apiKey: DAS_API_KEY,
-  identity: DAS_IDENTITY,
+export const dasClient = new DataAccessClient({
+  serviceUrl: FF_DATA_SERVICE_URL,
 });
 ```
 
-## Step 7: Test the Client (Optional)
+That's it. The client handles:
+- **Authentication** — Automatically sends `X-Function-Name` and `X-Function-Namespace` headers (auto-detected from `FF_FUNCTION_NAME` and `FF_FUNCTION_NAMESPACE` environment variables, set by Fission/Kong)
+- **Request ID propagation** — Forwards `FF_REQUEST_ID` for distributed tracing
+- **Error translation** — Converts HTTP errors to typed exceptions (`PermissionDeniedError`, `QueryError`, `TimeoutError`, etc.)
+
+**Key points:**
+- The constructor takes `serviceUrl` (not `baseUrl`)
+- No API key or identity parameters needed — authentication is handled by the platform's function identity headers
+- The default timeout is 30 seconds, configurable via `timeout` option
+
+## Step 2: Explore the Methods You'll Use
+
+Here are the four methods we'll wrap as tools in Part 3:
+
+### explainSQL
+
+Runs `EXPLAIN` or `EXPLAIN ANALYZE` on a SQL query:
+
+```typescript
+import type { ExplainSQLRequest, ExplainResponse } from '@firebrandanalytics/data-access-client';
+
+const result: ExplainResponse = await dasClient.explainSQL('firekicks', {
+  sql: 'SELECT * FROM customers WHERE state = $1',
+  params: ['CA'],
+  analyze: true,
+  verbose: false,
+});
+
+// result.planLines — string[] of EXPLAIN output lines
+// result.sql       — the SQL that was explained
+// result.durationMs — time to run EXPLAIN (ms)
+// result.queryId   — audit correlation ID
+```
+
+### dictionaryTables
+
+Returns business annotations for tables — names, descriptions, tags:
+
+```typescript
+import type { DictionaryTablesResult } from '@firebrandanalytics/data-access-client';
+
+const result: DictionaryTablesResult = await dasClient.dictionaryTables({
+  connection: 'firekicks',
+});
+
+// result.tables — DictionaryTable[] with:
+//   .table        — database table name (e.g., "customers")
+//   .businessName — human-friendly name (e.g., "Customer Directory")
+//   .description  — what the table contains
+//   .tags         — classification tags
+//   .connection   — which connection this belongs to
+```
+
+### dictionaryColumns
+
+Returns column-level annotations for a specific table:
+
+```typescript
+import type { DictionaryColumnsResult } from '@firebrandanalytics/data-access-client';
+
+const result: DictionaryColumnsResult = await dasClient.dictionaryColumns({
+  connection: 'firekicks',
+  table: 'customers',
+});
+
+// result.columns — DictionaryColumn[] with:
+//   .column        — database column name
+//   .businessName  — human-friendly name
+//   .description   — what the column contains
+//   .semanticType  — semantic classification
+//   .usageNotes    — additional context
+```
+
+### getSchema
+
+Returns the database schema — tables and columns with types:
+
+```typescript
+import type { SchemaInfo } from '@firebrandanalytics/data-access-client';
+
+const schema: SchemaInfo = await dasClient.getSchema('firekicks');
+
+// schema.tables — TableInfo[] with:
+//   .name     — table name
+//   .type     — 'table' | 'view' | 'stored_view'
+//   .rowCount — approximate row count
+```
+
+To get columns for a specific table:
+
+```typescript
+const columns = await dasClient.getColumns('firekicks', 'customers');
+
+// columns — ColumnInfo[] with:
+//   .name          — column name
+//   .type          — database-specific type (e.g., "varchar(100)")
+//   .normalizedType — cross-DB type (e.g., "string")
+//   .nullable      — allows NULL?
+//   .primaryKey    — part of primary key?
+```
+
+## Step 3: Understand Error Handling
+
+The published client throws typed errors instead of raw Axios errors:
+
+```typescript
+import {
+  DataAccessError,
+  PermissionDeniedError,
+  QueryError,
+  TimeoutError,
+} from '@firebrandanalytics/data-access-client';
+
+try {
+  const result = await dasClient.explainSQL('firekicks', { sql: 'SELECT ...' });
+} catch (error) {
+  if (error instanceof PermissionDeniedError) {
+    // 403 — no access to this connection
+  } else if (error instanceof QueryError) {
+    // 400/422 — invalid SQL or query error
+  } else if (error instanceof TimeoutError) {
+    // 408 — query took too long
+  } else if (error instanceof DataAccessError) {
+    // Other DAS errors — error.message, error.code, error.queryId
+  }
+}
+```
+
+In our tools (Part 3), we'll catch these errors and return them as data rather than re-throwing — this lets the LLM see the error and adapt.
+
+## Step 4: Test the Client (Optional)
 
 If you have DAS running and accessible, you can test the client directly:
 
@@ -252,15 +189,18 @@ Create a quick test script:
 
 ```typescript
 // test-das.ts (temporary, for verification)
-import { DASClient } from './das-client.js';
+import { DataAccessClient } from '@firebrandanalytics/data-access-client';
 
-const client = new DASClient({ baseUrl: 'http://localhost:8080' });
+const client = new DataAccessClient({ serviceUrl: 'http://localhost:8080' });
 
-const tables = await client.getDictionaryTables('firekicks');
-console.log('Dictionary tables:', tables.length);
+const tables = await client.dictionaryTables({ connection: 'firekicks' });
+console.log('Dictionary tables:', tables.tables.length);
 
-const schema = await client.getSchema('firekicks', 'customers');
-console.log('Customers columns:', schema.tables[0]?.columns.length);
+const schema = await client.getSchema('firekicks');
+console.log('Schema tables:', schema.tables.length);
+
+const columns = await client.getColumns('firekicks', 'customers');
+console.log('Customer columns:', columns.length);
 ```
 
 ---

@@ -53,12 +53,14 @@ pnpm install
 
 ## Step 2: Add Dependencies
 
-The query bundle needs `axios` for HTTP calls to the Data Access Service, and `zod` for output schema validation:
+The query bundle needs the `@firebrandanalytics/data-access-client` package for communicating with the Data Access Service, and `zod` for output schema validation:
 
 ```bash
 cd apps/query-bundle
-pnpm add axios zod
+pnpm add @firebrandanalytics/data-access-client zod
 ```
+
+The `data-access-client` package provides a typed HTTP client that handles authentication, URL construction, and error translation for all DAS endpoints.
 
 ## Step 3: Define Shared Types
 

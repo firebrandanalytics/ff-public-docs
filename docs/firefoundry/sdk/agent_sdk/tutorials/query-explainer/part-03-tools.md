@@ -8,7 +8,7 @@ In this part you'll create the dispatch table — four tools that the LLM can ca
 - The error-as-return pattern for graceful tool failures
 - How tool functions receive arguments from the LLM
 
-**What you'll build:** Four dispatch table entries that wrap the DAS client methods from Part 2.
+**What you'll build:** Four dispatch table entries that wrap the `DataAccessClient` methods from Part 2.
 
 ## Concepts: How Tool Calling Works
 
@@ -72,22 +72,14 @@ throw new Error('Schema lookup failed');
 
 ## Step 1: Set Up the DAS Client
 
-At the top of your tools file (or in the bot file — we'll finalize the location in Part 4), create the DAS client singleton:
+Import the configured client singleton from Part 2:
 
 ```typescript
 import { logger } from '@firebrandanalytics/ff-agent-sdk';
-import { DASClient } from '../das-client.js';
-
-const DAS_URL = process.env.DAS_URL || 'http://localhost:8080';
-const DAS_API_KEY = process.env.DAS_API_KEY || 'dev-api-key';
-const DAS_IDENTITY = process.env.DAS_IDENTITY || 'user:admin';
-
-const dasClient = new DASClient({
-  baseUrl: DAS_URL,
-  apiKey: DAS_API_KEY,
-  identity: DAS_IDENTITY,
-});
+import { dasClient } from '../das-client.js';
 ```
+
+Since the `DataAccessClient` throws typed errors, we'll catch them in each tool and return the error message to the LLM.
 
 ## Step 2: The explain_query Tool
 
@@ -105,14 +97,15 @@ const queryExplainerTools: Record<string, { func: Function; spec: any }> = {
         analyze: args.analyze,
       });
       try {
-        const result = await dasClient.explainSQL(args.connection, args.sql, {
+        const result = await dasClient.explainSQL(args.connection, {
+          sql: args.sql,
           analyze: args.analyze ?? true,
           verbose: args.verbose ?? false,
         });
         return {
-          plan: result.plan_lines.join('\n'),
+          plan: result.planLines.join('\n'),
           sql: result.sql,
-          duration_ms: result.duration_ms,
+          duration_ms: result.durationMs,
         };
       } catch (err: any) {
         logger.error('[Tool] explain_query failed', { error: err.message });
@@ -138,9 +131,9 @@ const queryExplainerTools: Record<string, { func: Function; spec: any }> = {
 ```
 
 **Key points:**
-- The `func` joins `plan_lines` into a single string for the LLM to read
+- The `func` calls `dasClient.explainSQL(connection, { sql, analyze, verbose })` — note the request object pattern
+- The response uses `result.planLines` (camelCase) — the published client returns typed fields, no normalization needed
 - The `spec.description` tells the LLM what this tool does — be clear and specific
-- `analyze` and `verbose` are optional — the LLM can choose whether to use them
 
 ## Step 3: The get_dictionary_tables Tool
 
@@ -154,10 +147,11 @@ This tool looks up data dictionary annotations for tables — business names, de
     ) => {
       logger.info('[Tool] get_dictionary_tables', { connection: args.connection });
       try {
-        const tables = await dasClient.getDictionaryTables(args.connection, {
-          tags: args.tags,
+        const result = await dasClient.dictionaryTables({
+          connection: args.connection,
+          tags: args.tags ? args.tags.split(',').map((t) => t.trim()) : undefined,
         });
-        return { tables };
+        return { tables: result.tables };
       } catch (err: any) {
         logger.warn('[Tool] get_dictionary_tables failed', { error: err.message });
         return { tables: [], note: 'Dictionary annotations not available' };
@@ -179,6 +173,11 @@ This tool looks up data dictionary annotations for tables — business names, de
   },
 ```
 
+**Key points:**
+- `dasClient.dictionaryTables()` takes an options object with `connection`, `tags` (string array), and `excludeTags`
+- The LLM passes tags as a comma-separated string; we split it into an array for the client
+- The response's `result.tables` is already a `DictionaryTable[]` — no unwrapping needed
+
 ## Step 4: The get_dictionary_columns Tool
 
 This tool returns column-level annotations for specific tables:
@@ -194,8 +193,17 @@ This tool returns column-level annotations for specific tables:
         tables: args.tables,
       });
       try {
-        const columns = await dasClient.getDictionaryColumns(args.connection, args.tables);
-        return { columns };
+        // The client's dictionaryColumns takes a single table filter,
+        // so we call it for each table and merge results
+        const allColumns = [];
+        for (const table of args.tables) {
+          const result = await dasClient.dictionaryColumns({
+            connection: args.connection,
+            table,
+          });
+          allColumns.push(...result.columns);
+        }
+        return { columns: allColumns };
       } catch (err: any) {
         logger.warn('[Tool] get_dictionary_columns failed', { error: err.message });
         return { columns: [], note: 'Column annotations not available' };
@@ -222,6 +230,7 @@ This tool returns column-level annotations for specific tables:
 ```
 
 **Key points:**
+- The published client's `dictionaryColumns()` takes a single `table` filter, so we iterate over the requested tables and merge
 - The `tables` parameter is an `array` type — the LLM passes an array of table names
 - If dictionary annotations aren't configured, the tool returns an empty array with a `note`
 
@@ -240,7 +249,23 @@ This tool returns the database schema — column types, nullability, and primary
         table: args.table,
       });
       try {
-        const schema = await dasClient.getSchema(args.connection, args.table);
+        if (args.table) {
+          // Get columns for a specific table
+          const columns = await dasClient.getColumns(args.connection, args.table);
+          return {
+            tables: [{
+              name: args.table,
+              columns: columns.map((c) => ({
+                name: c.name,
+                type: c.type,
+                nullable: c.nullable,
+                primaryKey: c.primaryKey,
+              })),
+            }],
+          };
+        }
+        // Get all tables
+        const schema = await dasClient.getSchema(args.connection);
         return { tables: schema.tables };
       } catch (err: any) {
         logger.warn('[Tool] get_schema failed', { error: err.message });
@@ -264,20 +289,25 @@ This tool returns the database schema — column types, nullability, and primary
 };
 ```
 
+**Key points:**
+- When `table` is provided, we use `dasClient.getColumns()` for detailed column info
+- When omitted, we use `dasClient.getSchema()` to list all tables
+- The published client returns `ColumnInfo` objects with `normalizedType` for cross-database compatibility
+
 ## Summary
 
 You now have four tools in your dispatch table:
 
-| Tool | DAS Endpoint | Returns |
-|------|-------------|---------|
-| `explain_query` | `POST /v1/connections/{conn}/explain-sql` | Execution plan, timing |
-| `get_dictionary_tables` | `GET /v1/dictionary/tables` | Business names, descriptions, tags |
-| `get_dictionary_columns` | `GET /v1/dictionary/columns` | Column semantics, usage notes |
-| `get_schema` | `GET /v1/connections/{conn}/schema` | Column types, keys, nullability |
+| Tool | Client Method | Returns |
+|------|--------------|---------|
+| `explain_query` | `dasClient.explainSQL()` | Execution plan, timing |
+| `get_dictionary_tables` | `dasClient.dictionaryTables()` | Business names, descriptions, tags |
+| `get_dictionary_columns` | `dasClient.dictionaryColumns()` | Column semantics, usage notes |
+| `get_schema` | `dasClient.getSchema()` / `getColumns()` | Column types, keys, nullability |
 
 All four follow the same pattern:
 1. Log the invocation
-2. Call the DAS client
+2. Call the published DAS client
 3. Return a simplified result
 4. On error, return graceful fallback data
 

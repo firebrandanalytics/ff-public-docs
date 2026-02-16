@@ -21,9 +21,7 @@ The bundle needs connections to three services:
 | `USE_REMOTE_ENTITY_CLIENT` | Enable remote entity client | `true` |
 | `BROKER_URL` | Broker gRPC endpoint | `localhost:50052` |
 | `MODEL_POOL_NAME` | LLM model pool | `firebrand-gpt-5.2-failover` |
-| `DAS_URL` | Data Access Service URL | `http://localhost:8080` |
-| `DAS_API_KEY` | DAS authentication key | `dev-api-key` |
-| `DAS_IDENTITY` | DAS on-behalf-of identity | `user:admin` |
+| `FF_DATA_SERVICE_URL` | Data Access Service URL | `http://localhost:8080` |
 | `PORT` | Bundle HTTP server port | `3001` |
 
 > **Important:** Without `REMOTE_ENTITY_SERVICE_URL`, `REMOTE_ENTITY_SERVICE_PORT`, and `USE_REMOTE_ENTITY_CLIENT`, the SDK crashes with `Unsupported protocol undefined:`. These three variables are required for any agent bundle.
@@ -43,9 +41,7 @@ BROKER_URL=localhost:50052
 MODEL_POOL_NAME=firebrand-gpt-5.2-failover
 
 # Data Access Service
-DAS_URL=http://localhost:8080
-DAS_API_KEY=dev-api-key
-DAS_IDENTITY=user:admin
+FF_DATA_SERVICE_URL=http://localhost:8080
 
 # Bundle server
 PORT=3001
@@ -243,7 +239,7 @@ done
 | Bot completes but `data.result` is null | Not capturing the `VALUE` envelope | Check the iterator loop filters for `envelope.type === 'VALUE'` (see Part 5) |
 | Zod validation fails repeatedly | LLM uses wrong field names | Add explicit field name instructions to the system prompt (see Part 4) |
 | `MockBrokerClient` in logs | SDK created mock client (no broker URL) | Set `BROKER_URL=localhost:50052` in environment |
-| `AxiosError: Request failed with status 401` | DAS API key missing or wrong | Set `DAS_API_KEY` in environment |
+| `AxiosError: Request failed with status 403` | DAS permission denied | Check `FF_FUNCTION_NAME` and `FF_FUNCTION_NAMESPACE` env vars, or DAS ACL configuration |
 | Port 3001 already in use | Another process using the port | Change `PORT` env var or stop the other process |
 
 ### Verifying Tool Calls
