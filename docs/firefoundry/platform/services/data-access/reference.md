@@ -15,9 +15,15 @@ All data plane requests require:
 | POST | `/v1/connections/{conn}/query` | Execute raw SQL SELECT |
 | POST | `/v1/connections/{conn}/execute` | Execute INSERT/UPDATE/DELETE |
 | POST | `/v1/connections/{conn}/query-ast` | Execute structured AST query |
+| POST | `/v1/connections/{conn}/query-sql` | Parse SQL to AST, then execute |
 | POST | `/v1/connections/{conn}/translate-ast` | Convert AST to SQL (preview, no execution) |
+| POST | `/v1/connections/{conn}/translate-sql` | Parse SQL to AST, then convert to target SQL |
+| POST | `/v1/connections/{conn}/explain-ast` | Get query execution plan from AST |
+| POST | `/v1/connections/{conn}/explain-sql` | Get query execution plan from SQL |
 | GET | `/v1/connections/{conn}/schema` | Get table/column metadata |
 | GET | `/v1/connections` | List available connections (ACL-filtered) |
+| GET | `/v1/views` | List stored view definitions |
+| GET | `/v1/views/{namespace}/{name}` | Get a specific stored view |
 
 ### QueryRequest
 
@@ -69,6 +75,69 @@ message TranslateASTResponse {
   repeated StagedQueryTranslation staged_translations = 4;
 }
 ```
+
+### QuerySQLRequest
+
+Parse a PostgreSQL-dialect SQL string into an AST, then execute through the full AST pipeline (validation, ACL, view expansion, serialization to target dialect).
+
+```protobuf
+message QuerySQLRequest {
+  string connection = 1;
+  string sql = 2;                                // PostgreSQL-dialect SELECT
+  repeated google.protobuf.Value params = 3;
+  QueryOptions options = 4;
+  string save_as = 5;
+  repeated StagedQuery staged_queries = 6;
+}
+```
+
+### TranslateSQLResponse
+
+```protobuf
+message TranslateSQLResponse {
+  string original_sql = 1;              // Input SQL
+  string output_sql = 2;               // Backend-specific SQL
+  string dialect = 3;
+  SelectStatement ast = 4;             // Parsed AST
+  repeated string warnings = 5;
+  repeated StagedQueryTranslation staged_translations = 6;
+}
+```
+
+### ExplainRequest
+
+Get the database query execution plan without returning result rows. Supports both AST and SQL input.
+
+```protobuf
+message ExplainASTRequest {
+  string connection = 1;
+  SelectStatement select = 2;
+  repeated google.protobuf.Value params = 3;
+  bool analyze = 4;                    // EXPLAIN ANALYZE (actually executes the query)
+  bool verbose = 5;                    // EXPLAIN VERBOSE
+}
+
+message ExplainSQLRequest {
+  string connection = 1;
+  string sql = 2;
+  repeated google.protobuf.Value params = 3;
+  bool analyze = 4;
+  bool verbose = 5;
+}
+```
+
+### ExplainResponse
+
+```protobuf
+message ExplainResponse {
+  repeated string plan_lines = 1;      // Raw EXPLAIN output lines
+  string sql = 2;                      // The SQL that was explained
+  int32 duration_ms = 3;
+  string query_id = 4;
+}
+```
+
+When `analyze = true`, the query is actually executed (results discarded) and the plan includes real execution statistics (actual time, rows, loops). When `analyze = false`, only the estimated plan is returned.
 
 ### QueryOptions
 
@@ -141,6 +210,131 @@ message StagedQueryTranslation {
 
 Stored views are automatically included in schema responses when they match the requested connection and are visible to the caller's identity scope.
 
+## Dictionary Query API
+
+The dictionary query API provides read-only access to data dictionary annotations with tag-based filtering. These are **non-admin endpoints** — they require only API key authentication (same as data-plane), not admin auth.
+
+### Authentication
+
+Dictionary query requests require:
+- **API Key**: Via `X-Api-Key` header
+
+No caller identity (`X-On-Behalf-Of`) is required for dictionary queries.
+
+### Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/v1/dictionary/tables` | List table annotations with optional filtering |
+| GET | `/v1/dictionary/columns` | List column annotations with optional filtering |
+
+### GET /v1/dictionary/tables
+
+Query parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `connection` | string | Filter by connection name |
+| `tags` | string | Comma-separated tag inclusion filter (OR semantics) |
+| `excludeTags` | string | Comma-separated tag exclusion filter (any match excludes) |
+
+Response:
+```json
+{
+  "tables": [
+    {
+      "connection": "firekicks",
+      "schema": "public",
+      "table": "orders",
+      "description": "Customer orders with shipping and payment details",
+      "businessName": "Customer Orders",
+      "grain": "One row per order",
+      "tags": ["transactional", "sales", "financial"],
+      "statistics": { "rowCount": 131072, "avgRowSizeBytes": 256 },
+      "relationships": [
+        { "targetTable": "customers", "targetColumn": "customer_id", "joinColumn": "customer_id", "type": "many-to-one" }
+      ],
+      "qualityNotes": { "completeness": "All required fields populated" },
+      "usageNotes": "Primary table for order analysis. Use order_date for business date filtering.",
+      "updatedAt": "2026-02-14T12:00:00Z",
+      "updatedBy": "data-steward"
+    }
+  ],
+  "total": 1,
+  "filters": {
+    "connection": "firekicks",
+    "tags": [],
+    "excludeTags": []
+  }
+}
+```
+
+### GET /v1/dictionary/columns
+
+Query parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `connection` | string | Filter by connection name |
+| `table` | string | Filter by table name |
+| `tags` | string | Comma-separated tag inclusion filter (OR semantics) |
+| `excludeTags` | string | Comma-separated tag exclusion filter (any match excludes) |
+| `semanticType` | string | Filter by semantic type: `identifier`, `measure`, `dimension`, `temporal`, `descriptive` |
+| `dataClassification` | string | Filter by classification: `public`, `internal`, `financial`, `pii` |
+
+Response:
+```json
+{
+  "columns": [
+    {
+      "connection": "firekicks",
+      "schema": "public",
+      "table": "orders",
+      "column": "total_amount",
+      "description": "Total order amount including tax and shipping",
+      "businessName": "Order Total",
+      "semanticType": "measure",
+      "dataClassification": "financial",
+      "tags": ["financial", "sales"],
+      "sampleValues": ["29.99", "149.50", "299.00"],
+      "statistics": { "min": 9.99, "max": 999.99, "avg": 89.45, "distinctCount": 4500, "nullCount": 0 },
+      "valuePattern": "Decimal USD amount, typically 9.99 to 999.99",
+      "constraints": { "type": "range", "min": 0, "max": 999999.99 },
+      "relationships": [],
+      "qualityNotes": null,
+      "usageNotes": "Use for revenue calculations. Includes tax and shipping.",
+      "updatedAt": "2026-02-14T12:00:00Z",
+      "updatedBy": "data-steward"
+    }
+  ],
+  "total": 1,
+  "filters": {
+    "connection": "firekicks",
+    "table": "",
+    "tags": [],
+    "excludeTags": [],
+    "semanticType": "",
+    "dataClassification": ""
+  }
+}
+```
+
+### Filtering Examples
+
+```bash
+# All tables for a connection
+curl -s -H "X-Api-Key: $API_KEY" "$DA_HOST/v1/dictionary/tables?connection=warehouse"
+
+# Tables tagged "financial" but NOT "raw"
+curl -s -H "X-Api-Key: $API_KEY" "$DA_HOST/v1/dictionary/tables?connection=warehouse&tags=financial&excludeTags=raw"
+
+# All PII columns
+curl -s -H "X-Api-Key: $API_KEY" "$DA_HOST/v1/dictionary/columns?connection=warehouse&dataClassification=pii"
+
+# Measure columns for a specific table, excluding PII
+curl -s -H "X-Api-Key: $API_KEY" "$DA_HOST/v1/dictionary/columns?connection=warehouse&table=orders&semanticType=measure&excludeTags=pii"
+```
+
 ## Admin API
 
 ### Connection Management
@@ -164,6 +358,476 @@ Stored views are automatically included in schema responses when they match the 
 | GET | `/admin/views/{namespace}/{name}` | Get view with AST |
 | PUT | `/admin/views/{namespace}/{name}` | Update view |
 | DELETE | `/admin/views/{namespace}/{name}` | Delete view |
+
+### Annotation Management (Data Dictionary)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/annotations/tables` | List all table annotations |
+| POST | `/admin/annotations/tables` | Create/update a table annotation |
+| POST | `/admin/annotations/tables/bulk` | Bulk upsert table annotations |
+| DELETE | `/admin/annotations/tables/{connection}/{schema}/{table}` | Delete a table annotation |
+| GET | `/admin/annotations/columns` | List all column annotations |
+| POST | `/admin/annotations/columns` | Create/update a column annotation |
+| POST | `/admin/annotations/columns/bulk` | Bulk upsert column annotations |
+| DELETE | `/admin/annotations/columns/{connection}/{schema}/{table}/{column}` | Delete a column annotation |
+| POST | `/admin/annotations/import` | Import annotations from JSON |
+| GET | `/admin/annotations/export` | Export all annotations as JSON |
+
+### Variable Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/variables` | List all variable definitions |
+| POST | `/admin/variables` | Create or update a variable definition |
+| GET | `/admin/variables/{name}` | Get a specific variable |
+| DELETE | `/admin/variables/{name}` | Delete a variable |
+| POST | `/admin/variables/resolve` | Test variable resolution (debug) |
+
+### Variable Definition Body
+
+```json
+{
+  "name": "customer_id",
+  "description": "Resolves caller email to numeric customer ID",
+  "resolution": "lookup",
+  "connection": "",
+  "lookupTable": "email_to_customer",
+  "lookupKey": "email",
+  "lookupValue": "customer_id",
+  "headerName": ""
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Unique variable name |
+| `resolution` | string | Resolution strategy: `direct`, `lookup`, or `builtin` |
+| `connection` | string | Limit to specific connection (empty = all) |
+| `lookupTable` | string | Mapping table name (when resolution = `lookup`) |
+| `lookupKey` | string | Mapping table key column (when resolution = `lookup`) |
+| `lookupValue` | string | Mapping table value column (when resolution = `lookup`) |
+| `headerName` | string | Request header to read (when resolution = `direct`; default: `X-On-Behalf-Of`) |
+
+Built-in variables (`caller_identity`, `caller_connection`) are always available and don't need definitions.
+
+### Variable Resolve (Debug)
+
+Test how a variable resolves for a given identity:
+
+```bash
+curl -s -X POST "$DA_HOST/admin/variables/resolve" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"variable": "customer_id", "identity": "alice@example.com", "connection": "warehouse"}'
+```
+
+Response:
+```json
+{"variable": "customer_id", "value": "42"}
+```
+
+### Mapping Table Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/mappings` | List all mapping tables |
+| POST | `/admin/mappings` | Create or update a mapping table (with entries) |
+| GET | `/admin/mappings/{name}` | Get a mapping table with entries |
+| DELETE | `/admin/mappings/{name}` | Delete a mapping table (cascades entries) |
+
+### Mapping Table Body
+
+```json
+{
+  "name": "email_to_customer",
+  "description": "Maps caller email to numeric customer ID",
+  "keyColumn": "email",
+  "valueColumn": "customer_id",
+  "entries": [
+    { "key": "alice@example.com", "value": "42" },
+    { "key": "bob@example.com", "value": "99" }
+  ]
+}
+```
+
+Mapping tables are used by `lookup`-type variables to translate caller identities into database values. When a mapping table is saved, all existing entries are replaced with the new set.
+
+### Value Store Management (NER)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/value-stores` | List all value store configs |
+| POST | `/admin/value-stores` | Create a value store config |
+| GET | `/admin/value-stores/{name}` | Get a value store config |
+| DELETE | `/admin/value-stores/{name}` | Delete a value store and its data |
+| POST | `/admin/value-stores/{name}/refresh` | Trigger a manual data refresh |
+
+#### Value Store Config Body
+
+```json
+{
+  "name": "vendors",
+  "description": "Vendor name resolution",
+  "domain": "product",
+  "entity_types": ["Vendor"],
+  "connection": "firekicks",
+  "source_query": "SELECT supplier_id, supplier_name FROM product_suppliers",
+  "match_columns": ["supplier_name"],
+  "schedule": ""
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Unique value store name |
+| `description` | string | Human-readable description |
+| `domain` | string | Ontology domain filter (optional) |
+| `entity_types` | string[] | Entity types this store serves |
+| `connection` | string | Source database connection name |
+| `source_query` | string | SQL query to pull canonical values |
+| `match_columns` | string[] | Which result columns to index for fuzzy matching |
+| `schedule` | string | Refresh schedule (e.g., `daily:07:00`) or empty for manual only |
+
+### Value Resolution (NER Data Plane)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/v1/resolve-values` | Bulk resolve entity values via fuzzy matching |
+| POST | `/v1/confirm-match` | Confirm a match (learning loop) |
+
+#### POST /v1/resolve-values
+
+```json
+{
+  "queries": [
+    {"term": "Microsoft", "entity_types": ["Vendor"], "exclude_values": []}
+  ],
+  "domain": "",
+  "max_candidates": 5,
+  "min_score": 0.3,
+  "filter": null
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `queries` | array | Required. Terms to resolve (up to 1000) |
+| `queries[].term` | string | The search term |
+| `queries[].entity_types` | string[] | Filter by entity type (empty = all) |
+| `queries[].exclude_values` | string[] | Search terms to exclude from results |
+| `domain` | string | Filter by domain (empty = all) |
+| `max_candidates` | int | Max candidates per term (default: 10) |
+| `min_score` | float | Minimum match score threshold (default: 0.1) |
+| `filter` | object | AST Expression predicate applied to the values table before scoring (see below) |
+
+**Filter predicate**: An optional AST Expression (same format as security predicates) that filters the values table before scoring. Only search candidates pointing to values that pass the filter are considered. This enables:
+
+- **Row-Level Security (RLS)**: Restrict which values a caller can see based on their identity (via `variable` references)
+- **Regional preference**: Bias results toward the caller's region, business unit, etc.
+
+Filter expressions use the standard AST Expression JSON format. Column references are resolved against the values table. Variable references (`variable.name`) are resolved using the variable store before evaluation.
+
+Example — filter to only North American companies:
+```json
+{
+  "filter": {
+    "binary": {
+      "op": "BINARY_OP_EQ",
+      "left": {"column": {"column": "region"}},
+      "right": {"literal": {"stringValue": "NA"}}
+    }
+  }
+}
+```
+
+Example — filter using a resolved variable for RLS:
+```json
+{
+  "filter": {
+    "binary": {
+      "op": "BINARY_OP_EQ",
+      "left": {"column": {"column": "business_unit"}},
+      "right": {"variable": {"name": "caller_business_unit"}}
+    }
+  }
+}
+```
+
+Response:
+```json
+{
+  "results": [{
+    "term": "Microsoft",
+    "by_entity_type": {
+      "Vendor": {
+        "candidates": [{
+          "row": {"supplier_id": 456, "supplier_name": "MICROSOFT CORP"},
+          "matched_term": "MICROSOFT CORP",
+          "matched_column": "supplier_name",
+          "score": 0.92,
+          "strategy": "prefix",
+          "source": "primary"
+        }]
+      }
+    }
+  }]
+}
+```
+
+#### POST /v1/confirm-match
+
+```json
+{
+  "term": "MSFT",
+  "value_row_id": 456,
+  "store_name": "vendors",
+  "scope": "user:bob"
+}
+```
+
+Scope must start with `user:` or `team:`. Direct `system` or `primary` scope assignment is rejected — system scope is earned via automatic promotion after N distinct users confirm the same mapping.
+
+### CSV Upload
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/admin/scratch/{identity}/upload` | Upload CSV file to a scratch pad |
+
+Query parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `table` | string | Required. Table name to create in the scratch pad |
+
+Request: multipart/form-data with a `file` field containing the CSV file.
+
+Response:
+```json
+{
+  "identity": "user:tutorial",
+  "table": "regional_targets",
+  "rows": 5,
+  "columns": ["region", "q4_target", "q4_actual", "variance_pct"],
+  "truncated": false,
+  "filename": "regional_targets.csv"
+}
+```
+
+Limits: 50MB max file size, 100,000 max rows. First row must be column headers. All columns are imported as TEXT. Uploading to the same table name overwrites existing data.
+
+### CSV Export
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/scratch/{identity}/export?table={name}` | Export a scratch pad table as CSV |
+| POST | `/v1/export/query` | Execute a raw SQL query and return results as CSV |
+| POST | `/v1/export/query-ast` | Execute an AST query and return results as CSV |
+| POST | `/v1/export/query-sql` | Execute a SQL-to-AST query and return results as CSV |
+
+**Scratch pad export** downloads a materialized table from a scratch pad as a CSV file. No row limit — the data is already bounded.
+
+```bash
+curl -H "x-api-key: $API_KEY" \
+  "http://localhost:8080/admin/scratch/user:tutorial/export?table=regional_targets" \
+  -o regional_targets.csv
+```
+
+**Query CSV export** endpoints accept the same JSON request body as their non-CSV counterparts (`/v1/query`, `/v1/query-ast`, `/v1/query-sql`) but return `text/csv` instead of JSON. The same authentication, ACL, audit, and limit enforcement applies.
+
+```bash
+curl -X POST http://localhost:8080/v1/export/query \
+  -H "x-api-key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"connection":"firekicks","sql":"SELECT product_name, category, base_price FROM products ORDER BY base_price DESC LIMIT 20"}' \
+  -o products.csv
+```
+
+Response headers:
+- `Content-Type: text/csv`
+- `Content-Disposition: attachment; filename="{connection}_query.csv"`
+
+### Pool Statistics
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/connections/pool-stats` | Pool stats for all connections |
+| GET | `/admin/connections/{name}/pool-stats` | Pool stats for a specific connection |
+
+Response includes `utilization_pct` and `health` indicator (`OK`, `WARNING` at >80%, `CRITICAL` at >95%).
+
+### Schema Sampling
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/connections/{name}/tables/{table}/sample` | Sample rows from a table |
+| GET | `/admin/connections/{name}/tables/{table}/stats` | Table statistics (row count, columns) |
+
+Sample query parameters: `limit` (default 10), `offset` (default 0).
+
+### Audit API
+
+The audit API provides read access to query execution history, backed by the telemetry service.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/audit/queries` | List audit events (paginated, filtered) |
+| GET | `/admin/audit/queries/{id}` | Get a single audit event |
+| GET | `/admin/audit/queries/stats` | Aggregate statistics |
+
+#### GET /admin/audit/queries
+
+Query parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `connection` | string | Filter by connection name |
+| `identity` | string | Filter by caller identity |
+| `since` | string | Duration filter (e.g., `24h`, `7d`) |
+| `errors` | bool | Only show errors |
+| `slowms` | int | Only show queries slower than this (milliseconds) |
+| `sort` | string | Sort field: `timestamp` (default), `duration` |
+| `order` | string | Sort direction: `desc` (default), `asc` |
+| `page` | int | Page number (1-based) |
+| `page_size` | int | Results per page (default 50, max 200) |
+
+#### GET /admin/audit/queries/stats
+
+Query parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `range` | string | Time range (default `24h`) |
+
+Response includes total queries, error rate, average duration, top connections, and top identities.
+
+### Scratch Pad Admin API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/scratch` | List all scratch pads |
+| GET | `/admin/scratch/stats` | Aggregate scratch pad stats |
+| GET | `/admin/scratch/{identity}` | Get scratch pad detail for an identity |
+| GET | `/admin/scratch/{identity}/tables` | List tables in a scratch pad |
+| GET | `/admin/scratch/{identity}/state` | Get hot/cold state |
+| POST | `/admin/scratch/{identity}/freeze` | Move to cold storage |
+| POST | `/admin/scratch/{identity}/thaw` | Restore from cold storage |
+| DELETE | `/admin/scratch/{identity}` | Purge entire scratch pad |
+| DELETE | `/admin/scratch/{identity}/tables/{table}` | Drop a single table |
+
+### Ontology Admin API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/ontology/domains` | List ontology domains |
+| POST | `/admin/ontology/domains` | Create domain |
+| GET | `/admin/ontology/domains/{domain}` | Get domain detail |
+| PUT | `/admin/ontology/domains/{domain}` | Update domain |
+| DELETE | `/admin/ontology/domains/{domain}` | Delete domain |
+| GET | `/admin/ontology/domains/{domain}/entity-types` | List entity types |
+| POST | `/admin/ontology/domains/{domain}/entity-types` | Create entity type |
+| GET | `/admin/ontology/domains/{domain}/entity-types/{name}` | Get entity type |
+| PUT | `/admin/ontology/domains/{domain}/entity-types/{name}` | Update entity type |
+| DELETE | `/admin/ontology/domains/{domain}/entity-types/{name}` | Delete entity type |
+| GET | `/admin/ontology/domains/{domain}/entity-types/{name}/columns` | List column mappings |
+| POST | `/admin/ontology/domains/{domain}/entity-types/{name}/columns` | Create column mapping |
+| DELETE | `/admin/ontology/domains/{domain}/columns/{id}` | Delete column mapping |
+| GET | `/admin/ontology/domains/{domain}/concepts` | List concepts |
+| POST | `/admin/ontology/domains/{domain}/concepts` | Create concept |
+| GET | `/admin/ontology/domains/{domain}/concepts/{name}` | Get concept |
+| DELETE | `/admin/ontology/domains/{domain}/concepts/{name}` | Delete concept |
+| GET | `/admin/ontology/domains/{domain}/entity-types/{name}/relationships` | List relationships |
+| POST | `/admin/ontology/domains/{domain}/relationships` | Create relationship |
+| DELETE | `/admin/ontology/domains/{domain}/relationships/{id}` | Delete relationship |
+| GET | `/admin/ontology/domains/{domain}/entity-types/{name}/exclusions` | List exclusions |
+| POST | `/admin/ontology/domains/{domain}/exclusions` | Create exclusion |
+| DELETE | `/admin/ontology/domains/{domain}/exclusions/{id}` | Delete exclusion |
+| POST | `/admin/ontology/domains/{domain}/equivalences` | Create equivalence |
+| GET | `/admin/ontology/domains/{domain}/export` | Export domain data |
+| POST | `/admin/ontology/domains/{domain}/import` | Import domain data |
+| POST | `/admin/ontology/domains/{domain}/validate` | Validate domain integrity |
+
+### Process Admin API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/processes/domains` | List process domains |
+| POST | `/admin/processes/domains` | Create domain |
+| GET | `/admin/processes/domains/{domain}` | Get domain |
+| PUT | `/admin/processes/domains/{domain}` | Update domain |
+| DELETE | `/admin/processes/domains/{domain}` | Delete domain |
+| GET | `/admin/processes/domains/{domain}/export` | Export domain data |
+| POST | `/admin/processes/domains/{domain}/import` | Import domain data |
+| POST | `/admin/processes/domains/{domain}/validate` | Validate domain |
+| GET | `/admin/processes/processes` | List processes |
+| POST | `/admin/processes/processes` | Create process |
+| GET | `/admin/processes/processes/{name}` | Get process with steps |
+| PUT | `/admin/processes/processes/{name}` | Update process |
+| DELETE | `/admin/processes/processes/{name}` | Delete process |
+| POST | `/admin/processes/processes/{name}/steps` | Create step |
+| GET | `/admin/processes/processes/{name}/steps/{step}` | Get step |
+| PUT | `/admin/processes/processes/{name}/steps/{step}` | Update step |
+| DELETE | `/admin/processes/processes/{name}/steps/{step}` | Delete step |
+| GET | `/admin/processes/rules` | List business rules |
+| POST | `/admin/processes/rules` | Create business rule |
+| GET | `/admin/processes/rules/{name}` | Get rule |
+| PUT | `/admin/processes/rules/{name}` | Update rule |
+| DELETE | `/admin/processes/rules/{name}` | Delete rule |
+| GET | `/admin/processes/annotations` | List process annotations |
+| POST | `/admin/processes/annotations` | Create annotation |
+| GET | `/admin/processes/annotations/{name}` | Get annotation |
+| PUT | `/admin/processes/annotations/{name}` | Update annotation |
+| DELETE | `/admin/processes/annotations/{name}` | Delete annotation |
+| GET | `/admin/processes/calendars` | List calendar contexts |
+| POST | `/admin/processes/calendars` | Create calendar |
+| GET | `/admin/processes/calendars/{name}` | Get calendar |
+| PUT | `/admin/processes/calendars/{name}` | Update calendar |
+| DELETE | `/admin/processes/calendars/{name}` | Delete calendar |
+
+### Table Annotation Body
+
+```json
+{
+  "connection": "warehouse",
+  "schema": "public",
+  "table": "orders",
+  "description": "Customer orders with shipping and payment details",
+  "businessName": "Customer Orders",
+  "grain": "One row per order",
+  "tags": ["transactional", "sales", "financial"],
+  "statistics": { "rowCount": 131072, "avgRowSizeBytes": 256 },
+  "relationships": [
+    { "targetTable": "customers", "targetColumn": "customer_id", "joinColumn": "customer_id", "type": "many-to-one" }
+  ],
+  "qualityNotes": { "completeness": "All required fields populated" },
+  "usageNotes": "Primary table for order analysis."
+}
+```
+
+### Column Annotation Body
+
+```json
+{
+  "connection": "warehouse",
+  "schema": "public",
+  "table": "orders",
+  "column": "total_amount",
+  "description": "Total order amount including tax and shipping",
+  "businessName": "Order Total",
+  "semanticType": "measure",
+  "dataClassification": "financial",
+  "tags": ["financial", "sales"],
+  "sampleValues": ["29.99", "149.50"],
+  "statistics": { "min": 9.99, "max": 999.99, "avg": 89.45, "distinctCount": 4500, "nullCount": 0 },
+  "valuePattern": "Decimal USD amount, typically 9.99 to 999.99",
+  "constraints": { "type": "range", "min": 0, "max": 999999.99 },
+  "relationships": [
+    { "targetTable": "products", "targetColumn": "sku", "matchType": "exact", "description": "Product lookup" }
+  ],
+  "qualityNotes": { "nullRate": 0, "notes": "No quality issues" },
+  "usageNotes": "Use for revenue calculations."
+}
+```
 
 ### Credential Methods
 
@@ -254,10 +918,12 @@ function_blacklist:
 |----------|---------|-------------|
 | `GRPC_PORT` | `50051` | gRPC server port |
 | `HTTP_PORT` | `8080` | HTTP server port (admin + REST gateway) |
-| `CONNECTIONS_FILE` | `configs/connections.yaml` | Connection configuration file |
-| `ACL_FILE` | `configs/acl.yaml` | ACL rules file |
 | `API_KEY` | `dev-api-key` | API key for authentication |
-| `VIEWS_FILE` | — | Optional stored definitions file |
+| `PG_HOST` | — | FireFoundry PostgreSQL host (enables PG persistence for views, annotations, connections) |
+| `PG_PORT` | `5432` | FireFoundry PostgreSQL port |
+| `PG_PASSWORD` | — | Password for `fireread` user (read-only operations) |
+| `PG_INSERT_PASSWORD` | — | Password for `fireinsert` user (write operations) |
+| `PG_DATABASE` | `ff_int_dev_clone` | FireFoundry PostgreSQL database name |
 | `SCRATCH_DIR` | `/tmp/data-access-scratch` | Directory for scratch pad SQLite databases |
 | `LOG_LEVEL` | `info` | Logging level (`info` or `debug`) |
 | `ENABLE_REFLECTION` | `false` | Enable gRPC reflection |
@@ -280,9 +946,9 @@ Scratch pad connections follow the pattern `scratch:<identity>`:
 
 ### Limits
 
-- No current TTL or automatic cleanup (planned for Phase 3B)
-- No cross-identity sharing (planned for Phase 3B)
-- No storage quotas (planned for Phase 3B)
+- No current TTL or automatic cleanup
+- No cross-identity sharing
+- No storage quotas
 
 ## Staged Query Execution Limits
 
@@ -311,7 +977,7 @@ Scratch pad connections follow the pattern `scratch:<identity>`:
 ### Kubernetes
 
 - **Single binary**: No runtime dependencies beyond database connectivity
-- **Stateless**: All state is in target databases, config files, and scratch pad directory
+- **Stateless**: All state is in target databases, the FireFoundry PostgreSQL backend, and scratch pad directory
 - **Liveness/readiness probes**: `/health/live` and `/health/ready`
 - **Credential injection**: Environment variables from Kubernetes secrets
 - **Credential rotation**: Call `/admin/connections/{name}/rotate` after secret updates
@@ -321,6 +987,154 @@ Scratch pad connections follow the pattern `scratch:<identity>`:
 
 - **Go 1.22+** (build time only)
 - **Target databases**: At least one of PostgreSQL 13+, MySQL 8+, or SQLite 3.35+
+
+## Ontology Service (gRPC)
+
+The Ontology Service provides AI agents with structured domain knowledge — entity types, relationships, column mappings, and concept hierarchies. It enables agents to resolve natural language terms to database structures.
+
+### Service: `ontology.v1.OntologyService`
+
+| Method | Description |
+|--------|-------------|
+| `GetOntologyContext` | Get a full domain overview (entity types, concepts, connections) |
+| `ResolveEntity` | Resolve a natural language term to entity type candidates |
+| `BatchResolveEntity` | Batch resolve up to 10 terms |
+| `GetEntityRelationships` | Get relationships and exclusions for an entity type |
+| `GetEntityColumns` | Get column mappings for an entity type (filterable by role and connection) |
+
+### GetOntologyContext
+
+```protobuf
+message GetOntologyContextRequest {
+  string domain = 1;                   // Required
+  string connection = 2;              // Optional: limit to specific connection
+}
+
+message GetOntologyContextResponse {
+  string domain = 1;
+  string description = 2;
+  repeated EntityTypeSummary entity_types = 3;
+  repeated ConceptSummary concepts = 4;
+  repeated string connections = 5;
+  int32 version = 6;                   // For cache invalidation
+}
+```
+
+### ResolveEntity
+
+```protobuf
+message ResolveEntityRequest {
+  string term = 1;                     // e.g., "revenue" or "Premium customers"
+  string context_phrase = 2;          // Optional surrounding context
+  string domain = 3;                  // Optional domain filter
+  string connection = 4;             // Optional connection filter
+}
+
+message ResolveEntityResponse {
+  repeated EntityCandidate candidates = 1;
+  bool ambiguous = 2;
+  string disambiguation_prompt = 3;   // Suggested prompt for the AI
+  OntologyErrorCode error_code = 4;
+}
+```
+
+Error codes: `UNSPECIFIED`, `AMBIGUOUS`, `CONFLICT_EXCLUSION`, `NOT_FOUND`, `STALE_VERSION`
+
+### GetEntityColumns
+
+```protobuf
+message GetEntityColumnsRequest {
+  string entity_type = 1;
+  string domain = 2;
+  string connection = 3;             // Optional: filter by connection
+  string role = 4;                   // Optional: filter by role
+}
+```
+
+Column roles: `name`, `id`, `amount`, `date`, `category`, `flag`
+
+### HTTP Gateway
+
+The Ontology Service is also available via the REST gateway:
+
+| Method | Endpoint |
+|--------|----------|
+| GET | `/v1/ontology/context/{domain}` |
+| POST | `/v1/ontology/resolve` |
+| POST | `/v1/ontology/resolve/batch` |
+| GET | `/v1/ontology/entity-types/{entity_type}/relationships` |
+| GET | `/v1/ontology/entity-types/{entity_type}/columns` |
+
+## Process Service (gRPC)
+
+The Process Service provides AI agents with business process context — rules, calendar definitions, tribal knowledge, and process step sequences. This context helps agents generate queries that respect business logic.
+
+### Service: `process.v1.ProcessService`
+
+| Method | Description |
+|--------|-------------|
+| `GetProcessContext` | Get a full domain overview (processes, rules, annotations, calendar) |
+| `GetBusinessRules` | Get rules for a domain, optionally filtered by view/table |
+| `BatchGetBusinessRules` | Batch get rules for up to 20 views/tables |
+| `GetAnnotations` | Get context-triggered annotations (tribal knowledge) |
+| `GetCalendarContext` | Get fiscal calendar definition for a domain |
+| `GetProcess` | Get a single process with full step detail |
+
+### GetProcessContext
+
+```protobuf
+message GetProcessContextRequest {
+  string domain = 1;                   // Required
+  int32 page_size = 2;               // Default 50
+  string page_token = 3;
+  string min_importance = 4;          // "high", "medium", "low"
+}
+```
+
+Returns processes, business rules, annotations, and calendar context for the domain.
+
+### GetBusinessRules
+
+```protobuf
+message GetBusinessRulesRequest {
+  string domain = 1;                   // Required
+  string view_name = 2;              // Optional: filter rules by applies_to
+  Enforcement min_enforcement = 3;    // Optional: minimum enforcement level
+}
+```
+
+Enforcement levels:
+- `ADVISORY` — Guidance only, agent may ignore
+- `SOFT_ENFORCED` — Agent should follow, can override with justification
+- `HARD_ENFORCED` — Agent must follow, no override
+
+### GetCalendarContext
+
+```protobuf
+message GetCalendarContextRequest {
+  string domain = 1;
+}
+
+message GetCalendarContextResponse {
+  string name = 1;
+  string description = 2;
+  int32 fiscal_year_start_month = 3;
+  string year_format = 4;             // e.g., "FY{YY}"
+  map<string, QuarterDef> quarter_mapping = 5;
+  int32 version = 6;
+}
+```
+
+### HTTP Gateway
+
+| Method | Endpoint |
+|--------|----------|
+| GET | `/v1/process/context/{domain}` |
+| GET | `/v1/process/rules/{domain}` |
+| POST | `/v1/process/rules/{domain}/batch` |
+| GET | `/v1/process/annotations/{domain}` |
+| GET | `/v1/process/calendar/{domain}` |
+| GET | `/v1/process/processes/{domain}/{name}` |
 
 ## Audit Logging
 
@@ -335,11 +1149,57 @@ All data plane operations are logged with:
 
 Staged query operations log each staged query individually with the same fields plus tier number.
 
+## Client Libraries
+
+### Python
+
+Install the Python client:
+
+```bash
+pip install ff-data-access
+# or with httpx backend:
+pip install ff-data-access[httpx]
+```
+
+Usage:
+
+```python
+from ff_data_access import DataAccessClient
+
+client = DataAccessClient("http://localhost:8080", api_key="dev-api-key")
+
+# Query data
+result = client.query("firekicks", "SELECT * FROM products LIMIT 10")
+
+# AST query
+result = client.query_ast("firekicks", {
+    "from": {"table": "products"},
+    "columns": [{"column": "product_name"}, {"column": "price"}],
+    "limit": 10
+})
+
+# Schema inspection
+tables = client.get_tables("firekicks")
+
+# NER: resolve values
+matches = client.resolve_values(
+    queries=[{"term": "Nike", "entity_types": ["Vendor"]}],
+    max_candidates=5,
+    min_score=0.3,
+)
+
+# Admin operations
+connections = client.list_connections()
+client.test_connection("firekicks", verbose=True)
+```
+
+The client supports both `requests` and `httpx` as HTTP backends. Source: `clients/python/ff_data_access.py` in the DAS repository.
+
 ## Troubleshooting
 
 | Issue | Cause | Resolution |
 |-------|-------|------------|
-| `PermissionDenied` on query | Identity not in ACL for connection | Add identity to `acl.yaml` |
+| `PermissionDenied` on query | Identity not in ACL for connection | Add identity via the ACL admin API |
 | `PermissionDenied` on table | Table in `tables_deny` list | Remove from deny list or use different identity |
 | `InvalidArgument: function blocked` | Function in blacklist | Use different function or adjust blacklist |
 | `InvalidArgument: AST validation` | Malformed AST structure | Check required fields, identifier format, depth |
@@ -347,5 +1207,5 @@ Staged query operations log each staged query individually with the same fields 
 | `InvalidArgument: cycle detected` | Circular staged query dependencies | Remove circular references |
 | `ResourceExhausted: staged row limit` | Staged query returned too many rows | Add WHERE clause or increase limit |
 | Connection timeout | Database unreachable | Check network, credentials, pool config |
-| `NotFound: connection` | Connection not configured | Add to `connections.yaml` or create via admin API |
+| `NotFound: connection` | Connection not configured | Create via the admin API (`POST /admin/connections`) |
 | `save_warning` in response | Scratch pad save failed | Check `SCRATCH_DIR` permissions and disk space |

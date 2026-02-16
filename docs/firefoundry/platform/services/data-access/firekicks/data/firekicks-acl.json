@@ -1,0 +1,30 @@
+{
+  "acl": [
+    {
+      "identity": "user:admin",
+      "connections": ["*"],
+      "allow_raw_sql": true
+    },
+    {
+      "identity": "app:query-explainer",
+      "connections": ["firekicks"],
+      "allow_raw_sql": false
+    }
+  ],
+  "function_blacklist": {
+    "global": [
+      "pg_sleep",
+      "pg_terminate_backend",
+      "pg_cancel_backend",
+      "lo_import",
+      "lo_export",
+      "pg_read_file",
+      "pg_read_binary_file",
+      "pg_ls_dir",
+      "pg_stat_file",
+      "dblink",
+      "dblink_exec",
+      "pg_advisory_lock"
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "firekicks",
+  "type": "postgresql",
+  "description": "FireKicks shoe company dataset (20 tables, ~131K orders)",
+  "allow_raw_sql": true,
+  "config": {
+    "host": "<your-postgresql-host>",
+    "port": 5432,
+    "database": "firekicks",
+    "sslMode": "require"
+  },
+  "credentials": {
+    "method": "env",
+    "envMappings": {
+      "username": "FIREKICKS_DB_USER",
+      "password": "FIREKICKS_DB_PASSWORD"
+    }
+  },
+  "pool": {
+    "maxOpen": 5,
+    "maxIdle": 2,
+    "maxLifetime": "300s"
+  },
+  "limits": {
+    "maxRows": 10000,
+    "maxBytes": 10485760,
+    "queryTimeout": "30s",
+    "requestsPerMinute": 100
+  }
+}

@@ -2,31 +2,46 @@
 
 ## Connections
 
-A **connection** is a named reference to a database with its type, credentials, pool settings, and query limits. The service supports 7 backends: PostgreSQL, MySQL, SQLite, SQL Server, Oracle, Snowflake, and Databricks. Connections are defined in `connections.yaml` or managed via the Admin API.
+A **connection** is a named reference to a database with its type, credentials, pool settings, and query limits. The service supports 7 backends: PostgreSQL, MySQL, SQLite, SQL Server, Oracle, Snowflake, and Databricks. Connections are managed via the Admin API.
 
 Connections never store credentials directly — they reference environment variable names. This allows credential rotation without restarting the service.
 
-```yaml
-connections:
-  - name: warehouse
-    type: postgresql
-    config:
-      host: warehouse.internal
-      port: 5432
-      database: analytics
-      sslMode: require
-    credentials:
-      method: env
-      envMappings:
-        username: PG_WAREHOUSE_USER
-        password: PG_WAREHOUSE_PASSWORD
-    pool:
-      maxOpen: 25
-      maxIdle: 5
-      maxLifetime: 30m
-    limits:
-      maxRows: 100000
-      queryTimeout: 30s
+```json
+{
+  "name": "warehouse",
+  "type": "postgresql",
+  "config": {
+    "host": "warehouse.internal",
+    "port": 5432,
+    "database": "analytics",
+    "sslMode": "require"
+  },
+  "credentials": {
+    "method": "env",
+    "envMappings": {
+      "username": "PG_WAREHOUSE_USER",
+      "password": "PG_WAREHOUSE_PASSWORD"
+    }
+  },
+  "pool": {
+    "maxOpen": 25,
+    "maxIdle": 5,
+    "maxLifetime": "30m"
+  },
+  "limits": {
+    "maxRows": 100000,
+    "queryTimeout": "30s"
+  }
+}
+```
+
+Create it via the Admin API:
+
+```bash
+curl -X POST http://localhost:8080/admin/connections \
+  -H "x-api-key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d @warehouse-connection.json
 ```
 
 ## AST Queries
@@ -34,12 +49,14 @@ connections:
 ### Why AST?
 
 Traditional raw SQL presents challenges for AI-driven applications:
-- Different databases use different SQL dialects (quoting, functions, type casting)
 - SQL injection risks when constructing queries from AI-generated content
 - No structural validation before execution
 - Cannot enforce table/column-level access controls on raw SQL
+- Identifier quoting and parameter placeholder styles vary between databases
 
-The **AST Query API** accepts queries as structured JSON objects representing SQL SELECT statements. The service validates the structure, checks access controls at the table and column level, and generates correct SQL for the target database.
+The **AST Query API** accepts queries as structured JSON objects representing SQL SELECT statements. The service validates the structure, checks access controls at the table and column level, expands stored definitions, and serializes the AST to SQL with the correct identifier quoting and parameter placeholders for the target database.
+
+> **Important:** The AST API is not a database-agnostic query language. SQL constructs (functions, syntax, type-specific operations) are passed through to the upstream database. Agents should know what database they're targeting and use the SQL constructs that database supports. The service handles mechanical serialization concerns (quoting, parameter styles, boolean literals) but does not translate SQL syntax between databases.
 
 ### How It Works
 
@@ -48,7 +65,7 @@ The **AST Query API** accepts queries as structured JSON objects representing SQ
 3. Function blacklist is checked to block dangerous functions
 4. Stored definitions (views, UDFs, TVFs) are expanded if referenced
 5. Table/column ACL is enforced against the caller's identity
-6. SQL is generated for the specific database dialect
+6. AST is serialized to SQL with correct quoting and parameter placeholders for the target database
 7. Query is executed and results returned with column metadata
 
 ### AST Structure
@@ -71,14 +88,16 @@ A query AST is a `SelectStatement` JSON object:
   },
   "groupBy": [{ "expr": { "column": { "column": "name" } } }],
   "orderBy": [{ "expr": { "column": { "column": "total" } }, "dir": "SORT_DESC" }],
-  "limit": 10
+  "limit": 10,
+  "offset": 20
 }
 ```
 
-This produces dialect-specific SQL:
-- **PostgreSQL**: `SELECT "name", COUNT(*) AS "total" FROM "users" WHERE "active" = TRUE GROUP BY "name" ORDER BY "total" DESC LIMIT 10`
-- **MySQL**: `` SELECT `name`, COUNT(*) AS `total` FROM `users` WHERE `active` = TRUE GROUP BY `name` ORDER BY `total` DESC LIMIT 10 ``
-- **SQLite**: `SELECT "name", COUNT(*) AS "total" FROM "users" WHERE "active" = 1 GROUP BY "name" ORDER BY "total" DESC LIMIT 10`
+The serializer produces SQL with the correct quoting and parameter style for each backend:
+- **PostgreSQL**: `SELECT "name", COUNT(*) AS "total" FROM "users" WHERE "active" = TRUE GROUP BY "name" ORDER BY "total" DESC LIMIT 10 OFFSET 20`
+- **MySQL**: `` SELECT `name`, COUNT(*) AS `total` FROM `users` WHERE `active` = TRUE GROUP BY `name` ORDER BY `total` DESC LIMIT 10 OFFSET 20 ``
+- **SQLite**: `SELECT "name", COUNT(*) AS "total" FROM "users" WHERE "active" = 1 GROUP BY "name" ORDER BY "total" DESC LIMIT 10 OFFSET 20`
+- **SQL Server**: `SELECT "name", COUNT(*) AS "total" FROM "users" WHERE "active" = 1 GROUP BY "name" ORDER BY "total" DESC OFFSET 20 ROWS FETCH NEXT 10 ROWS ONLY`
 
 ### Supported SQL Constructs
 
@@ -91,12 +110,13 @@ This produces dialect-specific SQL:
 | GROUP BY | Expressions, ROLLUP, CUBE, GROUPING SETS |
 | HAVING | Aggregate filter expressions |
 | ORDER BY | ASC/DESC with NULLS FIRST/LAST |
-| LIMIT/OFFSET | Pagination |
+| LIMIT/OFFSET | Pagination — `"limit": 10, "offset": 20` (serialized per-dialect: LIMIT/OFFSET for PG/MySQL/SQLite, TOP/OFFSET-FETCH for SQL Server, OFFSET-FETCH for Oracle) |
 | CTEs | Common Table Expressions (WITH, WITH RECURSIVE) |
 | Window Functions | ROW_NUMBER, RANK, LAG/LEAD, SUM OVER, frame specs |
 | Set Operations | UNION, INTERSECT, EXCEPT (with ALL) |
 | CASE | Simple and searched CASE expressions |
-| CAST | Type conversion with dialect mapping |
+| CAST | Type conversion |
+| Regex Match | First-class `regex_match` expression — pattern emitted as bind parameter, serialized per-dialect (`~` for PG, `REGEXP` for MySQL/SQLite) |
 | Functions | Any database-native function (pass-through with arity validation) |
 
 ### Who Generates ASTs?
@@ -106,22 +126,30 @@ This produces dialect-specific SQL:
 - The **Admin API** to manage connections, views, and stored definitions
 - **Raw SQL** via the Query/Execute endpoints for ad-hoc work
 
-## Dialect Translation
+## SQL Serialization
 
-The AST serializer generates correct SQL for each backend, handling:
+The service is an **unopinionated SQL gateway** — it serializes AST structures into SQL with the correct mechanical formatting for each backend, but does not attempt to translate SQL constructs between databases. Agents should know what database they're targeting and use the functions and syntax that database supports.
+
+### What the Serializer Handles
+
+The AST serializer handles per-backend differences in **mechanical formatting**:
 
 | Aspect | PostgreSQL | MySQL | SQLite | SQL Server | Oracle | Snowflake | Databricks |
 |--------|-----------|-------|--------|-----------|--------|-----------|------------|
 | Identifier quoting | `"name"` | `` `name` `` | `"name"` | `[name]` | `"name"` | `"name"` | `` `name` `` |
-| Param style | `$1` | `?` | `?` | `@p1` | `:1` | `?` | `?` |
+| Parameter placeholders | `$1` | `?` | `?` | `@p1` | `:1` | `?` | `?` |
 | Boolean literals | `TRUE`/`FALSE` | `TRUE`/`FALSE` | `1`/`0` | `1`/`0` | `1`/`0` | `TRUE`/`FALSE` | `TRUE`/`FALSE` |
 | LIMIT/OFFSET | `LIMIT n OFFSET m` | `LIMIT n OFFSET m` | `LIMIT n OFFSET m` | `TOP n` / `OFFSET FETCH` | `FETCH FIRST n ROWS` | `LIMIT n OFFSET m` | `LIMIT n OFFSET m` |
-| NULLS FIRST/LAST | Native | CASE emulation | CASE emulation | CASE emulation | CASE emulation | Native | Native |
-| Concat operator | `\|\|` | `CONCAT()` | `\|\|` | `+` | `\|\|` | `\|\|` | `CONCAT()` |
-| EXCEPT | `EXCEPT` | `EXCEPT` | `EXCEPT` | `EXCEPT` | `MINUS` | `EXCEPT` | `EXCEPT` |
-| Recursive CTEs | `WITH RECURSIVE` | `WITH RECURSIVE` | `WITH RECURSIVE` | `WITH` (no keyword) | `WITH` (no keyword) | `WITH RECURSIVE` | `WITH RECURSIVE` |
 
-Functions are passed through to the database — the service doesn't maintain a function translation table. If you call `pg_sleep()` on PostgreSQL, it works. If you call it on MySQL, the database returns an error. The blacklist blocks functions that are dangerous regardless of dialect.
+### What the Serializer Does NOT Handle
+
+The service does **not** translate SQL constructs between databases. SQL functions, operators, and syntax are passed through as-is to the upstream database:
+
+- **Functions**: If you call `pg_sleep()` on PostgreSQL, it works. If you call it on MySQL, the database returns an error. The service doesn't maintain a function translation table.
+- **Operators**: If you use `||` for string concatenation, it works on PostgreSQL and SQLite but not on SQL Server (which uses `+`). The agent should use the correct operator for the target database.
+- **Syntax**: Database-specific syntax (e.g., `FILTER` clauses on aggregates in PostgreSQL, `PIVOT` in SQL Server) is passed through — the upstream database accepts or rejects it.
+
+The function blacklist blocks functions that are dangerous regardless of backend. All other functions pass through to the database.
 
 ## Staged Queries
 
@@ -163,7 +191,7 @@ The main SQLite query can JOIN pg_users and mysql_logs as if they were local tab
 
 ### VALUES CTE Injection
 
-Results are injected as VALUES CTEs, serialized per-dialect:
+Results are injected as VALUES CTEs, formatted for each backend:
 
 - **PostgreSQL**: `WITH alias(col1,col2) AS (VALUES ($1::text,$2::integer), ...)`
 - **MySQL**: `WITH alias(col1,col2) AS (VALUES ROW(?,?), ROW(?,?), ...)`
@@ -338,6 +366,368 @@ When a stored view is created or updated without an explicit `output_schema`, th
 3. Agent calls GetSchema("warehouse") → sees "active_users" (type: stored_view) with inferred columns
 4. Agent queries: QueryAST { from: "active_users" } → view expands transparently
 ```
+
+## Data Dictionary
+
+### What Is the Data Dictionary?
+
+The data dictionary is a semantic annotation layer that enriches raw database schema information with business meaning, usage guidance, statistics, relationships, and data quality information. While `GetSchema` tells AI agents *what tables and columns exist*, the data dictionary tells them *what those tables and columns mean, how to use them, and what to watch out for*.
+
+### Why It Matters for AI
+
+Without a data dictionary, AI agents must guess at:
+- What each column means ("Is `amt` the order total or the line item amount?")
+- Which tables to use ("Should I use `orders` or `order_history`?")
+- Valid filter values ("What are the valid `status` values?")
+- Data quality issues ("Are there nulls in `email`?")
+- How tables relate beyond explicit foreign keys
+
+The data dictionary answers these questions explicitly, reducing hallucination and improving query accuracy.
+
+### Table Annotations
+
+Each table (or stored view) can be annotated with:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `description` | TEXT | What this table contains and its purpose |
+| `businessName` | TEXT | Human-friendly name (e.g., "Customer Orders") |
+| `grain` | TEXT | What each row represents (e.g., "One row per order line item") |
+| `tags` | TEXT[] | Categorical tags for filtering and routing |
+| `statistics` | JSONB | Row count, average row size, last analyzed date |
+| `relationships` | JSONB | Semantic relationships to other tables with join hints |
+| `qualityNotes` | JSONB | Known data quality issues, completeness, freshness |
+| `usageNotes` | TEXT | When to use (and when NOT to use) this table |
+
+### Column Annotations
+
+Each column can be annotated with:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `description` | TEXT | What this column represents |
+| `businessName` | TEXT | Business-friendly name |
+| `semanticType` | TEXT | Role in queries: `identifier`, `measure`, `dimension`, `temporal`, `descriptive` |
+| `dataClassification` | TEXT | Sensitivity: `public`, `internal`, `financial`, `pii` |
+| `tags` | TEXT[] | Categorical tags |
+| `sampleValues` | TEXT[] | Example values for context |
+| `statistics` | JSONB | Min, max, avg, distinct count, null count (type-appropriate) |
+| `valuePattern` | TEXT | Natural language description of value patterns |
+| `constraints` | JSONB | Validation rules: enum values, ranges, regex patterns |
+| `relationships` | JSONB | Loose foreign keys — semantic joins without explicit FKs |
+| `qualityNotes` | JSONB | Null rates, known data issues |
+| `usageNotes` | TEXT | Query guidance (e.g., "Use `order_date`, NOT `created_at` for business reporting") |
+
+### Semantic Types
+
+Semantic types classify how a column is used in queries:
+
+| Type | Description | Example Columns |
+|------|-------------|-----------------|
+| `identifier` | Primary/foreign keys, unique IDs | `order_id`, `customer_id`, `sku` |
+| `measure` | Numeric values for aggregation | `total_amount`, `quantity`, `unit_price` |
+| `dimension` | Categorical values for grouping/filtering | `status`, `category`, `region` |
+| `temporal` | Date/time columns | `order_date`, `created_at`, `ship_date` |
+| `descriptive` | Free text, names, labels | `product_name`, `notes`, `address` |
+
+AI agents use semantic types to make better query decisions — for example, automatically applying `SUM()` to measures and `GROUP BY` to dimensions.
+
+### Data Classifications
+
+Data classifications indicate sensitivity level:
+
+| Classification | Description | Handling |
+|---------------|-------------|----------|
+| `public` | Non-sensitive business data | No restrictions |
+| `internal` | Internal-only data | May be filtered from external-facing queries |
+| `financial` | Financial data (revenue, costs, margins) | May require additional authorization |
+| `pii` | Personally identifiable information | Subject to data protection regulations |
+
+### Statistics
+
+Statistics provide quantitative metadata about data distribution:
+
+**Table statistics** (JSONB):
+```json
+{
+  "rowCount": 131072,
+  "avgRowSizeBytes": 256
+}
+```
+
+**Column statistics** (JSONB, type-appropriate):
+```json
+// Numeric column
+{ "min": 0.99, "max": 299.99, "avg": 45.67, "distinctCount": 1500, "nullCount": 0 }
+
+// String column
+{ "distinctCount": 5, "nullCount": 12, "avgLength": 8 }
+
+// Temporal column
+{ "min": "2023-01-01", "max": "2025-12-31", "distinctCount": 1096, "nullCount": 0 }
+```
+
+### Constraints
+
+Constraints define validation rules that the service can use to verify filter values before hitting the database:
+
+```json
+// Enum constraint — valid values for a status column
+{ "type": "enum", "values": ["pending", "shipped", "delivered", "cancelled", "returned"] }
+
+// Range constraint — valid numeric range
+{ "type": "range", "min": 0, "max": 999999.99 }
+
+// Regex constraint — value pattern
+{ "type": "regex", "pattern": "^[A-Z]{2}-\\d{6}$" }
+```
+
+### Relationships
+
+Relationships capture semantic joins that may not be represented by explicit database foreign keys:
+
+```json
+[
+  {
+    "targetTable": "customers",
+    "targetColumn": "customer_id",
+    "matchType": "exact",
+    "description": "Links to customer who placed the order"
+  },
+  {
+    "targetTable": "products",
+    "targetColumn": "sku",
+    "matchType": "exact",
+    "description": "Product SKU lookup — join on sku for product details"
+  }
+]
+```
+
+### Tag-Based Filtering and AI Routing
+
+Tags are the primary mechanism for controlling which tables and columns AI agents see. The dictionary query API supports tag inclusion and exclusion:
+
+- **`tags=financial,sales`** — Include annotations tagged `financial` OR `sales` (union)
+- **`excludeTags=raw,internal`** — Exclude annotations tagged `raw` OR `internal` (any match excludes)
+- Both can be combined: `tags=financial&excludeTags=pii` — financial annotations that are NOT PII
+
+**Common tag patterns:**
+
+| Tag | Purpose |
+|-----|---------|
+| `raw` | Unprocessed upstream tables (hide from AI) |
+| `curated` | Cleaned/validated views (show to AI) |
+| `financial` | Revenue, cost, and financial metrics |
+| `pii` | Contains personally identifiable information |
+| `transactional` | Order/event-level data |
+| `reference` | Lookup/dimension tables |
+| `system` | Internal system tables |
+
+**AI routing example:** When an AI agent starts a data analysis session, the application queries the dictionary with `excludeTags=raw,system,internal` to get only the curated, business-relevant tables. The AI never sees the raw upstream tables, saving tokens and preventing confusion.
+
+### Virtual Views and the Dictionary
+
+Stored views (virtual views) get their own dictionary entries, indistinguishable from real tables. This means:
+- A virtual view `monthly_revenue` has its own description, tags, grain, statistics
+- The AI sees it alongside real tables in dictionary queries
+- Tag `raw` on the base table + tag `curated` on the virtual view = AI only sees the clean version
+- The dictionary entry can document the view's business purpose without revealing its implementation
+
+### Admin vs. Query API
+
+The data dictionary has two API surfaces:
+
+- **Admin API** (`/admin/annotations/*`) — Create, update, and delete annotations. Requires admin authentication. Used by data stewards and automated enrichment processes.
+- **Query API** (`/v1/dictionary/*`) — Read-only access with tag filtering. Requires only API key authentication. Used by AI agents and applications at query time.
+
+This separation ensures that reading the dictionary is a normal data-plane operation (fast, frequent, low-privilege), while modifying it is a controlled administrative action.
+
+## Variables and Row-Level Security
+
+### What Are Variables?
+
+Variables are named values resolved at query time from the request context. They appear in AST expressions as `{ "variable": { "name": "..." } }` nodes and are resolved before the query reaches the database. Variables are the foundation for row-level security (RLS) in stored definitions.
+
+### Resolution Strategies
+
+| Strategy | How It Resolves | Use Case |
+|----------|----------------|----------|
+| `builtin` | Reads from request context | `caller_identity` (X-On-Behalf-Of header), `caller_connection` (target connection) |
+| `direct` | Uses the caller identity value as-is | When the identity header matches the database column value |
+| `lookup` | Translates via a mapping table | When identity format differs from database (e.g., email → customer_id) |
+
+Built-in variables are always available. Custom variables are defined via the admin API.
+
+### Mapping Tables
+
+Mapping tables are DAS-managed key-value lookups that translate between identity systems. For example, if callers authenticate with email addresses but the database uses numeric customer IDs:
+
+```
+Mapping table: email_to_customer
+  alice@example.com → 42
+  bob@example.com   → 99
+
+Variable: customer_id (resolution: lookup, lookupTable: email_to_customer)
+
+Caller identity: alice@example.com
+Resolved value: 42
+```
+
+### Security Predicates
+
+A security predicate is an AST expression attached to a stored definition. It's injected as a WHERE clause whenever the view is expanded:
+
+```json
+"securityPredicate": {
+  "binary": {
+    "op": "BINARY_OP_EQ",
+    "left": { "column": { "column": "customer_id" } },
+    "right": { "variable": { "name": "caller_identity" } }
+  }
+}
+```
+
+When caller `user:42` queries the view, the service resolves `caller_identity` to `42` and injects `WHERE customer_id = 42`. The caller cannot bypass the predicate — it's applied transparently by the service.
+
+### How RLS Composes
+
+Security predicates compose with the caller's own filters and with business rules:
+
+```sql
+-- Caller queries: SELECT * FROM my_orders WHERE total > 100
+-- Service expands to:
+SELECT ... FROM orders
+WHERE customer_id = 42              -- security predicate (injected)
+  AND order_status != 'cancelled'   -- business rule (hard_enforced)
+  AND total > 100                   -- caller's filter
+```
+
+### Variable Persistence
+
+Variable definitions and mapping tables are persisted in the DAS internal PostgreSQL database (when `PG_HOST` is configured). Without PG, they exist in memory only and are lost on restart.
+
+## Ontology
+
+### What Is the Ontology?
+
+The ontology (Layer 3) maps business concepts to database structures. It bridges the gap between natural language ("revenue", "Premium customers") and SQL objects (tables, columns, joins). AI agents use the ontology to resolve ambiguous terms and discover the correct database objects for a given business concept.
+
+### Key Components
+
+| Component | Description | Example |
+|-----------|-------------|---------|
+| **Domain** | A business area grouping related entities | `sales`, `customer`, `marketing` |
+| **Entity Type** | A business concept with context clues for resolution | `Customer` (clues: "buyer", "account", "shopper") |
+| **Concept** | A derived or composite business idea | `Revenue` — depends on Order entity, amount role |
+| **Relationship** | How entity types connect, with join hints | Customer → Order (1:N, `customers.customer_id = orders.customer_id`) |
+| **Column Mapping** | Maps entity types to specific database columns with roles | Customer.name → `customers.first_name` (role: `name`, is_primary: true) |
+| **Exclusion** | Prevents incorrect entity resolution | "Product Supplier" excludes "Customer" (different business meaning) |
+
+### Column Mapping Roles
+
+Each column mapping has a role that describes how the column relates to its entity type:
+
+| Role | Description | Example |
+|------|-------------|---------|
+| `id` | Primary identifier | `customers.customer_id` |
+| `name` | Display name | `customers.first_name` |
+| `amount` | Numeric measure | `orders.total_amount` |
+| `date` | Temporal reference | `orders.order_date` |
+| `category` | Categorical grouping | `customers.customer_segment` |
+| `flag` | Boolean/status indicator | `products.is_active` |
+
+### Entity Resolution
+
+When an AI agent encounters a term like "revenue" or "Premium customers", it calls `ResolveEntity` to find matching entity types. The service scores candidates by matching context clues and returns a confidence-ranked list. If the result is ambiguous, the service provides a disambiguation prompt.
+
+### Cross-Database Column Mappings
+
+Column mappings can span multiple connections, enabling the ontology to describe entities that exist across different databases. The `GetEntityColumns` response includes `cross_db_mappings` that show how the same entity is represented in different systems.
+
+## Process Models
+
+### What Are Process Models?
+
+Process models (Layer 4) encode business process knowledge — rules, calendar definitions, step sequences, and tribal knowledge. This context helps AI agents generate queries that respect business logic that isn't captured in the database schema.
+
+### Key Components
+
+| Component | Description | Example |
+|-----------|-------------|---------|
+| **Process** | A named business workflow with steps | "Order Fulfillment" — 5 steps from order placed to delivered |
+| **Step** | A single step in a process with data touchpoints | "Ship Order" — reads `orders`, writes `shipping_performance` |
+| **Business Rule** | An enforceable constraint on queries | "Exclude cancelled orders from revenue" (hard_enforced) |
+| **Annotation** | Context-triggered tribal knowledge | "December financials are provisional until monthly close" |
+| **Calendar Context** | Fiscal calendar definition | Q1 = Oct-Dec, fiscal year starts October 1 |
+
+### Business Rule Enforcement
+
+| Level | Meaning | Agent Behavior |
+|-------|---------|----------------|
+| `ADVISORY` | Suggestion only | Agent may choose to follow or ignore |
+| `SOFT_ENFORCED` | Should follow | Agent follows by default, can override with justification |
+| `HARD_ENFORCED` | Must follow | Agent always applies this rule, no override |
+
+Rules include executable conditions (AST predicates) that the agent can inject into queries automatically.
+
+### Calendar Context
+
+Calendar definitions tell AI agents how to interpret time-based business terms:
+
+- "This quarter" → Fiscal Q4 = October 1 through December 31 (not calendar Q4)
+- "FY25" → October 2024 through September 2025
+- Quarter boundaries defined by `quarter_mapping` with start/end months
+
+### Process Discovery
+
+AI agents call `GetProcessContext` to learn about business processes, rules, and calendar definitions for a domain. This is typically done at the start of a data analysis session, alongside dictionary and ontology queries, to build a complete understanding of the business context.
+
+## Named Entity Resolution (NER)
+
+### What Is NER?
+
+Named Entity Resolution bridges the gap between user terms and actual database values. While the ontology resolves entity *types* (is "Chase" a Vendor, Customer, or Bank?), NER resolves entity *values* (matching "Microsoft" to the database row "MICROSOFT CORP" despite spelling differences).
+
+### Value Stores
+
+A value store is a searchable index of canonical values from a source database. Each value store consists of:
+- A **value table** with full rows from the source database, stored in a system SQLite scratch pad
+- A **search table** with all matchable terms, linked back to value rows via rowid
+- An **FTS5 index** for fast candidate retrieval
+
+Value store configs (name, source query, match columns) are persisted in PostgreSQL. The actual data values never go to PostgreSQL — they live exclusively in SQLite scratch pads.
+
+### Fuzzy Matching
+
+The matching engine uses six strategies implemented as SQLite custom functions: prefix matching, Levenshtein edit distance, initials comparison, reverse initials (acronym detection), word-level Jaccard similarity, and phonetic matching. A composite score (`ff_match_score`) combines all strategies with configurable weights.
+
+Matching uses a two-pass approach: FTS5 pre-filtering narrows to ~100 candidates, then custom scoring functions rank them. This avoids full table scans on large value sets.
+
+### Personalized Scopes
+
+Each search entry has a `scope` controlling its visibility:
+1. `user:<identity>` — personal synonyms for one user
+2. `team:<name>` — shared within a team
+3. `system` — universal synonyms (admin-managed or auto-promoted)
+4. `primary` — from source data (rebuilt on refresh)
+
+The caller's identity (from `X-On-Behalf-Of`) determines which scopes are visible during resolution. Learned synonyms (user, team, system scopes) survive value store refreshes — only primary scope entries are rebuilt.
+
+### Learning Loop
+
+When an agent confirms a match, a new entry is added to the search table with the caller's scope. After N distinct users confirm the same term-to-value mapping, it auto-promotes to system scope. This creates a feedback loop where the system gets smarter with use.
+
+### Value Filters
+
+Resolve requests can include a **filter predicate** — an AST Expression applied to the values table before scoring. Search candidates whose value rows don't pass the filter are never scored or returned.
+
+This supports two key use cases:
+
+- **Row-Level Security (RLS)**: Restrict which values a caller can see. For example, a filter like `business_unit = $caller_business_unit` ensures users only resolve entities they have access to. Variable references are resolved against the variable store, so the same filter works for all callers.
+
+- **Regional/contextual preference**: Bias results toward the caller's context. For example, a global company might filter by `region = 'NA'` so that North American users preferentially resolve to North American entities, even though the full global dataset is available.
+
+Filters are curated at the value store level — complex joins and aggregations happen in the `source_query` at refresh time. At resolve time, filters are simple predicates on the curated values table columns.
 
 ## Security Model
 
