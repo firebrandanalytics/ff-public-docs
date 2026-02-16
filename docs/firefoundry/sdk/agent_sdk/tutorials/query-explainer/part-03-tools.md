@@ -52,7 +52,7 @@ const tools: Record<string, { func: Function; spec: any }> = {
 };
 ```
 
-**Important:** The tool spec uses `inputSchema` (not `parameters` as in some OpenAI documentation). This is the format the FireFoundry broker expects.
+**Important:** The tool spec uses `inputSchema` (not `parameters` as in some OpenAI documentation). This is the format the FireFoundry broker expects. You can provide `inputSchema` as a raw JSON Schema object, a JSON string, or a **Zod schema** — the SDK converts Zod to JSON Schema automatically. See the [Zod alternative](#alternative-zod-schemas-for-tool-specs) at the end of this part.
 
 The `func` receives two arguments:
 - `request` — the bot's request context (usually unused by tool functions)
@@ -294,6 +294,52 @@ This tool returns the database schema — column types, nullability, and primary
 - When `table` is provided, we use `dasClient.getColumns()` for detailed column info
 - When omitted, we use `dasClient.getSchema()` to list all tables
 - The published client returns `ColumnInfo` objects with `normalizedType` for cross-database compatibility
+
+## Alternative: Zod Schemas for Tool Specs
+
+The tool specs above use raw JSON Schema objects for `inputSchema`. The SDK also accepts **Zod schemas** directly — the broker client automatically converts them to JSON Schema before sending to the LLM.
+
+This is often a better choice because:
+- **Type safety** — `z.infer<>` gives you TypeScript types for tool arguments
+- **Consistency** — you're already using Zod for the output schema (Part 1)
+- **Less boilerplate** — Zod is more concise than raw JSON Schema
+
+Here's what `explain_query` looks like with a Zod schema:
+
+```typescript
+import { z } from 'zod';
+
+const ExplainQueryInput = z.object({
+  sql: z.string().describe('The SQL SELECT statement to explain'),
+  connection: z.string().describe('The DAS connection name (e.g., "firekicks")'),
+  analyze: z.boolean().optional().describe('Whether to run EXPLAIN ANALYZE. Default: true'),
+  verbose: z.boolean().optional().describe('Whether to include verbose output. Default: false'),
+});
+
+const queryExplainerTools: Record<string, { func: Function; spec: any }> = {
+  explain_query: {
+    func: async (
+      _request: any,
+      args: z.infer<typeof ExplainQueryInput>   // ← typed from the schema
+    ) => {
+      // ... same implementation as before ...
+    },
+    spec: {
+      name: 'explain_query',
+      description: 'Run EXPLAIN or EXPLAIN ANALYZE on a SQL SELECT statement.',
+      inputSchema: ExplainQueryInput,            // ← Zod schema, not JSON Schema
+    },
+  },
+};
+```
+
+**Key points:**
+- Pass the Zod schema directly as `inputSchema` — the SDK handles conversion
+- Use `z.infer<typeof ExplainQueryInput>` to type the `args` parameter instead of writing the type manually
+- The `.describe()` calls on each field become the `description` in the generated JSON Schema
+- Both patterns (raw JSON Schema and Zod) work identically at runtime — choose whichever you prefer
+
+> **Best practice:** If your project already uses Zod (as ours does for output validation), prefer Zod for tool schemas too. It keeps all your schema definitions in one system and eliminates the risk of type/schema drift.
 
 ## Summary
 
