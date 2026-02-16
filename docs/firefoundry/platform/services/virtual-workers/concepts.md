@@ -1,51 +1,81 @@
 # Virtual Worker Manager — Concepts
 
-This document covers the core concepts behind the Virtual Worker Manager (VWM). For API details, see the [Reference](./reference.md).
+---
+
+## What Is a Virtual Worker?
+
+A Virtual Worker is a **virtual team member** — a managed AI agent with a defined role, institutional knowledge, specialized skills, and the ability to learn and improve over time. It's the difference between opening a fresh AI chat session and working with a colleague who knows your company, your codebase, and your engineering standards.
+
+The underlying CLI coding agent (Claude Code, Codex, Gemini, OpenCode) is just the execution engine — the raw capability to read code, reason about problems, and produce output. A Virtual Worker wraps that engine with everything needed to make it effective in *your* organization:
+
+- **Identity and role** — who this worker is and what they specialize in
+- **Institutional knowledge** — company context, product details, engineering guidelines, tribal knowledge
+- **Specialized skills** — tools and capabilities beyond the base CLI agent
+- **Persistent workspace** — a working environment that survives across interactions
+- **Continuous learning** — knowledge captured from each session feeds back into future sessions
+
+### Example: Bob the Backend Engineer
+
+Consider "Bob," a Virtual Worker configured as a backend/DevOps engineer. Bob isn't a generic AI — Bob is a specific team member:
+
+- **Bob has a role**: Backend/DevOps engineer specializing in Kubernetes, microservices, and CI/CD
+- **Bob knows the company**: Company mission, culture, products, and how the engineering team works
+- **Bob knows the tech stack**: Which languages, frameworks, databases, and tools the team uses — and *why*
+- **Bob follows the team's guidelines**: Coding standards, testing philosophy, deployment procedures, security requirements
+- **Bob has a personality**: Communicates like a senior engineer — clear, direct, considers tradeoffs, pushes back on bad ideas professionally
+- **Bob learns**: After every session, Bob documents what he learned. A merge agent reviews these learnings, and the valuable ones get folded back into Bob's permanent knowledge base
+
+Over time, Bob gets better at his job. He accumulates institutional knowledge. He doesn't make the same mistake twice. He's not a fresh AI session every time — he's a team member who's been here a while and knows how things work.
+
+### How This Works Under the Hood
+
+Bob's identity is composed from several pieces managed by VWM:
+
+```
+Worker Definition (Bob)
+├── Role & Instructions (agentMd)    → "You are a backend/DevOps engineer..."
+├── Knowledge Base (worker repo)     → COMPANY.md, PRODUCTS.md, GUIDELINES.md, TECH_STACK.md
+├── Skills (tool packages)           → security-scanner, deployment-validator, etc.
+├── MCP Connections                  → Entity graph, working memory, doc processing
+├── CLI Engine                       → Claude Code (or Codex, Gemini, OpenCode)
+└── Runtime Environment              → Container image with the right tools installed
+```
+
+When you start a session with Bob, VWM assembles all of these into a running workspace where the CLI agent has access to Bob's full context. When the session ends, Bob's learnings get captured and his knowledge base grows.
 
 ---
 
 ## Workers
 
-A **Worker** is a configured CLI coding agent definition. It specifies *how* an agent should behave but does not run anything itself — workers are templates for creating sessions.
+A **Worker** is the definition of a virtual team member. It captures everything about *who this agent is* — role, knowledge, tools, and behavior — without actually running anything. Think of it as a job description combined with the institutional knowledge someone in that role would need.
 
-### Worker Configuration
+Multiple sessions can run from the same worker definition simultaneously, each with its own workspace and state. The worker is the blueprint; sessions are the instances.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Unique human-readable name (e.g., `code-reviewer`) |
-| `description` | string? | Purpose description |
-| `runtimeId` | UUID | Base container image to use |
-| `cliType` | enum | CLI tool: `claude-code`, `codex`, `gemini`, `opencode` |
-| `agentMd` | string? | Worker-specific instructions (merged with system instructions) |
-| `modelConfig` | object? | Provider, model, temperature, max tokens |
-| `mcpServers` | array? | MCP server connections (name + URL) |
-| `workerRepoUrl` | URL? | Knowledge base repository |
-| `workerRepoBranch` | string | Base branch for worker repo (default: `main`) |
-| `autoLearn` | boolean | Enable automatic knowledge capture at session end |
-| `skills` | array | Assigned skill packages (via worker_skills join table) |
-| `timeout` | number | Max session duration in seconds (default: 3600) |
+Workers are configured with:
 
-### What Makes Workers "Virtual"
-
-Unlike a developer running Claude Code locally:
-
-- **Managed**: VWM handles lifecycle, scaling, and cleanup
-- **Stateless Definition**: Worker config is stored centrally; instances are ephemeral
-- **Multiplexed**: Many sessions can use the same worker configuration
-- **Observable**: All interactions are logged and traceable
+- **Name and description** — who this worker is and what they do
+- **CLI type** — which coding agent engine to use (`claude-code`, `codex`, `gemini`, `opencode`)
+- **Instructions** (`agentMd`) — the worker's role definition, merged with platform-wide system instructions
+- **Knowledge base** (`workerRepoUrl`) — a git repository containing the worker's institutional knowledge
+- **Skills** — versioned tool packages that extend the worker's capabilities
+- **MCP servers** — connections to FireFoundry platform services (entity graph, working memory, etc.)
+- **Model configuration** — provider, model, temperature, and token limits
+- **Auto-learning** — whether to capture knowledge at the end of each session
 
 ---
 
 ## Sessions
 
-A **Session** is a stateful interaction with a virtual worker. Sessions are the primary unit of work — you cannot make requests to a worker without an active session.
+A **Session** is a stateful interaction with a virtual worker — it's the equivalent of sitting down with a team member to work on a task.
+
+When you create a session, VWM provisions a container with the worker's full context: instructions, knowledge base, skills, and MCP connections. The workspace persists for the lifetime of the session, so the worker maintains context across multiple prompts and can pick up where it left off.
 
 ### Session Lifecycle
 
 ```
 Create Session ──▶ pending
                       │
-              (Job starts, harness bootstraps)
+              (Container starts, workspace bootstraps)
                       │
                       ▼
                    active ◀──────────┐
@@ -61,251 +91,127 @@ Create Session ──▶ pending
                ending ──▶ ended
 ```
 
-| Status | Description |
-|--------|-------------|
-| `pending` | Session created, K8s job not yet started |
-| `active` | Job running, harness ready to accept requests |
-| `suspended` | Job terminated due to inactivity, can resume on next request |
-| `ending` | Shutdown in progress (auto-learning, git cleanup) |
-| `ended` | Session complete, resources cleaned up |
-| `failed` | Session failed to start or crashed |
-
-### Sessions vs Jobs
-
-| Concept | Scope | Lifetime | Storage |
-|---------|-------|----------|---------|
-| **Session** | Client-visible | Until explicitly ended | Persistent Volume |
-| **Job** | Internal | Activity-based (timeout) | Uses session's PV |
-
-A session can span **multiple jobs**. When a job times out due to inactivity, the session moves to `suspended`. A new job starts automatically when the next request arrives, remounting the same persistent volume to preserve workspace state.
+Sessions can be **suspended** when idle and **resumed** transparently when the next request arrives. The workspace is preserved on a persistent volume, so the worker doesn't lose context even if its container is recycled.
 
 ### Sub-sessions
 
-Within a job, **sub-sessions** allow parallel prompt execution. Each sub-session tracks its own CLI conversation context. Consumers must avoid disk conflicts between parallel operations.
+Within a session, you can run multiple prompts in parallel using **sub-sessions**. Each sub-session maintains its own conversation context with the CLI agent. This is useful for parallelizing independent tasks, though you need to avoid file conflicts between parallel operations.
 
 ---
 
-## Runtimes
+## Knowledge Base (Worker Repository)
 
-A **Runtime** is a base container image that can run virtual workers.
+The knowledge base is what turns a generic CLI agent into a knowledgeable team member. It's a git repository containing everything the worker needs to know about your organization, products, and engineering practices.
 
-### Runtime Hierarchy
+### What Goes in a Knowledge Base
+
+A typical knowledge base looks like this:
 
 ```
-Base Runtime (e.g., python:3.11-slim)
-        │
-        ▼
-VW Runtime (e.g., python-3.11-vw)
-  + Node.js
-  + CLI tools (Claude Code, Codex, Gemini)
-  + Harness server
+worker_repo/
+├── COMPANY.md         # Company mission, culture, values
+├── PRODUCTS.md        # Product details and architecture
+├── GUIDELINES.md      # Engineering standards and best practices
+├── TECH_STACK.md      # Technology choices and rationale
+└── learnings/         # Auto-generated learning documents
+    ├── session-001.md
+    └── session-002.md
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Human-readable name |
-| `baseImage` | string | Docker base image (e.g., `python:3.11-slim`) |
-| `vwImage` | string? | VW-enabled image with harness and CLIs installed |
-| `tags` | string[] | Capability tags |
+The contents are entirely up to you. Some teams include:
 
-Workers reference a runtime by ID. The VWM uses the runtime's `vwImage` (or `baseImage` if no VW image exists) when creating K8s jobs.
+- Architectural decision records
+- API design guidelines
+- Common debugging runbooks
+- Customer context for client-specific workers
+- Code review checklists
+
+The knowledge base is **read-only** during a session (except the `learnings/` directory), ensuring the worker can reference it but not accidentally modify institutional knowledge.
+
+### Branch Isolation
+
+Each session works on its own branch of the knowledge base, preventing concurrent sessions from conflicting. Changes (including auto-generated learnings) are pushed to the session branch for human review and merge.
+
+---
+
+## Session Repository
+
+While the knowledge base carries long-lived institutional knowledge, the **session repository** is the task-specific workspace. This is where the worker does its actual work — writing code, creating deliverables, modifying project files.
+
+The session repository is a separate git repo configured per session. It has full read-write access and its own branch isolation. Think of the knowledge base as "what the worker knows" and the session repository as "what the worker is working on."
+
+---
+
+## Auto-Learning
+
+One of the most powerful aspects of Virtual Workers is their ability to **learn and improve over time**. With auto-learning enabled, the worker automatically captures generalizable knowledge at the end of each session.
+
+### How It Works
+
+1. When a session ends, VWM prompts the worker to reflect on what it learned
+2. The worker analyzes the session and extracts knowledge that would be useful in future sessions
+3. The learning is written to the knowledge base's `learnings/` directory
+4. Changes are committed and pushed to the session branch
+5. A human (or merge agent) reviews the learnings and decides what to fold into the permanent knowledge base
+
+### What Gets Captured
+
+Good learnings are **general and reusable** — patterns discovered, better approaches identified, common pitfalls and their solutions, best practices refined through experience.
+
+What doesn't get captured: session-specific details, sensitive information, and knowledge already present in the existing knowledge base.
+
+### The Learning Cycle
+
+Over time, this creates a virtuous cycle:
+
+```
+Session work → Learnings captured → Human review → Knowledge base updated → Better future sessions
+```
+
+Each session makes the worker slightly more knowledgeable. A worker that's been through 50 sessions has accumulated institutional knowledge that a fresh AI session simply doesn't have.
 
 ---
 
 ## Skills
 
-**Skills** are versioned tool packages that extend worker capabilities.
+**Skills** are versioned tool packages that give workers specialized capabilities beyond what the base CLI agent provides. They're distributed as zip files, downloaded from blob storage during session bootstrap, and extracted into the workspace.
 
-### Skill Distribution
-
-1. Skills are packaged as `.skill` (zip) files
-2. Uploaded via the Admin API and stored in blob storage
-3. Downloaded and extracted to the workspace during session bootstrap
-
-### Skill Configuration
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Skill name (e.g., `security-scanner`) |
-| `version` | string | Semver version |
-| `description` | string? | What the skill does |
-| `blobId` | string | Reference to blob storage |
-| `targetPath` | string | Extraction path relative to workspace (default: `.`) |
-| `isSystem` | boolean | System-level skill managed by platform |
-| `defaultInclude` | boolean | Auto-include for all workers (requires `isSystem=true`) |
-
-### System Skills
-
-Skills flagged as `isSystem` with `defaultInclude=true` are automatically loaded for every session, regardless of worker configuration. This enables platform-wide capabilities without per-worker configuration.
+Skills can include anything the worker might need: custom scripts, configuration templates, reference data, MCP tool definitions, or specialized prompts. Platform-wide **system skills** are automatically included in every session, while other skills are assigned per worker.
 
 ---
 
-## Repository Architecture
+## Runtimes
 
-Virtual workers support a **dual repository architecture** that separates long-lived knowledge from session-specific work.
+A **Runtime** is the container environment a worker runs in. Different workers might need different base images — a Python-focused worker needs Python installed, a Java worker needs the JDK.
 
-### Worker Repository (`worker_repo`)
-
-Long-lived knowledge base configured at the worker level.
-
-| Aspect | Detail |
-|--------|--------|
-| **Purpose** | Tribal knowledge, best practices, company information, guidelines |
-| **Lifecycle** | Persistent across all sessions for this worker |
-| **Access** | Read-only (except `learnings/` directory) |
-| **Branch Isolation** | Session-specific branch: `ff-vwm/{workerId}-{sessionId}` |
-| **Location** | `/workspace/worker_repo/` |
-
-**Typical structure:**
-```
-worker_repo/
-├── COMPANY.md         # Company information
-├── PRODUCTS.md        # Product documentation
-├── GUIDELINES.md      # Development best practices
-├── TECH_STACK.md      # Technology preferences
-└── learnings/         # Writable directory
-    └── session-*.md   # Auto-generated learning documents
-```
-
-### Session Repository (`session_repo`)
-
-Task-specific work area configured per session.
-
-| Aspect | Detail |
-|--------|--------|
-| **Purpose** | Task-specific code, scripts, deliverables |
-| **Lifecycle** | Specific to this session |
-| **Access** | Full read-write |
-| **Branch Isolation** | Session-specific branch: `session-{sessionId}` |
-| **Location** | `/workspace/session_repo/` |
-
-### Branch Isolation
-
-Each session creates a unique branch to prevent concurrent session conflicts:
-
-- **Enforcement**: Git hooks block switching branches during a session
-- **Validation**: Checked during bootstrap
-- **Cleanup**: Changes committed and pushed on session end; human reviews and merges later
-
-### System Instructions
-
-Global system instructions are managed by the platform and apply to all workers:
-
-- **Merging**: System instructions are merged with worker-specific `agentMd`
-- **Hot Updates**: Can be updated via Admin API without redeployment
-- **Location**: Written to `/workspace/CLAUDE.md` during bootstrap
+Runtimes are layered: a base image (e.g., `python:3.11-slim`) is extended with the CLI tools, harness server, and other dependencies needed to run virtual workers. Workers reference a runtime, and VWM uses it when provisioning containers for sessions.
 
 ---
 
-## Auto-Learning System
+## System Instructions
 
-Workers with `autoLearn` enabled automatically capture knowledge at the end of each session.
+Global system instructions apply to **all** virtual workers across the platform. They're merged with each worker's individual instructions during session bootstrap, providing consistent behavior (security policies, output formatting, communication standards) without duplicating configuration across every worker.
 
-### How It Works
-
-1. **Session End**: When a session is deleted, VWM triggers the learning skill before shutdown
-2. **Knowledge Extraction**: The CLI agent analyzes the session transcript and extracts generalizable learnings
-3. **Documentation**: Learning content is written to `worker_repo/learnings/session-{id}.md`
-4. **Git Operations**: The harness commits and pushes changes to the session branch
-5. **Human Review**: Changes are available on the branch for human review and merge (PR automation is future work)
-
-### What Gets Captured
-
-- General patterns and insights discovered during the session
-- Common issues encountered and their solutions
-- Best practices identified
-- Knowledge applicable to future sessions
-
-### What Doesn't Get Captured
-
-- Session-specific details (task descriptions, filenames)
-- Sensitive information
-- Redundant information already in the knowledge base
-
-### Requirements
-
-- Worker must have `autoLearn: true`
-- Worker must have a `workerRepoUrl` configured
-- The `session-learning` skill handles the prompting
-
----
-
-## Workspace Structure
-
-When a harness pod bootstraps, it creates this workspace layout:
-
-```
-/workspace/
-├── CLAUDE.md            # Merged system + worker instructions
-├── worker_repo/         # Cloned from workerRepoUrl (if configured)
-│   ├── COMPANY.md
-│   ├── GUIDELINES.md
-│   └── learnings/
-├── session_repo/        # Cloned from session repository (if configured)
-│   └── (task files)
-└── .skills/             # Extracted skill packages
-    └── security-scanner/
-```
-
-The bootstrap process:
-
-1. Clone worker repository (if `workerRepoUrl` is set) → create session branch
-2. Clone session repository (if session has a repository configured) → create session branch
-3. Download and extract assigned skills from blob storage
-4. Write merged `CLAUDE.md` from system settings + worker `agentMd`
-5. Generate CLI-specific MCP configuration files
-6. Signal readiness to VWM
-
----
-
-## Telemetry
-
-VWM captures comprehensive telemetry for observability, debugging, and cost analysis.
-
-### Request Telemetry
-
-Every prompt sent to a virtual worker is recorded, including:
-
-- Session and worker identifiers
-- Breadcrumbs for tracing and correlation
-- Full prompt text and response
-- Token usage (input and output)
-- Execution duration
-- Files created or modified (artifacts)
-
-### Learning Telemetry
-
-Auto-learning executions are tracked separately, capturing the generated learning content, token usage, and whether the git commit/push succeeded.
-
-### Accessing Telemetry
-
-Telemetry is available via the Session API:
-
-- `GET /sessions/:id/telemetry` — Full request history for a session
-- `GET /sessions/:id/stats` — Aggregated statistics (total requests, tokens, duration)
+System instructions can be updated without redeployment, enabling platform-wide policy changes to take effect immediately.
 
 ---
 
 ## MCP Integration
 
-Virtual workers access FireFoundry services via the **MCP Gateway**.
+Virtual Workers access FireFoundry platform services through the **MCP Gateway**. This gives workers access to the entity graph, working memory, document processing, web search, and other platform capabilities — all without managing credentials or service discovery.
 
-### How It Works
+MCP connections are configured per worker and automatically wired up during session bootstrap. The CLI agent discovers available tools through standard MCP protocol, so workers can use platform services naturally as part of their workflow.
 
-1. VWM configures the harness with the MCP gateway URL
-2. The harness generates CLI-specific MCP configuration files during bootstrap
-3. CLI tools discover and connect to MCP servers automatically
-4. All MCP auth is handled by the gateway — workers don't need credentials
+---
 
-### Available Capabilities
+## Telemetry
 
-Via MCP gateway, workers can access:
+Every interaction with a virtual worker is captured for observability. This includes:
 
-- Entity graph operations (create, query, update nodes)
-- Context service (working memory, blobs)
-- Document processing
-- Web search
-- Additional FireFoundry platform services
+- **Request telemetry** — every prompt and response, with token usage, timing, and artifacts
+- **Learning telemetry** — auto-learning results, including whether the knowledge was successfully committed
+
+Telemetry is accessible via the Session API (`GET /sessions/:id/telemetry` and `GET /sessions/:id/stats`), enabling cost analysis, debugging, and quality monitoring.
 
 ---
 

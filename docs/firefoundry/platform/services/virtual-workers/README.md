@@ -2,29 +2,19 @@
 
 ## Overview
 
-The Virtual Worker Manager (VWM) enables FireFoundry to orchestrate CLI-based AI coding agents — Claude Code, Codex CLI, Gemini CLI, and OpenCode — as managed Kubernetes services. It brings the power of autonomous coding agents into enterprise workflows with proper lifecycle management, persistent workspaces, observability, and integration with the FireFoundry platform.
+A **Virtual Worker** is more than a CLI coding agent running in a container. It's a **virtual team member** — an AI agent with a defined role, institutional knowledge, specialized skills, persistent workspace, and the ability to learn and improve over time. The Virtual Worker Manager (VWM) is the platform service that brings these virtual team members to life.
 
-## Problem Statement
+CLI coding agents like Claude Code, Codex, Gemini, and OpenCode are powerful, but on their own they start every interaction from scratch — no memory of your company, your codebase standards, or what they learned last time. VWM changes that by wrapping the CLI agent with everything needed to make it an effective member of your team:
 
-Modern CLI coding agents are powerful but challenging to operationalize:
+- **Identity and role** — instructions that define who the worker is and how they operate
+- **Institutional knowledge** — a git-backed knowledge base with company context, engineering guidelines, and tribal knowledge
+- **Specialized skills** — versioned tool packages that extend the worker's capabilities
+- **Persistent workspace** — sessions that survive restarts and maintain context across interactions
+- **Continuous learning** — knowledge captured from each session feeds into future sessions
 
-- **Manual Management**: Each agent instance requires manual setup, configuration, and monitoring
-- **No Persistence**: Agent sessions don't persist across restarts or scale events
-- **Integration Gap**: Difficult to integrate into automated workflows, CI/CD, or other systems
-- **Resource Management**: No automated scaling, timeout handling, or resource cleanup
-- **Observability**: Limited visibility into agent behavior, costs, and outcomes
+VWM handles all the orchestration — provisioning containers, managing sessions, routing prompts, collecting telemetry — so consumers can focus on the work, not the infrastructure.
 
-## What VWM Provides
-
-VWM is a **mechanical orchestration layer** focused on:
-
-- **Abstracting Complexity**: Consumers send work to named workers; VWM handles the rest
-- **Managing Lifecycle**: Automatically spins up K8s pods, handles timeouts, and cleans up resources
-- **Persisting Sessions**: Sessions survive pod restarts via Kubernetes persistent volumes
-- **Enabling Integration**: REST API with SSE streaming for easy integration with bots, workflows, and external systems
-- **Providing Observability**: Full telemetry on requests, responses, token usage, and resource consumption
-
-**Intelligence lives elsewhere** in the FireFoundry stack. Bots decide which worker to use, entity graphs orchestrate multi-worker workflows, and the VWM doesn't make decisions about *what* work to do — it just executes requests.
+For a deeper explanation of what makes Virtual Workers different from raw CLI agents, see [Concepts](./concepts.md).
 
 ## Key Features
 
