@@ -315,6 +315,16 @@ import {
   IteratorProxy,                     // Async iterator proxy for streaming
 } from '@firebrandanalytics/ff-agent-sdk/client';
 
+// Virtual Worker integration
+import {
+  VirtualWorker,                     // Factory: resolves workers and creates sessions
+  VWSession,                         // Active session with prompt execution and file ops
+  VWSessionEntity,                   // Entity framework: idempotent, crash-recoverable sessions
+  VWTurnEntity,                      // Per-prompt entity with progress streaming
+  bridgeWorkingMemoriesToFiles,      // Upload working memory blobs to worker filesystem
+  bridgeFilesToWorkingMemories,      // Download worker files back to working memory
+} from '@firebrandanalytics/ff-agent-sdk/virtual-worker';
+
 // Utilities and mixin composition (from shared-utils)
 import {
   AddMixins,                         // Add mixins to a base class
