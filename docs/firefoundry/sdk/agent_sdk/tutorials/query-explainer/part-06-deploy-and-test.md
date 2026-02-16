@@ -74,6 +74,28 @@ curl -s http://localhost:8180/health | head -c 200
 curl -s http://localhost:8080/health | head -c 200
 ```
 
+### Verify DAS with ff-da
+
+Before starting the bundle, use the `ff-da` CLI to verify DAS connectivity and the FireKicks dataset:
+
+```bash
+# Verify the firekicks connection exists
+ff-da connections
+
+# Check schema is accessible (should list ~20 tables)
+ff-da schema --connection firekicks
+
+# Test EXPLAIN — this is what the explain_query tool calls
+ff-da query --connection firekicks \
+  --sql "EXPLAIN SELECT * FROM customers LIMIT 1"
+
+# Test a dictionary lookup (if dictionary is populated)
+curl -s http://localhost:8080/v1/connections/firekicks/dictionary/tables \
+  -H "X-On-Behalf-Of: user:admin" | python3 -m json.tool
+```
+
+If any of these fail, fix DAS connectivity before starting the bundle — the bot's tools call these same endpoints.
+
 ## Step 3: Build and Start the Bundle
 
 Build all workspace packages, then start the bundle in development mode:
@@ -240,7 +262,30 @@ done
 | Zod validation fails repeatedly | LLM uses wrong field names | Add explicit field name instructions to the system prompt (see Part 4) |
 | `MockBrokerClient` in logs | SDK created mock client (no broker URL) | Set `BROKER_URL=localhost:50052` in environment |
 | `AxiosError: Request failed with status 403` | DAS permission denied | Check `FF_FUNCTION_NAME` and `FF_FUNCTION_NAMESPACE` env vars, or DAS ACL configuration |
+| Tool returns empty tables/columns | FireKicks not configured in DAS | Run `ff-da connections` to check; see [FireKicks Tutorial](../../../platform/services/data-access/firekicks/README.md) |
 | Port 3001 already in use | Another process using the port | Change `PORT` env var or stop the other process |
+
+### Debugging DAS Issues with ff-da
+
+If tool calls fail or return unexpected results, test the same operations directly with `ff-da`:
+
+```bash
+# Does the connection exist?
+ff-da connections
+
+# Can DAS read the schema?
+ff-da schema --connection firekicks
+
+# Can DAS run EXPLAIN? (what explain_query calls)
+ff-da query --connection firekicks \
+  --sql "EXPLAIN ANALYZE SELECT COUNT(*) FROM orders"
+
+# Can DAS run a regular query?
+ff-da query --connection firekicks \
+  --sql "SELECT * FROM customers LIMIT 3"
+```
+
+If `ff-da` commands work but the bundle's tools fail, the issue is in how the tool function calls the published client — check the `das-client.ts` configuration and `FF_DATA_SERVICE_URL` env var.
 
 ### Verifying Tool Calls
 

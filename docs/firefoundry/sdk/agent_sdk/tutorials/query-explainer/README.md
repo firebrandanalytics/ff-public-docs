@@ -83,6 +83,7 @@ Structured Analysis
 
 | Tool | Purpose |
 |------|---------|
+| `ff-da` | Verify DAS connectivity, inspect schemas, test queries, check dictionary entries |
 | `ff-sdk-cli` | Call API endpoints, invoke entity methods, check health |
 | `ff-eg-read` | Inspect QueryExplainerEntity nodes and their data |
 | `ff-telemetry-read` | Trace broker requests, view tool call sequences |
