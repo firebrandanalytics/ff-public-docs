@@ -96,12 +96,16 @@ The first section defines the bot's role and what tools are available. It uses `
       name: 'context',
       children: [
         'You are a SQL Query Analyst that provides both performance analysis and semantic interpretation of SQL queries.',
-        new PromptTemplateTextNode<QueryExplainerPTH>({
+        new PromptTemplateListNode<QueryExplainerPTH>({
+          semantic_type: 'context',
           name: 'tools_context',
-          content: `You have access to tools that connect to the Data Access Service (DAS), which provides:
-- Query execution plans (EXPLAIN/ANALYZE)
-- Data dictionary with table and column descriptions, business names, and tags
-- Schema information with column types and relationships`,
+          content: 'You have access to tools that connect to the Data Access Service (DAS), which provides:',
+          children: [
+            'Query execution plans (EXPLAIN/ANALYZE)',
+            'Data dictionary with table and column descriptions, business names, and tags',
+            'Schema information with column types and relationships',
+          ],
+          list_label_function: (_req: any, _child: any, _idx: number) => '- ',
         }),
       ],
     });
@@ -111,6 +115,7 @@ The first section defines the bot's role and what tools are available. It uses `
 **Key points:**
 - `semantic_type: 'context'` marks this as background information
 - `children` accepts both plain strings and typed nodes
+- The `PromptTemplateListNode`'s `content` acts as a header line before the list items
 - Named children (e.g., `name: 'tools_context'`) can be targeted for overrides in subclasses
 
 ### The Process Section
@@ -202,13 +207,22 @@ Rules for semantic analysis, plus important notes:
           ],
           list_label_function: (_req: any, _child: any, _idx: number) => '- ',
         }),
-        new PromptTemplateTextNode<QueryExplainerPTH>({
+        new PromptTemplateSectionNode<QueryExplainerPTH>({
+          semantic_type: 'rule',
           name: 'important_notes',
-          content: `Important Notes:
-- Always call tools to gather information before producing your analysis
-- If dictionary annotations are not available for some tables, use the table and column names to infer semantic meaning
-- Focus on practical, actionable insights
-- The business_question should be something a non-technical stakeholder would understand`,
+          content: 'Important Notes:',
+          children: [
+            new PromptTemplateListNode<QueryExplainerPTH>({
+              semantic_type: 'rule',
+              children: [
+                'Always call tools to gather information before producing your analysis',
+                'If dictionary annotations are not available for some tables, use the table and column names to infer semantic meaning',
+                'Focus on practical, actionable insights',
+                'The business_question should be something a non-technical stakeholder would understand',
+              ],
+              list_label_function: (_req: any, _child: any, _idx: number) => '- ',
+            }),
+          ],
         }),
       ],
     });
@@ -230,15 +244,19 @@ The exact field names the LLM must use, plus a JSON example via `PromptTemplateS
       name: 'output_schema',
       content: 'Output JSON Field Names (IMPORTANT — use these exact names):',
       children: [
-        new PromptTemplateTextNode<QueryExplainerPTH>({
+        new PromptTemplateListNode<QueryExplainerPTH>({
+          semantic_type: 'sample_output',
           name: 'field_names',
-          content: `Your JSON output MUST use these exact field names:
-- performance.summary, performance.bottlenecks, performance.optimization_suggestions
-- performance.estimated_cost (optional), performance.execution_time_ms (optional)
-- semantics.business_question, semantics.domain_context
-- semantics.tables_used (array of objects with: table_name, business_name, role_in_query)
-- semantics.entities_involved (array of strings)
-- semantics.relationships (array of strings)`,
+          content: 'Your JSON output MUST use these exact field names:',
+          children: [
+            'performance.summary, performance.bottlenecks, performance.optimization_suggestions',
+            'performance.estimated_cost (optional), performance.execution_time_ms (optional)',
+            'semantics.business_question, semantics.domain_context',
+            'semantics.tables_used (array of objects with: table_name, business_name, role_in_query)',
+            'semantics.entities_involved (array of strings)',
+            'semantics.relationships (array of strings)',
+          ],
+          list_label_function: (_req: any, _child: any, _idx: number) => '- ',
         }),
         new PromptTemplateTextNode<QueryExplainerPTH>({
           content: 'Example tables_used item:',
@@ -254,6 +272,7 @@ The exact field names the LLM must use, plus a JSON example via `PromptTemplateS
 
 **Key points:**
 - `semantic_type: 'sample_output'` marks this as expected output format
+- `PromptTemplateListNode` uses `content` as a header line before the list items — this avoids creating a separate `PromptTemplateTextNode` just for the heading
 - `PromptTemplateStructDataNode` renders the `EXAMPLE_TABLES_USED_ITEM` object as JSON in the prompt
 - This is better than embedding JSON strings manually — the framework handles formatting
 
