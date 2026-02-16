@@ -5,11 +5,12 @@ Build a tool-calling agent that analyzes SQL queries for both performance bottle
 ## What You'll Learn
 
 - Building a dispatch table with real external service calls (not mock data)
-- Creating an HTTP client wrapper for the Data Access Service
+- Configuring the published `@firebrandanalytics/data-access-client`
 - Using `ComposeMixins` to combine `MixinBot` with `StructuredOutputBotMixin`
 - Designing system prompts that instruct the LLM to call tools before answering
 - Validating LLM output with Zod schemas
-- Consuming iterator envelopes (finding the `VALUE` envelope)
+- Using `entity.run()` for background processing
+- Testing with `ff-sdk-cli`, `ff-eg-read`, and `ff-telemetry-read`
 - Building a Next.js GUI with async polling for results
 
 ## What You'll Build
@@ -37,11 +38,11 @@ An agent bundle with:
 | Part | Title | Topics |
 |------|-------|--------|
 | [Part 1](./part-01-setup.md) | Project Setup | Scaffolding, monorepo structure, shared types, Zod output schema |
-| [Part 2](./part-02-das-client.md) | The DAS Client | HTTP client wrapper, auth headers, DAS API endpoints, environment config |
+| [Part 2](./part-02-das-client.md) | The DAS Client | Published client configuration, DAS API methods, error handling, `ff-da` verification |
 | [Part 3](./part-03-tools.md) | Defining Tools | Dispatch table pattern, `inputSchema` format, error-as-return, four DAS tools |
 | [Part 4](./part-04-prompt-and-bot.md) | Prompt & Bot | System prompt for tool use, `ComposeMixins`, `StructuredOutputBotMixin`, `get_semantic_label` workaround |
-| [Part 5](./part-05-entity-and-bundle.md) | Entity & Bundle | `BotRunnableEntityMixin`, `@ApiEndpoint`, iterator VALUE envelope, fire-and-forget |
-| [Part 6](./part-06-deploy-and-test.md) | Deploy & Test | Environment variables, port-forwards, curl testing, common issues |
+| [Part 5](./part-05-entity-and-bundle.md) | Entity & Bundle | `BotRunnableEntityMixin`, `@ApiEndpoint`, `entity.run()`, fire-and-forget |
+| [Part 6](./part-06-deploy-and-test.md) | Deploy & Test | Environment variables, port-forwards, `ff-sdk-cli` / `ff-eg-read` / `ff-telemetry-read` testing |
 | [Part 7](./part-07-web-ui.md) | Web UI | Next.js GUI, server-side bundle client, API route proxies, polling pattern |
 
 ## Architecture Overview
@@ -50,7 +51,7 @@ An agent bundle with:
 User submits SQL query
        |
        v
-  GUI (Next.js)  ──or──  curl
+  GUI (Next.js)  ──or──  ff-sdk-cli
        |
        v
   POST /api/analyze-query
@@ -59,7 +60,7 @@ User submits SQL query
 QueryExplainerAgentBundle
        |
        v
-QueryExplainerEntity.start()  (via BotRunnableEntityMixin)
+QueryExplainerEntity.run()  (via BotRunnableEntityMixin)
        |
        |-- Looks up QueryExplainerBot from registry
        |-- Passes SQL + connection as input
@@ -87,7 +88,6 @@ Structured Analysis
 | `ff-sdk-cli` | Call API endpoints, invoke entity methods, check health |
 | `ff-eg-read` | Inspect QueryExplainerEntity nodes and their data |
 | `ff-telemetry-read` | Trace broker requests, view tool call sequences |
-| `curl` | Test bundle endpoints directly during development |
 
 ## Source Code
 

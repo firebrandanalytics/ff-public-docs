@@ -202,20 +202,6 @@ ff-da schema --connection firekicks
 ff-da query --connection firekicks --sql "SELECT COUNT(*) FROM orders"
 ```
 
-If `ff-da` is not installed, you can use `curl` directly:
-
-```bash
-# Health check
-curl -s http://localhost:8080/health | python3 -m json.tool
-
-# List connections
-curl -s http://localhost:8080/admin/connections | python3 -m json.tool
-
-# Get schema
-curl -s http://localhost:8080/v1/connections/firekicks/schema \
-  -H "X-On-Behalf-Of: user:admin" | python3 -m json.tool
-```
-
 > **Tip:** If `ff-da connections` doesn't show `firekicks`, the DAS hasn't been configured with the FireKicks database. See the [FireKicks Tutorial](../../../platform/services/data-access/firekicks/README.md) for setup instructions.
 
 ## Step 5: Test the Published Client (Optional)

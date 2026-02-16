@@ -6,7 +6,7 @@ In this part you'll create the entity that delegates work to the bot, wire every
 - Using `BotRunnableEntityMixin` to delegate entity execution to a bot
 - Mapping entity data to bot request arguments with `get_bot_request_args_impl`
 - Exposing custom routes with `@ApiEndpoint`
-- Consuming async iterators and finding the `VALUE` envelope
+- Using `entity.run()` to execute and get results directly
 - The fire-and-forget pattern for background processing
 
 **What you'll build:** A `QueryExplainerEntity` that runs the bot, an agent bundle with `POST /api/analyze-query` and `GET /api/query-status` endpoints, and the application entry point.
@@ -109,7 +109,7 @@ export const QueryExplainerConstructors = {
 
 ## Step 3: Create the Agent Bundle
 
-The bundle exposes two API endpoints: one to submit a query, and one to poll for results.
+The bundle exposes two API endpoints: one to submit a query, and one to check results.
 
 **`apps/query-bundle/src/agent-bundle.ts`**:
 
@@ -156,7 +156,7 @@ export class QueryExplainerAgentBundle extends FFAgentBundle<any> {
 
 ## Step 4: The analyze-query Endpoint
 
-This endpoint creates an entity, starts it in the background, and returns the entity ID for polling:
+This endpoint creates an entity, runs the bot in the background, and returns the entity ID for polling:
 
 ```typescript
   @ApiEndpoint({ method: 'POST', route: 'analyze-query' })
@@ -195,23 +195,18 @@ This endpoint creates an entity, starts it in the background, and returns the en
 
     const entity_id = entity.id!;
 
-    // Start the workflow in the background (fire-and-forget)
-    const iterator = await entity.start();
+    // Run the bot in the background (fire-and-forget).
+    // entity.run() iterates the async generator internally and returns
+    // the bot's final output directly — no envelope scanning needed.
     (async () => {
       try {
-        let valueEnvelope: any = null;
-        for await (const envelope of iterator) {
-          if (envelope?.type === 'VALUE' && envelope?.value) {
-            valueEnvelope = envelope.value;
-          }
-        }
-        // Store the result on entity data (use spread to avoid mutating the DTO)
-        if (valueEnvelope) {
+        const result = await entity.run();
+        if (result) {
           const dto = await entity.get_dto();
-          await entity.update_data({ ...dto.data, result: valueEnvelope });
+          await entity.update_data({ ...dto.data, result });
           logger.info('[API] Analysis result stored', { entity_id });
         } else {
-          logger.warn('[API] No VALUE envelope received', { entity_id });
+          logger.warn('[API] Bot returned no result', { entity_id });
         }
       } catch (err: any) {
         logger.error('[API] Analysis failed', { entity_id, error: err.message });
@@ -226,30 +221,24 @@ This endpoint creates an entity, starts it in the background, and returns the en
   }
 ```
 
-### Understanding the Iterator Envelopes
+### run() vs start()
 
-When you call `entity.start()`, it returns an async iterator that yields **envelopes** of different types:
+Entities provide two execution methods:
 
-| Type | Contains | When |
-|------|----------|------|
-| `BOT_PROGRESS` | Partial/streaming text | During LLM generation |
-| `VALUE` | The bot's final structured output | When the bot completes |
-| `STATUS` | Entity status updates | Before and after processing |
-| `ERROR` | Error details | On failure |
+| Method | Returns | Use When |
+|--------|---------|----------|
+| `entity.run()` | The bot's final output directly | You just want the result |
+| `entity.start()` | An async iterator yielding progress envelopes | You need streaming/progress updates |
 
-The `VALUE` envelope contains the actual analysis result (the Zod-validated output). The code filters for it specifically:
+`run()` calls `start()` internally and iterates through all envelopes for you, returning only the final value. For an API endpoint that stores the result and returns an entity ID, `run()` is the right choice — there's no consumer for intermediate progress events.
 
-```typescript
-if (envelope?.type === 'VALUE' && envelope?.value) {
-  valueEnvelope = envelope.value;
-}
-```
+> **Anti-pattern:** Don't use `start()` and manually scan for `VALUE` envelopes when you only need the final result. That's what `run()` does internally.
 
-> **Gotcha:** Don't store the last envelope (`lastOutput = envelope`) — the final envelope is usually `STATUS`, not `VALUE`.
+> **When to use start():** If you need real-time progress streaming to a UI (e.g., showing the user which tools the LLM is calling as it works), use `start()` and stream the envelopes via SSE. See the [Report Generator Tutorial, Part 12: Progress Streaming](../report-generator/part-12-progress-streaming.md) for that pattern.
 
 ### The Fire-and-Forget Pattern
 
-The background async IIFE `(async () => { ... })()` processes the iterator without blocking the HTTP response. The endpoint returns immediately with the `entity_id`, and the client polls for results using the status endpoint.
+The background async IIFE `(async () => { ... })()` runs the bot without blocking the HTTP response. The endpoint returns immediately with the `entity_id`, and the client polls for results using the status endpoint (or uses `ff-eg-read` / `ff-sdk-cli` to inspect the entity).
 
 ## Step 5: The query-status Endpoint
 
