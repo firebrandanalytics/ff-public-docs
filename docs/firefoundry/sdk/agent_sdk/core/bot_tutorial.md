@@ -16,7 +16,7 @@ If a Prompt is the "blueprint" for an AI task, the Bot is the "engine" or "brain
 We will build and run the Bot in isolation. The final step of connecting it to your application's state via an Entity is covered in other guides, like the main **[Getting Started Guide]**.
 
 ### The Mixin Architecture
-FireFoundry SDK v3.0.0+ uses a **mixin-based composition pattern** for flexible bot capabilities. Rather than rigid class hierarchies, you compose capabilities together using `MixinBot` and specific mixins like `StructuredOutputBotMixin`. This allows you to start simple and add capabilities as needed.
+FireFoundry SDK v4 uses a **mixin-based composition pattern** for flexible bot capabilities. Rather than rigid class hierarchies, you compose capabilities together using `MixinBot` and specific mixins like `StructuredOutputBotMixin`. This allows you to start simple and add capabilities as needed.
 
 ---
 
@@ -28,15 +28,17 @@ Our first goal is simple: create a bot that takes code as input and reliably ret
 Just as our prompt had a PTH, our bot needs a `BotTypeHelper` (BTH). The BTH connects the prompt's types to the bot's final, expected output type—in our case, the TypeScript type inferred from our `CodeReviewOutputSchema`.
 
 ```typescript
-import { BotTypeHelper } from '@firebrandanalytics/ff-agent-sdk/bot';
+import type { BotTypeHelper } from '@firebrandanalytics/ff-agent-sdk/bot';
 import { z } from 'zod';
-import { CodeReviewPTH } from '../prompts/CodeReviewAssistantPrompt.js'; // From previous tutorial
+import type { CodeReviewPTH } from '../prompts/CodeReviewAssistantPrompt.js'; // From previous tutorial
 import { CodeReviewOutputSchema } from '../prompts/schemas.js'; // From previous tutorial
 
 // The final output type is inferred directly from our Zod schema.
 type CodeReviewOutput = z.infer<typeof CodeReviewOutputSchema>;
 
 // The BTH links the Prompt's types (PTH) with the final Output type.
+// BotTypeHelper accepts additional optional params (Partial, Metadata, BrokerContent, DispatchTable)
+// but the first two are sufficient for most bots.
 type CodeReviewBTH = BotTypeHelper<CodeReviewPTH, CodeReviewOutput>;
 ```
 
@@ -44,49 +46,84 @@ type CodeReviewBTH = BotTypeHelper<CodeReviewPTH, CodeReviewOutput>;
 For any task that should return validated JSON, use `MixinBot` with the `StructuredOutputBotMixin`. The mixin automatically handles prompting the LLM, parsing the JSON response, and validating it against your Zod schema.
 
 ```typescript
-import { ComposeMixins, MixinBot } from '@firebrandanalytics/ff-agent-sdk/bot';
-import { StructuredOutputBotMixin } from '@firebrandanalytics/ff-agent-sdk/bot';
-import { PromptGroup, PromptText, PromptInputText } from '@firebrandanalytics/ff-agent-sdk/prompts';
+import { ComposeMixins } from '@firebrandanalytics/shared-utils';
+import {
+  MixinBot,
+  StructuredOutputBotMixin,
+  type MixinBotConfig,
+} from '@firebrandanalytics/ff-agent-sdk/bot';
+import {
+  Prompt,
+  PromptGroup,
+  PromptTemplateTextNode,
+  StructuredPromptGroup,
+} from '@firebrandanalytics/ff-agent-sdk/prompts';
 import { CodeReviewAssistantPrompt } from '../prompts/CodeReviewAssistantPrompt.js';
 
 export class CodeReviewBot extends ComposeMixins(
   MixinBot,
   StructuredOutputBotMixin
-) {
+)<[
+  MixinBot<CodeReviewBTH, [StructuredOutputBotMixin<CodeReviewBTH, typeof CodeReviewOutputSchema>]>,
+  [StructuredOutputBotMixin<CodeReviewBTH, typeof CodeReviewOutputSchema>]
+]> {
   constructor() {
-    // Assemble a PromptGroup, just like in the last tutorial.
-    const promptGroup = new PromptGroup<CodeReviewPTH>([
-      {
-        name: 'system_instructions',
-        prompt: new CodeReviewAssistantPrompt({ programming_language: 'TypeScript' })
-      },
-      {
-        name: 'user_input',
-        prompt: new PromptInputText<CodeReviewPTH>({})
-      }
-    ]);
-
-    super({
-      name: "CodeReviewBot",
-      schema: CodeReviewOutputSchema, // The schema to validate against
-      schema_description: "A structured code review with overall feedback and specific comments.",
-      base_prompt_group: promptGroup,
-      model_pool_name: "firebrand_completion_default"
+    // Build a user-input prompt that forwards the request's input text.
+    const inputPrompt = new Prompt<CodeReviewPTH>({
+      role: 'user',
+      static_args: {} as CodeReviewPTH['args']['static'],
     });
+    inputPrompt.add_section(
+      new PromptTemplateTextNode<CodeReviewPTH>({
+        content: (request) => request.input as string,
+      })
+    );
+
+    // Assemble a StructuredPromptGroup — the v4 replacement for bare PromptGroup.
+    // It organizes prompts into phases: base (system), input (user), and more.
+    const structuredPromptGroup = new StructuredPromptGroup<CodeReviewPTH>({
+      base: new PromptGroup<CodeReviewPTH>([
+        {
+          name: 'system_instructions',
+          prompt: new CodeReviewAssistantPrompt({ programming_language: 'TypeScript' }),
+        },
+      ]),
+      input: new PromptGroup<CodeReviewPTH>([
+        { name: 'user_input', prompt: inputPrompt },
+      ]),
+    });
+
+    // MixinBotConfig holds the bot's core settings.
+    const config: MixinBotConfig<CodeReviewBTH> = {
+      name: "CodeReviewBot",
+      base_prompt_group: structuredPromptGroup,
+      model_pool_name: "firebrand_completion_default",
+      static_args: {} as CodeReviewPTH['args']['static'],
+    };
+
+    // super() takes an array per mixin: [MixinBot config], [StructuredOutput config]
+    super([config], [{ schema: CodeReviewOutputSchema }]);
+  }
+
+  get_semantic_label_impl(): string {
+    return 'CodeReviewBot';
   }
 }
 ```
 
 **Key Points**:
-- `ComposeMixins(MixinBot, StructuredOutputBotMixin)` creates a bot with structured output capabilities
-- The mixin automatically handles JSON extraction and schema validation
-- The composition approach allows adding more mixins later as needed
+- `ComposeMixins` is imported from `@firebrandanalytics/shared-utils`
+- `MixinBot` and `StructuredOutputBotMixin` come from `@firebrandanalytics/ff-agent-sdk/bot`
+- `StructuredPromptGroup` organizes prompts into phases (`base`, `input`, `extensions`, etc.)
+- `super()` uses the array-per-mixin pattern: `super([botConfig], [mixinConfig])`
+- Every bot must implement `get_semantic_label_impl()` for observability
 
 ### Step 3: Running the Bot
 Let's see it in action! A simple function can instantiate and run our bot.
 
 ```typescript
 import { BotRequest } from '@firebrandanalytics/ff-agent-sdk/bot';
+import { Context } from '@firebrandanalytics/ff-agent-sdk';
 
 async function runSimpleBot() {
   const bot = new CodeReviewBot();
@@ -94,14 +131,15 @@ async function runSimpleBot() {
 
   const request = new BotRequest<CodeReviewBTH>({
     id: 'review-request-1',
-    input: sampleCode, // This is passed to the `PromptInputText`
-    args: { user_name: 'Alex' } // These are passed to our system prompt
+    input: sampleCode,            // Forwarded to the input prompt
+    args: { user_name: 'Alex' },  // Request args passed to system prompt
+    context: new Context(),       // Required — provides entity/memory context
   });
 
-  console.log('🤖 Running CodeReviewBot...');
+  console.log('Running CodeReviewBot...');
   const response = await bot.run(request);
 
-  console.log('✅ Review Complete! Output:');
+  console.log('Review Complete! Output:');
   console.log(response.output);
 }
 
@@ -127,7 +165,10 @@ import { BotPostprocessGenerator } from '@firebrandanalytics/ff-agent-sdk/bot';
 export class CodeReviewBot extends ComposeMixins(
   MixinBot,
   StructuredOutputBotMixin
-) {
+)<[
+  MixinBot<CodeReviewBTH, [StructuredOutputBotMixin<CodeReviewBTH, typeof CodeReviewOutputSchema>]>,
+  [StructuredOutputBotMixin<CodeReviewBTH, typeof CodeReviewOutputSchema>]
+]> {
   // ... constructor from before ...
 
   protected override async *postprocess_generator(
@@ -175,7 +216,7 @@ import { DispatchTable } from '@firebrandanalytics/ff-agent-sdk/bot';
 
 // This is our mock validation tool.
 async function validateSuggestion(request: any, args: { suggestion: string }): Promise<string[]> {
-  console.log('🔧 Validating AI suggestion...');
+  console.log('Validating AI suggestion...');
   if (args.suggestion.includes(': number')) {
     return []; // No errors, suggestion is valid!
   }
@@ -203,20 +244,23 @@ const reviewDispatchTable: DispatchTable<CodeReviewPTH, CodeReviewOutput> = {
 export class CodeReviewBot extends ComposeMixins(
   MixinBot,
   StructuredOutputBotMixin
-) {
+)<[
+  MixinBot<CodeReviewBTH, [StructuredOutputBotMixin<CodeReviewBTH, typeof CodeReviewOutputSchema>]>,
+  [StructuredOutputBotMixin<CodeReviewBTH, typeof CodeReviewOutputSchema>]
+]> {
   constructor() {
-    const promptGroup = new PromptGroup<CodeReviewPTH>([
-      // ... same prompts as before ...
-    ]);
+    // ... same StructuredPromptGroup setup as before ...
 
-    super({
+    const config: MixinBotConfig<CodeReviewBTH> = {
       name: "CodeReviewBot",
-      schema: CodeReviewOutputSchema,
-      schema_description: "A structured code review with overall feedback and specific comments.",
-      base_prompt_group: promptGroup,
+      base_prompt_group: structuredPromptGroup,
       model_pool_name: "firebrand_completion_default",
-      dispatch_table: reviewDispatchTable // Register the tool
-    });
+      static_args: {} as CodeReviewPTH['args']['static'],
+      dispatch_table: reviewDispatchTable, // Register the tool
+    };
+
+    // super() takes an array per mixin: [MixinBot config], [StructuredOutput config]
+    super([config], [{ schema: CodeReviewOutputSchema }]);
   }
 
   // ... postprocess_generator from Chapter 2 ...
@@ -324,21 +368,23 @@ Remember that you can always add more capabilities by composing additional mixin
 
 ```typescript
 // Base structured output bot (Chapters 1-3)
-export class SimpleBot extends ComposeMixins(MixinBot, StructuredOutputBotMixin) { }
+// Note: In practice, each class needs type parameters on the ComposeMixins generic —
+// see the full CodeReviewBot example above for the pattern.
+export class SimpleBot extends ComposeMixins(MixinBot, StructuredOutputBotMixin)<[...]> { }
 
 // Add working memory access
 export class SmartBot extends ComposeMixins(
   MixinBot,
   StructuredOutputBotMixin,
   WorkingMemoryBotMixin
-) { }
+)<[...]> { }
 
 // Add feedback collection
 export class FeedbackBot extends ComposeMixins(
   MixinBot,
   StructuredOutputBotMixin,
   FeedbackBotMixin
-) { }
+)<[...]> { }
 ```
 
 **The Path Forward:**

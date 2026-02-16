@@ -34,6 +34,7 @@ The framework includes several key components that work together:
 #### Core Components
 - **`Prompt`**: Base class for all prompts, handling rendering and preprocessing
 - **`PromptGroup`**: Groups of related prompts that can be rendered together
+- **`StructuredPromptGroup`**: Organizes prompts into named phases (base, input, extensions, etc.) for `MixinBot` composition
 - **`ConditionalPromptGroup`**: Prompt groups with conditional rendering based on request data
 - **`PromptTemplateNode`**: Base class for template nodes in the hierarchy
 - **`PromptDOMNode`**: Represents the rendered prompt structure before final output
@@ -81,7 +82,7 @@ Every prompt in the framework extends the base `Prompt` class and follows a cons
 ```typescript
 export default class MyPrompt extends Prompt<MY_PTH> {
     constructor(args: MY_PTH['args']['static'], options?: MY_PTH['options']) {
-        super('system', args, options);
+        super({ role: 'system', static_args: args, options });
         this.add_section(this.get_Context_Section());
         this.add_section(this.get_Rules_Section());
         this.add_section(this.get_Schema_Section());
@@ -97,7 +98,7 @@ export default class MyPrompt extends Prompt<MY_PTH> {
 }
 ```
 
-Each prompt consists of one or more sections, each represented by a `PromptTemplateNode`. The sections are added to the prompt in the constructor, and their content is defined in separate methods.
+The `Prompt` constructor accepts a `PromptArgs<PTH>` object with `role`, `static_args`, and optional `options`. Each prompt consists of one or more sections, each represented by a `PromptTemplateNode`. The sections are added to the prompt in the constructor, and their content is defined in separate methods.
 
 ### 2.2 Setting Up a Prompt Class
 
@@ -126,7 +127,7 @@ export type MY_PTH = PromptTypeHelper<MY_PROMPT_INPUT, MY_PROMPT_ARGS>;
 ```typescript
 export class MyPrompt extends Prompt<MY_PTH> {
     constructor(args: MY_PTH['args']['static'], options?: MY_PTH['options']) {
-        super('system', args, options); // 'system' sets the message role
+        super({ role: 'system', static_args: args, options }); // 'system' sets the message role
         // Add sections here
     }
 }
@@ -136,7 +137,7 @@ export class MyPrompt extends Prompt<MY_PTH> {
 
 ```typescript
 constructor(args: MY_PTH['args']['static'], options?: MY_PTH['options']) {
-    super('system', args, options);
+    super({ role: 'system', static_args: args, options });
     this.add_section(this.get_Context_Section());
     this.add_section(this.get_Rules_Section());
     // Add more sections
@@ -565,6 +566,43 @@ new RunSqlToolDirectiveNode<MY_PTH>({
 })
 ```
 
+## 6B. StructuredPromptGroup
+
+The `StructuredPromptGroup` organizes prompts into named phases, providing a structured way to compose prompt groups for use with `MixinBot`. It is the recommended way to build prompt groups in SDK v4.
+
+```typescript
+import {
+    Prompt,
+    PromptGroup,
+    PromptTemplateTextNode,
+    StructuredPromptGroup,
+} from '@firebrandanalytics/ff-agent-sdk/prompts';
+
+const structuredGroup = new StructuredPromptGroup<MY_PTH>({
+    // Required: base prompts (system instructions)
+    base: new PromptGroup<MY_PTH>([
+        { name: 'system_instructions', prompt: mySystemPrompt },
+    ]),
+
+    // Required: input prompts (user input)
+    input: new PromptGroup<MY_PTH>([
+        { name: 'user_input', prompt: myInputPrompt },
+    ]),
+
+    // Optional: additional prompt phases
+    extensions: new PromptGroup<MY_PTH>([...]),   // Extra context or rules
+    data: new PromptGroup<MY_PTH>([...]),          // Data/schema prompts
+    chat_history: new PromptGroup<MY_PTH>([...]),  // Conversation history
+    followup: new PromptGroup<MY_PTH>([...]),      // Follow-up instructions
+});
+```
+
+**Key Points**:
+- `base` and `input` are the two primary phases — `base` holds system-role prompts, `input` holds user-role prompts
+- Additional phases (`extensions`, `data`, `chat_history`, `followup`) are optional and used for more complex bots
+- `StructuredPromptGroup` is passed to `MixinBotConfig.base_prompt_group` when constructing a `MixinBot`
+- It replaces the pattern of passing a bare `PromptGroup` directly to bot constructors
+
 ## 7. Working Memory Integration
 
 ### 7.1 Enhanced WMPromptGroup
@@ -749,7 +787,7 @@ For handling errors in complex workflows:
 ```typescript
 export class CompilerErrorPrompt extends ErrorPromptBase<COMPILER_ERROR_PTH> {
     constructor(args: COMPILER_ERROR_PTH['args']['static'], options?: COMPILER_ERROR_PTH['options']) {
-        super('system', args, options);
+        super({ role: 'system', static_args: args, options });
         this.add_section(this.get_CompilerError_System_Section());
         this.add_section(this.createTypeScriptErrorInstructions<COMPILER_ERROR_PTH>('rule'));
     }
@@ -916,7 +954,7 @@ export type ANALYSIS_PTH = PromptTypeHelper<ANALYSIS_INPUT, ANALYSIS_ARGS>;
 
 export class DataAnalysisPrompt extends Prompt<ANALYSIS_PTH> {
     constructor(args: ANALYSIS_PTH['args']['static'], options?: ANALYSIS_PTH['options']) {
-        super('system', args, options);
+        super({ role: 'system', static_args: args, options });
         this.add_section(this.get_Context_Section());
         this.add_section(this.get_Data_Section());
         this.add_section(this.get_Analysis_Instructions());
@@ -1041,7 +1079,13 @@ export class InteractiveChatPrompt extends PromptGroup<CHAT_PTH> {
             },
             {
                 name: 'input',
-                prompt: new PromptInputText<CHAT_PTH>(args, options)
+                prompt: (() => {
+                    const p = new Prompt<CHAT_PTH>({ role: 'user', static_args: args, options });
+                    p.add_section(new PromptTemplateTextNode<CHAT_PTH>({
+                        content: (request) => request.input as string,
+                    }));
+                    return p;
+                })()
             }
         ];
         
@@ -1051,7 +1095,7 @@ export class InteractiveChatPrompt extends PromptGroup<CHAT_PTH> {
 
 class SystemContextPrompt extends Prompt<CHAT_PTH> {
     constructor(args: CHAT_ARGS['static'], options?: CHAT_PTH['options']) {
-        super('system', args, options);
+        super({ role: 'system', static_args: args, options });
         this.add_section(this.get_System_Section());
     }
 
@@ -1073,7 +1117,7 @@ class SystemContextPrompt extends Prompt<CHAT_PTH> {
 ```typescript
 export class ToolIntegratedAnalysisPrompt extends Prompt<ANALYSIS_PTH> {
     constructor(args: ANALYSIS_PTH['args']['static'], options?: ANALYSIS_PTH['options']) {
-        super('system', args, options);
+        super({ role: 'system', static_args: args, options });
         this.add_section(this.get_Context_Section());
         this.add_section(this.get_Available_Tools());
         this.add_section(this.get_Task_Section());

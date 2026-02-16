@@ -190,33 +190,37 @@ function getSectorForCompany(companyName: string): string {
 Update your bot constructor to include the dispatch table:
 
 ```typescript
-export class ImpactAnalysisBot extends StructuredDataBot<
-  typeof ImpactAnalysisSchema,
-  IMPACT_BTH,
-  IMPACT_PTH
-> {
+export class ImpactAnalysisBot extends ComposeMixins(
+  MixinBot,
+  StructuredOutputBotMixin
+)<[
+  MixinBot<IMPACT_BTH, [StructuredOutputBotMixin<IMPACT_BTH, typeof ImpactAnalysisSchema>]>,
+  [StructuredOutputBotMixin<IMPACT_BTH, typeof ImpactAnalysisSchema>]
+]> {
   constructor() {
-    const prompt_group = new PromptGroup([
-      { 
-        name: "impact_analysis_prompt", 
-        prompt: new EnhancedImpactAnalysisPrompt({ app_name: "News Impact Analyzer" })
-      },
-    ]);
+    const structuredPromptGroup = new StructuredPromptGroup<IMPACT_PTH>({
+      base: new PromptGroup<IMPACT_PTH>([
+        { name: "impact_analysis_prompt", prompt: new EnhancedImpactAnalysisPrompt({ app_name: "News Impact Analyzer" }) },
+      ]),
+      input: new PromptGroup<IMPACT_PTH>([
+        { name: "user_input", prompt: inputPrompt },
+      ]),
+    });
 
-    const config: StructuredDataBotConfig<typeof ImpactAnalysisSchema, IMPACT_PTH> = {
+    const config: MixinBotConfig<IMPACT_BTH> = {
       name: "ImpactAnalysisBot",
-      schema: ImpactAnalysisSchema,
-      schema_description: "Analyzes news articles for business impact across verticals",
-      base_prompt_group: prompt_group,
+      base_prompt_group: structuredPromptGroup,
       model_pool_name: "firebrand_completion_default",
+      static_args: {} as IMPACT_PTH['args']['static'],
       // Add the dispatch table to enable tool calls
       dispatch_table: newsAnalysisTools
     };
-    
-    super(config);
+
+    // super() uses array-per-mixin: [MixinBot config], [StructuredOutput config]
+    super([config], [{ schema: ImpactAnalysisSchema }]);
   }
 
-  override get_semantic_label_impl(_request: BotTryRequest<IMPACT_BTH>): string {
+  get_semantic_label_impl(): string {
     return "ImpactAnalysisBotSemanticLabel";
   }
 }
@@ -229,7 +233,7 @@ Modify your prompt to instruct the LLM about available tools:
 ```typescript
 export class EnhancedImpactAnalysisPrompt extends Prompt<IMPACT_PTH> {
   constructor(args: IMPACT_PTH['args']['static']) {
-    super('system', args);
+    super({ role: 'system', static_args: args });
     this.add_section(this.get_Context_Section());
     this.add_section(this.get_Available_Tools_Section()); // New section
     this.add_section(this.get_Analysis_Rules());

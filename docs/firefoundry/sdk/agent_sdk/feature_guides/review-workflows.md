@@ -336,26 +336,32 @@ class AnalysisBot extends ComposeMixins(
   FeedbackBotMixin
 ) {
   constructor() {
-    const promptGroup = new PromptGroup([
-      {
-        name: 'system',
-        prompt: new PromptTemplateStringOrStructNode({
-          semantic_type: 'system',
-          content: 'You are an expert analyst. Analyze the provided content and return structured findings.'
-        })
-      },
-      {
-        name: 'user_input',
-        prompt: new PromptInputText({})
-      }
-    ]);
-
-    super({
-      name: "AnalysisBot",
-      schema: AnalysisOutputSchema,
-      base_prompt_group: promptGroup,
-      model_pool_name: "azure_completion_4o"
+    const systemPrompt = new Prompt({
+      role: 'system',
+      static_args: {},
     });
+    systemPrompt.add_section(new PromptTemplateTextNode({
+      content: 'You are an expert analyst. Analyze the provided content and return structured findings.',
+    }));
+
+    const inputPrompt = new Prompt({
+      role: 'user',
+      static_args: {},
+    });
+    inputPrompt.add_section(new PromptTemplateTextNode({
+      content: (request) => request.input as string,
+    }));
+
+    const structuredPromptGroup = new StructuredPromptGroup({
+      base: new PromptGroup([{ name: 'system', prompt: systemPrompt }]),
+      input: new PromptGroup([{ name: 'user_input', prompt: inputPrompt }]),
+    });
+
+    super(
+      [{ name: "AnalysisBot", base_prompt_group: structuredPromptGroup, model_pool_name: "azure_completion_4o", static_args: {} }],
+      [{ schema: AnalysisOutputSchema }],
+      [{}]  // FeedbackBotMixin config
+    );
   }
 }
 
@@ -898,17 +904,23 @@ When revising based on feedback:
 - Maintain consistency with approved sections`
     });
 
-    const promptGroup = new PromptGroup([
-      { name: 'system', prompt: systemPrompt },
-      { name: 'input', prompt: new PromptInputText({}) }
-    ]);
-
-    super({
-      name: "RequirementsBot",
-      schema: RequirementsOutputSchema,
-      base_prompt_group: promptGroup,
-      model_pool_name: "azure_completion_4o"
+    const inputPrompt = new Prompt({
+      role: 'user',
+      static_args: {},
     });
+    inputPrompt.add_section(new PromptTemplateTextNode({
+      content: (request) => request.input as string,
+    }));
+
+    const structuredPromptGroup = new StructuredPromptGroup({
+      base: new PromptGroup([{ name: 'system', prompt: systemPrompt }]),
+      input: new PromptGroup([{ name: 'input', prompt: inputPrompt }]),
+    });
+
+    super(
+      [{ name: "RequirementsBot", base_prompt_group: structuredPromptGroup, model_pool_name: "azure_completion_4o", static_args: {} }],
+      [{ schema: RequirementsOutputSchema }]
+    );
   }
 }
 

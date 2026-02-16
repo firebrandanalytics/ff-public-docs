@@ -129,23 +129,27 @@ Agent Bundle (HTTP Server)
 ```typescript
 import {
   FFAgentBundle,
-  app_provider,
+  createEntityClient,
   EntityTypeHelper,
   BotTypeHelper,
   PromptTypeHelper,
 } from '@firebrandanalytics/ff-agent-sdk';
 import { MyConstructors, MyETH } from './constructors.js';
 
+const APP_ID = 'b5bcb46b-5d7d-4a83-8088-639562f77bf6'; // Unique UUID for this bundle
+
 export class MyAgentBundle extends FFAgentBundle<MyETH> {
   constructor() {
     super(
       {
-        id: string,            // Unique UUID for this bundle
-        name: string,          // Human-readable name
-        description: string,   // Bundle description
+        id: APP_ID,
+        application_id: APP_ID,   // Required: links bundle to its application
+        name: string,              // Human-readable name
+        type: 'agent_bundle',      // Required: component type
+        description: string,       // Bundle description
       },
       constructors: Record<string, any>,  // Entity type registry
-      provider: any          // Platform service provider (app_provider)
+      createEntityClient(APP_ID)          // Entity client factory
     );
   }
 }
@@ -157,14 +161,18 @@ export class MyAgentBundle extends FFAgentBundle<MyETH> {
 
 ```typescript
 {
-  id: 'b5bcb46b-5d7d-4a83-8088-639562f77bf6',  // Must be a valid UUID
-  name: 'MyAgentBundle',                        // Used in logs and metrics
+  id: APP_ID,                                        // Must be a valid UUID
+  application_id: APP_ID,                            // Required: links to application
+  name: 'MyAgentBundle',                             // Used in logs and metrics
+  type: 'agent_bundle',                              // Required: component type
   description: 'Description of what this bundle does',
 }
 ```
 
 **Best Practices:**
-- Generate the UUID once and commit it to source control
+- Generate the UUID once and commit it as a constant (e.g., `APP_ID`)
+- Use the same UUID for both `id` and `application_id`
+- Always set `type: 'agent_bundle'`
 - Use a descriptive name that identifies the bundle's purpose
 - Keep descriptions concise but informative
 
@@ -206,21 +214,23 @@ export type MyETH = EntityTypeHelper<
 - Supports polymorphism in the entity graph
 - The `EntityTypeHelper` type parameter enables type-safe entity creation and retrieval throughout your bundle
 
-#### Provider
+#### Entity Client
 
-The `app_provider` is a singleton that connects to platform services:
+The `createEntityClient` factory creates a client scoped to your application:
 
 ```typescript
-import { app_provider } from '@firebrandanalytics/ff-agent-sdk';
+import { createEntityClient } from '@firebrandanalytics/ff-agent-sdk';
+
+const entityClient = createEntityClient(APP_ID);
 ```
 
-In production, this connects via gRPC to:
+This replaces the previous `app_provider` singleton pattern. The entity client connects to platform services including:
 - Context Service (entity persistence)
 - Broker Service (LLM interactions)
 - Code Sandbox (secure code execution)
 - Other platform services
 
-For testing, you can create mock providers.
+For testing, you can create mock entity clients.
 
 ### Inherited Properties and Methods
 
