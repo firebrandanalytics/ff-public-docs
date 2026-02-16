@@ -253,6 +253,54 @@ const result = await client.call_api_endpoint('create-entity', {
 });
 ```
 
+### Response Unwrapping
+
+> **Important:** `call_api_endpoint()` (and `api_endpoint()`) automatically unwraps the SDK response envelope. Your code receives the **clean result directly** — not the wire format.
+
+Agent bundle servers wrap all responses in a `{success, result}` envelope for transport. The client strips this wrapper before returning:
+
+```typescript
+// Your agent bundle endpoint returns:
+//   { title: "My Poem", poem: "Roses are red...", style: "haiku" }
+
+// Wire format (what actually goes over HTTP):
+//   { success: true, result: { title: "My Poem", poem: "Roses are red...", style: "haiku" } }
+
+// What call_api_endpoint() returns to you:
+//   { title: "My Poem", poem: "Roses are red...", style: "haiku" }
+
+const response = await client.call_api_endpoint('generate-poem', {
+  method: 'POST',
+  body: { style: 'haiku' }
+});
+
+// Correct:
+console.log(response.title);  // "My Poem"
+
+// Wrong — response.result is undefined:
+console.log(response.result.title);  // TypeError!
+```
+
+This also applies to the unified `api_endpoint()` method and all entity invocation methods (`invoke_entity_method()`, `invoke()`).
+
+### Health Check Endpoint
+
+> **Note:** Agent bundle health endpoints are served at the root level (`/health`), not under `/api/`. Since `call_api_endpoint()` prepends `/api/` to the route, you **cannot** use it for health checks.
+
+Use plain `fetch()` or the built-in `health_check()` method instead:
+
+```typescript
+// Option 1: Built-in health check
+const isHealthy = await client.health_check();
+
+// Option 2: Manual fetch (e.g., from a web UI or monitoring script)
+const res = await fetch(`${baseUrl}/health`);
+const health = await res.json();
+
+// Wrong — this hits /api/health which returns 404:
+const health = await client.call_api_endpoint('health');
+```
+
 ### Binary Response (Download Files)
 
 ```typescript
@@ -651,7 +699,39 @@ const iterator = await client.invoke('entity-123', 'longProcess', {
 });
 ```
 
-### 7. Reuse Client Instances
+### 7. Don't Double-Unwrap API Responses
+
+`call_api_endpoint()` and `api_endpoint()` automatically unwrap the `{success, result}` envelope. Access your data directly on the response object:
+
+```typescript
+const poem = await client.call_api_endpoint('generate-poem', {
+  method: 'POST',
+  body: { style: 'haiku' }
+});
+
+// Correct — data is returned directly:
+console.log(poem.title);
+
+// Wrong — the envelope has already been stripped:
+console.log(poem.result.title);  // TypeError: Cannot read property 'title' of undefined
+```
+
+### 8. Use fetch() for Health Checks
+
+Health endpoints live at `/health` (root level), but `call_api_endpoint()` prepends `/api/`. Use the built-in method or plain `fetch()`:
+
+```typescript
+// Correct:
+const healthy = await client.health_check();
+
+// Also correct (manual):
+const res = await fetch(`${baseUrl}/health`);
+
+// Wrong — 404:
+await client.call_api_endpoint('health');
+```
+
+### 9. Reuse Client Instances
 
 ```typescript
 // Good: Create once, reuse
