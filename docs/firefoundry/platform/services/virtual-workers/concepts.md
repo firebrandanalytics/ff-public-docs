@@ -45,6 +45,50 @@ When you start a session with Bob, VWM assembles all of these into a running wor
 
 ---
 
+## How Virtual Workers Compare to Cloud Coding Agents
+
+If you've used [Claude Code](https://docs.anthropic.com/en/docs/claude-code) on claude.ai or [Codex](https://openai.com/index/introducing-codex/) on ChatGPT, you've already experienced cloud-hosted coding agents — AI that can clone a repo, read and write files, run commands, and produce working code. These are impressive tools, and we use them ourselves. But they have real limitations that become apparent in enterprise and production contexts.
+
+Virtual Workers address those limitations while adding capabilities that cloud offerings don't provide at all.
+
+### What cloud coding agents do well
+
+Cloud coding agents are excellent for quick, self-contained tasks: fixing a bug in a public repo, scaffolding a new project, exploring an unfamiliar codebase. The subscription pricing from Anthropic and OpenAI is a genuine advantage — heavy users get substantial effective discounts on token costs compared to API pricing. For individual developers and small teams doing general-purpose coding work, cloud agents are often the right choice.
+
+### Where cloud coding agents fall short
+
+**They can't reach your network.** A cloud agent can't access your internal APIs, staging databases, private package registries, or cloud resources behind a VPN. If the work requires interacting with systems that aren't publicly accessible, a cloud agent simply can't do it.
+
+**Your code leaves your infrastructure.** Every file, every prompt, every response passes through a third-party cloud. For organizations with regulatory requirements, intellectual property concerns, or security policies around data residency, this is often a non-starter.
+
+**You don't control the environment.** Cloud agents run in a fixed sandbox. You can't install specific system packages, pin tool versions, configure custom runtimes, or ensure the environment matches your production stack. You work within whatever the provider gives you.
+
+**Every session starts from scratch.** Cloud agents don't carry institutional knowledge between sessions. They don't know your company's engineering standards, your product architecture, or the lessons learned from last week's work. Each interaction begins with a blank slate.
+
+### What Virtual Workers add
+
+| Capability | Cloud Coding Agents | Virtual Workers |
+|-----------|-------------------|-----------------|
+| **Network access** | Public internet only | Runs in your cluster — access internal services, databases, private repos |
+| **Data residency** | Provider's cloud | Your infrastructure — code and prompts never leave |
+| **Environment control** | Fixed sandbox | Custom container images with your tools, dependencies, and runtimes |
+| **Institutional knowledge** | None — fresh each session | Git-backed knowledge base with company context, guidelines, tribal knowledge |
+| **Learning** | None | Auto-learning captures knowledge from each session for future use |
+| **Skills & tools** | Limited to what's pre-installed | Versioned skill packages, MCP integration with platform services |
+| **Platform integration** | Standalone | Connects to entity graphs, working memory, document processing, and other FireFoundry services |
+| **Multi-CLI support** | Single provider | Claude Code, Codex, Gemini, OpenCode through a single API |
+| **Programmatic access** | Varies | Full REST API with SSE streaming, designed for automation and orchestration |
+
+### Beyond self-hosted coding agents
+
+It's tempting to think of Virtual Workers as just "self-hosted Claude Code" or "self-hosted Codex." That's part of the picture — and even that alone solves real problems around network access, security, and environment control. But the Virtual Worker concept goes further.
+
+The knowledge base, auto-learning, skills system, and platform integration transform a generic coding agent into a **specialized team member**. A cloud coding agent is a tool you use; a Virtual Worker is a colleague you work with. The difference grows over time as the worker accumulates knowledge, and it compounds across your organization as different workers specialize in different domains.
+
+VWM's CLI-agnostic architecture also means it isn't tied to any single provider's agent. As new coding agents emerge or improve, they can be added as adapters without changing how your workers, sessions, or knowledge bases operate.
+
+---
+
 ## Workers
 
 A **Worker** is the definition of a virtual team member. It captures everything about *who this agent is* — role, knowledge, tools, and behavior — without actually running anything. Think of it as a job description combined with the institutional knowledge someone in that role would need.
