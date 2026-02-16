@@ -120,8 +120,7 @@ Workers reference a runtime by ID. The VWM uses the runtime's `vwImage` (or `bas
 
 1. Skills are packaged as `.skill` (zip) files
 2. Uploaded via the Admin API and stored in blob storage
-3. Metadata (name, version, target path) stored in the database
-4. Downloaded and extracted to the workspace during session bootstrap
+3. Downloaded and extracted to the workspace during session bootstrap
 
 ### Skill Configuration
 
@@ -190,7 +189,7 @@ Each session creates a unique branch to prevent concurrent session conflicts:
 
 ### System Instructions
 
-Global system instructions are stored in the database (`vwm.system_settings` table, key: `system_agent_md`):
+Global system instructions are managed by the platform and apply to all workers:
 
 - **Merging**: System instructions are merged with worker-specific `agentMd`
 - **Hot Updates**: Can be updated via Admin API without redeployment
@@ -263,32 +262,20 @@ The bootstrap process:
 
 VWM captures comprehensive telemetry for observability, debugging, and cost analysis.
 
-### Request Telemetry (`vw_telemetry.requests`)
+### Request Telemetry
 
-Every prompt sent to a virtual worker is recorded:
+Every prompt sent to a virtual worker is recorded, including:
 
-| Field | Description |
-|-------|-------------|
-| `session_id` | Which session the request belongs to |
-| `worker_id` | Which worker configuration was used |
-| `breadcrumbs` | Request context for tracing and correlation |
-| `prompt` | The full prompt text |
-| `response` | Structured JSONB: clean text + token counts + raw CLI output |
-| `status` | `pending`, `complete`, `failed`, `cancelled` |
-| `duration_ms` | End-to-end execution time |
-| `artifacts` | Files created or modified during execution |
+- Session and worker identifiers
+- Breadcrumbs for tracing and correlation
+- Full prompt text and response
+- Token usage (input and output)
+- Execution duration
+- Files created or modified (artifacts)
 
-### Learning Telemetry (`vw_telemetry.learnings`)
+### Learning Telemetry
 
-Auto-learning executions are tracked separately:
-
-| Field | Description |
-|-------|-------------|
-| `learning_content` | Full generated learning markdown |
-| `learning_path` | File path in worker repo |
-| `tokens_in` / `tokens_out` | Token usage for learning generation |
-| `git_committed` / `git_pushed` | Whether git operations succeeded |
-| `git_commit_sha` | Commit hash for reference |
+Auto-learning executions are tracked separately, capturing the generated learning content, token usage, and whether the git commit/push succeeded.
 
 ### Accessing Telemetry
 

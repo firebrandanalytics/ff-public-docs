@@ -35,7 +35,7 @@ VWM is a **mechanical orchestration layer** focused on:
 - **Skills System**: Versioned tool packages distributed from blob storage
 - **Communication Patterns**: Synchronous, streaming (SSE), and asynchronous prompt execution
 - **Telemetry**: Request-level tracking with token usage, timing, raw CLI output, and learning metrics
-- **System Instructions**: Database-stored global instructions, hot-updatable without redeployment
+- **System Instructions**: Global instructions, hot-updatable without redeployment
 
 ## Architecture
 
@@ -57,8 +57,8 @@ VWM is a **mechanical orchestration layer** focused on:
 └────────┬──────────────────┬──────────────────────┬──────────────┘
          │                  │                      │
     ┌────▼────┐   ┌────────▼────────┐    ┌───────▼───────┐
-    │PostgreSQL│   │  K8s Jobs/Pods  │    │ Blob Storage  │
-    │(vwm, tel)│   │                 │    │  (Skills)     │
+    │Database │   │  K8s Jobs/Pods  │    │ Blob Storage  │
+    │         │   │                 │    │  (Skills)     │
     └─────────┘   └────────┬────────┘    └───────────────┘
                            │
               ┌────────────▼────────────┐
@@ -135,14 +135,6 @@ The Agent SDK provides first-class virtual worker support with two layers:
 - **Entity framework** (`VWSessionEntity` + `VWTurnEntity`): For production agent bundles with idempotency, crash recovery, and progress streaming
 
 See the [Virtual Worker SDK Feature Guide](../../../sdk/agent_sdk/feature_guides/virtual-worker-sdk.md) for SDK usage.
-
-## Database Schemas
-
-| Schema | Tables | Purpose |
-|--------|--------|---------|
-| `shared` | `runtimes`, `skills` | Global resources shared across services |
-| `vwm` | `workers`, `worker_skills`, `sessions`, `jobs`, `system_settings` | VWM-specific configuration and state |
-| `vw_telemetry` | `requests`, `learnings` | Observability data |
 
 ## Documentation
 

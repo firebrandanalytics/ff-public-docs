@@ -4,12 +4,9 @@ This guide walks you through creating a virtual worker, starting a session, exec
 
 ## Prerequisites
 
-- A running Kubernetes cluster with VWM deployed
-- PostgreSQL with the `shared`, `vwm`, and `vw_telemetry` schemas initialized
-- The following Kubernetes secrets configured:
-  - `ff-vwm-secrets` — Database credentials, blob storage keys
-  - `ff-vwm-cli-secrets` — API keys for CLI tools (e.g., `ANTHROPIC_API_KEY`)
+- A FireFoundry deployment with VWM enabled (see your platform administrator for setup)
 - A VW-capable runtime image available in your container registry
+- API keys for the CLI tools you plan to use (e.g., Anthropic API key for Claude Code)
 
 ---
 
