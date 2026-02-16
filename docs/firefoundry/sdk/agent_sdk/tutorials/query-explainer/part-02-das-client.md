@@ -154,6 +154,7 @@ The published client throws typed errors instead of raw Axios errors:
 ```typescript
 import {
   DataAccessError,
+  ConnectionError,
   PermissionDeniedError,
   QueryError,
   TimeoutError,
@@ -162,7 +163,9 @@ import {
 try {
   const result = await dasClient.explainSQL('firekicks', { sql: 'SELECT ...' });
 } catch (error) {
-  if (error instanceof PermissionDeniedError) {
+  if (error instanceof ConnectionError) {
+    // DAS can't reach the database — check connection config
+  } else if (error instanceof PermissionDeniedError) {
     // 403 — no access to this connection
   } else if (error instanceof QueryError) {
     // 400/422 — invalid SQL or query error

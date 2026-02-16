@@ -16,7 +16,7 @@ Build a tool-calling agent that analyzes SQL queries for both performance bottle
 
 An agent bundle with:
 
-- **DASClient** -- HTTP client for the Data Access Service (EXPLAIN, dictionary, schema endpoints)
+- **DataAccessClient** -- published client for the Data Access Service (EXPLAIN, dictionary, schema endpoints)
 - **QueryExplainerBot** -- tool-calling bot that gathers DAS data and produces structured analysis
 - **QueryExplainerEntity** -- entity that delegates to the bot via `BotRunnableEntityMixin`
 - **Custom API endpoints** -- `POST /api/analyze-query` and `GET /api/query-status`

@@ -205,11 +205,10 @@ This endpoint creates an entity, starts it in the background, and returns the en
             valueEnvelope = envelope.value;
           }
         }
-        // Store the result on entity data
+        // Store the result on entity data (use spread to avoid mutating the DTO)
         if (valueEnvelope) {
           const dto = await entity.get_dto();
-          dto.data.result = valueEnvelope;
-          await entity.update_data(dto.data);
+          await entity.update_data({ ...dto.data, result: valueEnvelope });
           logger.info('[API] Analysis result stored', { entity_id });
         } else {
           logger.warn('[API] No VALUE envelope received', { entity_id });
@@ -218,8 +217,7 @@ This endpoint creates an entity, starts it in the background, and returns the en
         logger.error('[API] Analysis failed', { entity_id, error: err.message });
         try {
           const dto = await entity.get_dto();
-          dto.data.error = err.message;
-          await entity.update_data(dto.data);
+          await entity.update_data({ ...dto.data, error: err.message });
         } catch { /* best effort */ }
       }
     })();
@@ -317,6 +315,10 @@ async function startServer() {
 
     process.on('SIGTERM', () => {
       logger.info('SIGTERM received, shutting down');
+      process.exit(0);
+    });
+    process.on('SIGINT', () => {
+      logger.info('SIGINT received, shutting down');
       process.exit(0);
     });
   } catch (error) {

@@ -133,6 +133,7 @@ const queryExplainerTools: Record<string, { func: Function; spec: any }> = {
 **Key points:**
 - The `func` calls `dasClient.explainSQL(connection, { sql, analyze, verbose })` — note the request object pattern
 - The response uses `result.planLines` (camelCase) — the published client returns typed fields, no normalization needed
+- We default `analyze` to `true` with `args.analyze ?? true`. The published client defaults to `false`, but for query analysis we almost always want the actual execution plan
 - The `spec.description` tells the LLM what this tool does — be clear and specific
 
 ## Step 3: The get_dictionary_tables Tool
