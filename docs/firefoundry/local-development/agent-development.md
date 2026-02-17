@@ -1,6 +1,9 @@
-# Deploying the Talespring Example
+# Agent Development Guide
 
-This guide walks you through deploying and testing the **talespring** example agent bundle - a creative storytelling AI that demonstrates FireFoundry's Entity-Bot-Prompt architecture.
+This guide covers two paths for creating FireFoundry agent bundles:
+
+1. **[From Scratch](#creating-an-agent-bundle-from-scratch)** — Build a new agent bundle using SDK v4 patterns (recommended)
+2. **[Talespring Example](#deploying-the-talespring-example)** — Deploy a pre-built example to explore Entity-Bot-Prompt architecture
 
 ## Prerequisites
 
@@ -10,6 +13,351 @@ Before starting, ensure you've completed:
 2. **[Environment Setup](./environment-setup.md)** - minikube cluster running
 3. **[Deploy Services](../platform/deployment.md)** - Control plane and core services deployed
 4. **[FF CLI Setup](./ff-cli-setup.md)** - FireFoundry CLI installed
+
+---
+
+## Creating an Agent Bundle from Scratch
+
+This section walks through creating, implementing, and deploying a new agent bundle using SDK v4, including LLM integration via the FireFoundry Broker.
+
+### Step 1: Scaffold the Project
+
+```bash
+# Create a new application monorepo
+ff-cli application create my-app
+cd my-app
+
+# Create an agent bundle
+ff-cli agent-bundle create my-service
+```
+
+This creates a Turborepo monorepo with your bundle at `apps/my-service/`, including:
+- `src/agent-bundle.ts` — Main bundle class
+- `src/constructors.ts` — Entity type registry
+- `Dockerfile` — Multi-stage Docker build
+- `helm/values.local.yaml` — Local deployment configuration
+- `firefoundry.json` — Bundle metadata
+- `AGENTS.md` — SDK usage guide
+
+### Step 2: Configure values.local.yaml
+
+Edit `apps/my-service/helm/values.local.yaml`:
+
+```yaml
+global:
+  environment: "ff-test"   # Your environment namespace
+
+configMap:
+  enabled: true
+  data:
+    # Database
+    PG_HOST: firefoundry-core-postgresql
+    PG_PORT: "5432"
+    PG_DATABASE: firefoundry
+    PG_SSL_DISABLED: "true"
+    PG_SSL_MODE: disable
+    # Entity service (required for SDK v4 createEntityClient)
+    REMOTE_ENTITY_SERVICE_URL: http://firefoundry-core-entity-service
+    REMOTE_ENTITY_SERVICE_PORT: "8080"
+    # LLM Broker
+    LLM_BROKER_HOST: firefoundry-core-ff-broker
+    LLM_BROKER_PORT: "50051"
+    # Other services
+    CODE_SANDBOX_HOST: firefoundry-core-code-sandbox
+    CODE_SANDBOX_PORT: "3000"
+    CONTEXT_SERVICE_ADDRESS: http://firefoundry-core-context-service:50051
+    # Runtime
+    PORT: "3000"
+    NODE_ENV: development
+    CONSOLE_LOG_LEVEL: debug
+    LOGGING_PROVIDER: none
+    WEBSITE_HOSTNAME: dev
+
+secret:
+  enabled: true
+  data:
+    PG_PASSWORD: "<from-k8s-secret>"
+    PG_INSERT_PASSWORD: "<from-k8s-secret>"
+```
+
+Retrieve database credentials from your environment:
+
+```bash
+# Get database config values
+kubectl get configmap firefoundry-core-database-config -n ff-test -o jsonpath='{.data}'
+
+# Get database passwords (base64-decoded)
+kubectl get secret firefoundry-core-database-secret -n ff-test -o jsonpath='{.data}' \
+  | python3 -c "import sys,json,base64; d=json.load(sys.stdin); [print(f'{k}={base64.b64decode(v).decode()}') for k,v in d.items()]"
+```
+
+### Step 3: Update Dependencies to SDK v4
+
+Edit `apps/my-service/package.json`:
+
+```json
+{
+  "dependencies": {
+    "@firebrandanalytics/ff-agent-sdk": "^4.2.0-beta.0",
+    "@firebrandanalytics/shared-types": "^2.1.1",
+    "@firebrandanalytics/shared-utils": "^4.2.0-beta.3",
+    "express": "^4.18.2",
+    "zod": "^3.22.4"
+  }
+}
+```
+
+### Step 4: Implement the Bundle
+
+Edit `apps/my-service/src/agent-bundle.ts`:
+
+```typescript
+import {
+  FFAgentBundle,
+  ApiEndpoint,
+  logger,
+  createEntityClient,
+} from "@firebrandanalytics/ff-agent-sdk";
+import { MyServiceConstructors } from "./constructors.js";
+
+const APP_ID = "<generate-a-uuid>";  // Use uuidgen or similar
+
+export class MyServiceAgentBundle extends FFAgentBundle<any> {
+  private startedAt: string;
+
+  constructor() {
+    super(
+      {
+        id: APP_ID,
+        application_id: APP_ID,
+        name: "MyService",
+        type: "agent_bundle",
+        description: "My agent bundle",
+      },
+      MyServiceConstructors,
+      createEntityClient(APP_ID) as any
+    );
+    this.startedAt = new Date().toISOString();
+  }
+
+  override async init() {
+    await super.init();
+    logger.info("MyService initialized!");
+  }
+
+  @ApiEndpoint({ method: "GET", route: "status" })
+  async getStatus(): Promise<any> {
+    return { status: "running", startedAt: this.startedAt };
+  }
+
+  @ApiEndpoint({ method: "POST", route: "echo" })
+  async echo(body: any = {}): Promise<any> {
+    return { received: body, timestamp: new Date().toISOString() };
+  }
+}
+```
+
+**Key SDK v4 changes from earlier versions:**
+- `createEntityClient(APP_ID)` replaces the old `app_provider` pattern
+- Constructor DTO requires `application_id` and `type: "agent_bundle"`
+- `@ApiEndpoint` routes are served under `/api/` prefix (e.g., `route: "status"` becomes `/api/status`)
+
+### Step 5: Register the Application
+
+SDK v4 requires the application to be registered with entity-service. Port-forward and register via curl:
+
+```bash
+# Port-forward to entity-service
+kubectl port-forward -n ff-test svc/firefoundry-core-entity-service 8080:8080 &
+
+# Create the system application (one-time, if not already present)
+curl -s -X POST http://localhost:8080/api/applications \
+  -H "Content-Type: application/json" \
+  -d '{"id":"a0000000-0000-0000-0000-000000000000","name":"System","type":"system","description":"System application"}'
+
+# Register your bundle's application (APP_ID must match your code)
+curl -s -X POST http://localhost:8080/api/applications \
+  -H "Content-Type: application/json" \
+  -d '{"id":"<your-app-uuid>","name":"my-service","type":"agent_bundle","description":"My agent bundle"}'
+```
+
+### Step 6: Build and Deploy
+
+```bash
+# Install dependencies and build TypeScript
+pnpm install
+pnpm run build
+
+# Build Docker image (auto-loads into minikube)
+ff-cli ops build my-service
+
+# Deploy to Kubernetes
+ff-cli ops install my-service -y
+
+# Enable external access through Kong
+kubectl annotate svc my-service-agent-bundle -n ff-test firefoundry.ai/external-access=true
+```
+
+Wait for the pod to be ready, then test:
+
+```bash
+# Health check through Kong
+curl http://localhost:8000/agents/ff-test/my-service/health/ready
+
+# Custom endpoint
+curl http://localhost:8000/agents/ff-test/my-service/api/status
+```
+
+### Step 7: Add a Bot with LLM Integration
+
+To add LLM capabilities, create a bot using the SDK v4 mixin pattern.
+
+**Define the output schema** (`apps/my-service/src/bots/MyBotSchema.ts`):
+
+```typescript
+import { z } from "zod";
+
+export const MyBotSchema = z.object({
+  summary: z.string().describe("A concise summary"),
+  keyPoints: z.array(z.string()).describe("Key points"),
+});
+
+export type MyBotOutput = z.infer<typeof MyBotSchema>;
+```
+
+**Create the bot** (`apps/my-service/src/bots/MyBot.ts`):
+
+```typescript
+import {
+  MixinBot,
+  Prompt,
+  PromptGroup,
+  StructuredPromptGroup,
+  StructuredOutputBotMixin,
+  PromptTemplateTextNode,
+} from "@firebrandanalytics/ff-agent-sdk";
+import { ComposeMixins } from "@firebrandanalytics/shared-utils";
+import { MyBotSchema } from "./MyBotSchema.js";
+
+function buildPromptGroup(input: string) {
+  const systemPrompt = new Prompt("system", {});
+  systemPrompt.add_section(
+    new PromptTemplateTextNode({
+      content: "You are a helpful assistant. Analyze the input and produce structured output.",
+    })
+  );
+
+  const userPrompt = new Prompt("user", {});
+  userPrompt.add_section(new PromptTemplateTextNode({ content: input }));
+
+  return new StructuredPromptGroup({
+    base: new PromptGroup([
+      { name: "system", prompt: systemPrompt },
+      { name: "user", prompt: userPrompt },
+    ]),
+    input: new PromptGroup([]),
+  });
+}
+
+const MyBotBase = ComposeMixins(MixinBot, StructuredOutputBotMixin) as any;
+
+export class MyBot extends MyBotBase {
+  constructor(input: string) {
+    const promptGroup = buildPromptGroup(input);
+    super(
+      [{ name: "MyBot", base_prompt_group: promptGroup, model_pool_name: "gemini_completion", static_args: {} }],
+      [{ schema: MyBotSchema }]
+    );
+  }
+
+  // Required by SDK v4 — return a label for telemetry/logging
+  get_semantic_label_impl(_request: any): string {
+    return "MyBot";
+  }
+}
+```
+
+**Add an endpoint** in `agent-bundle.ts`:
+
+```typescript
+import { BotRequest, Context } from "@firebrandanalytics/ff-agent-sdk";
+import { MyBot } from "./bots/MyBot.js";
+
+// Inside the bundle class:
+@ApiEndpoint({ method: "POST", route: "analyze" })
+async analyze(body: any = {}): Promise<any> {
+  const { content } = body;
+  if (!content) throw new Error("content is required");
+
+  const bot = new MyBot(content);
+  const request = new BotRequest({
+    id: `analyze-${Date.now()}`,
+    input: content,
+    args: {},
+    context: new Context(),
+  });
+
+  const response = await bot.run(request);
+  return { result: response.output };
+}
+```
+
+**Key bot implementation details:**
+- `ComposeMixins(MixinBot, StructuredOutputBotMixin)` creates a base class combining core bot behavior with Zod-validated output parsing
+- Constructor takes two arrays: bot configs and structured output configs
+- `model_pool_name` must match a model group name configured in the broker (e.g., `"gemini_completion"`)
+- `get_semantic_label_impl()` is required — SDK throws at runtime if missing
+- `BotRequest` requires `{ id, input, args, context: new Context() }`
+
+### Step 8: Configure the Broker for LLM Access
+
+Before bots can call LLMs, configure the broker's routing chain:
+
+```bash
+# Create routing config from a JSON file
+ff-cli env broker-config create ff-test -f gemini.json
+
+# Add the provider API key
+ff-cli env broker-secret add ff-test --key GEMINI_API_KEY --value "<your-key>" -y
+
+# Verify broker is healthy
+kubectl get pods -n ff-test -l app.kubernetes.io/name=ff-broker
+```
+
+Then rebuild and redeploy to test the LLM endpoint:
+
+```bash
+pnpm run build
+ff-cli ops build my-service
+ff-cli ops deploy my-service -y
+
+# Force pod restart if using same image tag
+kubectl rollout restart deployment/my-service-agent-bundle -n ff-test
+
+# Test LLM endpoint
+curl -s -X POST http://localhost:8000/agents/ff-test/my-service/api/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"content": "FireFoundry is a PaaS for AI applications."}'
+```
+
+### Rebuild Cycle
+
+For subsequent changes after initial deploy:
+
+```bash
+pnpm run build                           # Compile TypeScript
+ff-cli ops build my-service              # Build Docker image
+ff-cli ops deploy my-service -y          # Upgrade Helm release
+kubectl rollout restart deployment/my-service-agent-bundle -n ff-test  # Force pod restart
+```
+
+The `kubectl rollout restart` is needed when using the `latest` image tag, since Helm sees no diff when the tag hasn't changed.
+
+---
+
+## Deploying the Talespring Example
+
+This section walks you through deploying and testing the **talespring** example agent bundle — a creative storytelling AI that demonstrates FireFoundry's Entity-Bot-Prompt architecture.
 
 ## Step 1: Create Project with Talespring Example
 
@@ -53,14 +401,14 @@ This compiles TypeScript and prepares the agent bundle for deployment.
 Build the Docker image using the FireFoundry CLI:
 
 ```bash
-# Build for minikube (image stays local)
-ff-cli ops build talespring --minikube --tag latest
+# Build for minikube (image auto-loaded into minikube)
+ff-cli ops build talespring
 ```
 
 This command:
-- Automatically switches to minikube's Docker daemon
 - Builds the image with the correct Dockerfile
-- Passes the `GITHUB_TOKEN` build arg for private package access
+- Automatically loads the image into minikube
+- Passes the FireFoundry license as `FF_NPM_TOKEN` for private package authentication
 
 **Alternative: Manual Docker Build**
 
@@ -136,7 +484,7 @@ Deploy talespring using the FireFoundry CLI:
 
 ```bash
 # Deploy from the project root directory
-ff-cli ops install talespring --namespace ff-dev
+ff-cli ops install talespring -y
 ```
 
 This command:

@@ -57,6 +57,18 @@ ff-cli --version
 
 ## Configuration
 
+### License File
+
+FireFoundry requires a license file for cluster initialization and Docker image builds (the license is used as an npm token for private package authentication). Place your license at:
+
+```
+~/.ff/license.jwt
+```
+
+Contact the FireFoundry platform team if you need a license.
+
+### Kubectl Context
+
 The CLI automatically detects your Kubernetes context. Ensure kubectl is configured:
 
 ```bash
@@ -68,20 +80,26 @@ kubectl config current-context
 
 ## Create a Profile
 
-Profiles store your CLI configuration - which cluster to target, registry settings, and defaults for environment creation.
+Profiles store your CLI configuration — which cluster to target, registry settings, and defaults.
 
 Create your first profile for local development:
+
+```bash
+ff-cli profile create local --kubectl-context minikube --registry-type Minikube --use
+```
+
+Or interactively:
 
 ```bash
 ff-cli profile create local
 ```
 
 When prompted:
-1. **Configure registry settings?** Select **No** (or choose **Minikube** if you plan to build images)
+1. **Configure registry settings?** Select **Minikube** (required for `ops build` to load images into minikube)
 2. **Configure kubectl context?** Select **Yes**, then choose **minikube** from the list
 3. **Set as current profile?** Select **Yes**
 
-You can verify your profile:
+Verify your profile:
 
 ```bash
 # List all profiles
@@ -102,32 +120,28 @@ ff-cli profile show
 | `ff-cli profile edit [name]` | Edit an existing profile |
 | `ff-cli profile delete <name>` | Delete a profile |
 
-## Template Setup (Firebrand Employees)
+## Cluster Bootstrap
 
-The `ff-cli` uses templates to configure environments. Firebrand employees can download the internal template automatically:
+Before creating environments, you must initialize the cluster and install the control plane:
 
 ```bash
-# Ensure you're logged into Azure with access to Firebrand R&D
-az login
-az account set --subscription "Firebrand R&D"
+# Initialize cluster (installs Flux CRDs, creates registry secret)
+ff-cli cluster init --license ~/.ff/license.jwt
 
-# Download and install the internal template
-curl -fsSL https://raw.githubusercontent.com/firebrandanalytics/firefoundry-local/main/scripts/setup-ff-template.sh | bash
+# Install control plane (Kong, Helm API, Flux controllers)
+ff-cli cluster install --self-serve --license ~/.ff/license.jwt --cluster-type local -y
 ```
 
-This creates `~/.ff/environments/templates/internal.json` with the standard internal development configuration.
-
-**Note:** You must be a member of the Firebrand security group in Azure AD to download the template.
+See the [Deployment Guide](../platform/deployment.md) for details.
 
 ## Environment Management
 
-FireFoundry "environments" are namespaces containing your AI services (FF Broker, Context Service, Code Sandbox).
+FireFoundry "environments" are namespaces containing your AI services (FF Broker, Entity Service, Context Service, Code Sandbox).
 
 ### Create an Environment
 
 ```bash
-# Create a new environment using the internal template
-ff-cli environment create --template internal --name my-env
+ff-cli env create -t minimal-self-contained -n ff-test -y
 ```
 
 This will:
@@ -135,16 +149,16 @@ This will:
 - Deploy a HelmRelease for FireFoundry Core services
 - Configure the services with appropriate defaults
 
+Wait for the environment to be ready:
+
+```bash
+kubectl wait helmrelease/firefoundry-core -n ff-test --for=condition=Ready --timeout=600s
+```
+
 ### List Environments
 
 ```bash
-ff-cli environment list
-```
-
-### Check Environment Status
-
-```bash
-ff-cli environment status my-env
+ff-cli env list
 ```
 
 ### Delete an Environment
@@ -152,12 +166,6 @@ ff-cli environment status my-env
 ```bash
 ff-cli environment delete my-env
 ```
-
-## Available Templates
-
-| Template | Description |
-|----------|-------------|
-| `internal` | Standard internal development setup with all core services |
 
 ## What the CLI Does
 
@@ -174,20 +182,52 @@ The `ff-cli` tool provides:
 The `ops` commands handle building and deploying agent bundles:
 
 ```bash
-# Build a Docker image for your agent bundle
-ff-cli ops build my-bundle --minikube --tag latest
+# Build a Docker image for your agent bundle (auto-loads into minikube)
+ff-cli ops build my-bundle
 
-# Install an agent bundle to Kubernetes
-ff-cli ops install my-bundle --namespace ff-dev
+# Install/upgrade an agent bundle to Kubernetes
+ff-cli ops install my-bundle -y
 
-# Upgrade an existing deployment
-ff-cli ops upgrade my-bundle --namespace ff-dev
-
-# Check prerequisites
-ff-cli ops doctor
+# Deploy with a specific values file variant
+ff-cli ops deploy my-bundle -y --values local
 ```
 
+The build command uses the FireFoundry license as `FF_NPM_TOKEN` for authenticating with the GitHub npm registry during Docker builds. No separate GitHub PAT is required.
+
+**Values file selection**: The `--values` flag selects which values file variant to use:
+- `--values local` uses `helm/values.local.yaml` (default for minikube profiles)
+- `--values dev` uses `helm/values.dev.yaml`
+- If a base `helm/values.yaml` exists, it is chained automatically
+
 For complete documentation, see the **[FF CLI Operations Guide](../../ff-cli/ops.md)**.
+
+### Broker Configuration Commands
+
+Configure LLM provider routing for your environment:
+
+```bash
+# Create a broker routing chain from a JSON config file
+ff-cli env broker-config create ff-test -f gemini.json
+
+# View a model group's routing configuration
+ff-cli env broker-config show ff-test --model-group gemini_completion
+
+# Add an API key secret to the broker
+ff-cli env broker-secret add ff-test --key GEMINI_API_KEY --value "<your-key>" -y
+```
+
+### Application Management
+
+```bash
+# Create a new application monorepo
+ff-cli application create my-app
+
+# Create an agent bundle inside the monorepo
+ff-cli agent-bundle create my-service
+
+# Scaffold a Next.js web UI
+ff-cli gui add dashboard
+```
 
 ## Troubleshooting
 

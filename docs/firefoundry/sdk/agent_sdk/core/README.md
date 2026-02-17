@@ -54,3 +54,103 @@ For newcomers to the FireFoundry SDK, we recommend this learning path:
 4.  Explore the [Feature Guides](../feature_guides/) for specific advanced patterns and capabilities.
 
 Each guide includes working code examples, best practices, and real-world implementation patterns from production FireFoundry applications.
+
+## SDK v4 Changes
+
+SDK v4 (`@firebrandanalytics/ff-agent-sdk` ^4.2.0-beta.0) introduces several breaking changes from earlier versions. If you are starting a new project, use v4 directly. If migrating, note the following:
+
+### Agent Bundle Constructor
+
+The `FFAgentBundle` constructor DTO now requires `application_id` and `type`:
+
+```typescript
+// v4
+super(
+  {
+    id: APP_ID,
+    application_id: APP_ID,  // NEW — required
+    name: "MyBundle",
+    type: "agent_bundle",     // NEW — required
+    description: "...",
+  },
+  MyConstructors,
+  createEntityClient(APP_ID) as any  // Replaces app_provider
+);
+```
+
+**`app_provider` is removed** — use `createEntityClient(APP_ID)` instead. This requires the environment variables `REMOTE_ENTITY_SERVICE_URL` and `REMOTE_ENTITY_SERVICE_PORT` to be set.
+
+### Bot Mixin Pattern
+
+Bots now use `ComposeMixins` from `@firebrandanalytics/shared-utils`:
+
+```typescript
+import { ComposeMixins } from "@firebrandanalytics/shared-utils";
+import { MixinBot, StructuredOutputBotMixin } from "@firebrandanalytics/ff-agent-sdk";
+
+const MyBotBase = ComposeMixins(MixinBot, StructuredOutputBotMixin) as any;
+
+export class MyBot extends MyBotBase {
+  constructor(input: string) {
+    super(
+      [{ name: "MyBot", base_prompt_group: promptGroup, model_pool_name: "gemini_completion", static_args: {} }],
+      [{ schema: MyBotSchema }]
+    );
+  }
+
+  // REQUIRED — SDK throws at runtime if missing
+  get_semantic_label_impl(_request: any): string {
+    return "MyBot";
+  }
+}
+```
+
+Key changes:
+- `ComposeMixins` is in `shared-utils`, not `ff-agent-sdk` — add `@firebrandanalytics/shared-utils` as a dependency
+- Constructor takes two arrays: bot configs and structured output configs
+- `get_semantic_label_impl()` is required on all bot subclasses (returns a string label for telemetry)
+
+### Prompt Construction
+
+Prompts use `StructuredPromptGroup` wrapping a `PromptGroup`:
+
+```typescript
+import { Prompt, PromptGroup, StructuredPromptGroup, PromptTemplateTextNode } from "@firebrandanalytics/ff-agent-sdk";
+
+const systemPrompt = new Prompt("system", {});
+systemPrompt.add_section(new PromptTemplateTextNode({ content: "..." }));
+
+const promptGroup = new StructuredPromptGroup({
+  base: new PromptGroup([{ name: "system", prompt: systemPrompt }]),
+  input: new PromptGroup([]),
+});
+```
+
+### BotRequest
+
+`BotRequest` now requires a `context` field:
+
+```typescript
+import { BotRequest, Context } from "@firebrandanalytics/ff-agent-sdk";
+
+const request = new BotRequest({
+  id: `req-${Date.now()}`,
+  input: "...",
+  args: {},
+  context: new Context(),  // NEW — required
+});
+```
+
+### Entity Changes
+
+- `agent_bundle_id` replaces `app_id` in entity DTOs
+- Entity-service system application (`a0000000-0000-0000-0000-000000000000`) must be seeded manually
+
+### Required Package Versions
+
+| Package | Version |
+|---------|---------|
+| `@firebrandanalytics/ff-agent-sdk` | ^4.2.0-beta.0 |
+| `@firebrandanalytics/shared-types` | ^2.1.1 |
+| `@firebrandanalytics/shared-utils` | ^4.2.0-beta.3 |
+| `zod` | ^3.22.4 |

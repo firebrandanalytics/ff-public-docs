@@ -10,22 +10,20 @@ Pods stuck in `ImagePullBackOff` status
 
 ### Causes
 
-- Incorrect ACR credentials
-- Wrong Azure subscription context
-- Missing registry secrets
+- Missing or expired registry credentials
+- Registry secret not created during `ff-cli cluster init`
 
 ### Solutions
 
 ```bash
-# Verify ACR access
-az acr login --name firebranddevet
-docker pull firebranddevet.azurecr.io/ff-broker:latest
+# Check if registry secret exists
+kubectl get secret -n ff-control-plane | grep registry
 
-# Recreate registry secrets
-kubectl delete secret myregistrycreds -n ff-dev
-kubectl delete secret myregistrycreds -n ff-control-plane
+# Re-initialize the cluster to recreate registry credentials
+ff-cli cluster init --license ~/.ff/license.jwt
 
-# Follow registry setup steps again from [Deployment Guide](../platform/deployment.md)
+# For agent bundles using local images (minikube), ensure imagePullPolicy is Never
+# in your helm/values.local.yaml
 ```
 
 ## Pod Startup Issues
@@ -143,19 +141,35 @@ minikube delete
 minikube start --memory=8192 --cpus=4 --disk-size=20g
 ```
 
-## GitHub Token Issues
+## npm Authentication / Docker Build Failures
 
 ### Symptoms
 
-ff-cli commands fail with authentication errors
+`ff-cli ops build` fails with 401 or 403 errors when installing `@firebrandanalytics` packages inside Docker.
 
 ### Common Causes
 
-- Missing or invalid GITHUB_TOKEN
-- Token doesn't have required scopes
-- Environment variable not set
+- Missing or invalid FireFoundry license file
+- License not being passed as `FF_NPM_TOKEN` build arg
+- `.npmrc` not configured for GitHub npm registry
 
 ### Solutions
+
+The `ff-cli ops build` command uses the FireFoundry license as `FF_NPM_TOKEN` for GitHub npm registry authentication. A separate GitHub PAT is no longer required.
+
+```bash
+# Verify license exists
+ls -la ~/.ff/license.jwt
+
+# Run build with verbose output to check token passing
+ff-cli ops build my-service --verbose
+
+# For local pnpm install (outside Docker), ensure .npmrc has:
+# @firebrandanalytics:registry=https://npm.pkg.github.com
+# //npm.pkg.github.com/:_authToken=<your-token>
+```
+
+If you need a GitHub PAT for local development (not Docker builds):
 
 ```bash
 # Check if token is set
@@ -163,9 +177,6 @@ echo $GITHUB_TOKEN
 
 # Test token validity
 curl -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/user
-
-# Recreate token with correct scopes
-# See [Prerequisites Guide](../getting-started/prerequisites.md) for detailed steps
 ```
 
 ## Performance Issues
@@ -196,6 +207,131 @@ kubectl scale deployment <deployment-name> --replicas=2 -n ff-dev
 
 ## Agent Bundle Issues
 
+### Helm Job Immutability on Upgrade
+
+#### Symptoms
+
+Broker Helm upgrades fail with `"field is immutable"` errors on Jobs.
+
+#### Cause
+
+Kubernetes Jobs (bootstrap-job, migration-job) from a previous install cannot be updated in-place.
+
+#### Solution
+
+Delete stale Jobs before upgrading:
+
+```bash
+kubectl delete jobs -n ff-test -l app.kubernetes.io/name=ff-broker --force --grace-period=0
+```
+
+Then retry the Helm upgrade.
+
+### System Application Not Seeded
+
+#### Symptoms
+
+Agent bundle fails to initialize with entity-service errors. Entity operations return 404 or "application not found".
+
+#### Cause
+
+SDK v4 requires a system application (`a0000000-0000-0000-0000-000000000000`) in entity-service. The components migration does not seed it automatically.
+
+#### Solution
+
+Create the system application manually, then register your bundle's application:
+
+```bash
+# Port-forward to entity-service
+kubectl port-forward -n ff-test svc/firefoundry-core-entity-service 8080:8080 &
+
+# Create system application
+curl -s -X POST http://localhost:8080/api/applications \
+  -H "Content-Type: application/json" \
+  -d '{"id":"a0000000-0000-0000-0000-000000000000","name":"System","type":"system","description":"System application"}'
+
+# Register your bundle
+curl -s -X POST http://localhost:8080/api/applications \
+  -H "Content-Type: application/json" \
+  -d '{"id":"<your-app-uuid>","name":"my-service","type":"agent_bundle","description":"My bundle"}'
+```
+
+### Kong Route Not Created (External Access)
+
+#### Symptoms
+
+`curl http://localhost:8000/agents/ff-test/my-service/health/ready` returns `{"message":"no Route matched"}`.
+
+#### Cause
+
+The agent bundle chart defaults `firefoundry.ai/external-access` to `false`, which prevents the agent-bundle-controller from creating a Kong route.
+
+#### Solution
+
+```bash
+kubectl annotate svc my-service-agent-bundle -n ff-test firefoundry.ai/external-access=true --overwrite
+```
+
+Wait 15-30 seconds for the controller to discover the annotation change and create the route.
+
+### Pod Not Restarted After Redeploy (Same Image Tag)
+
+#### Symptoms
+
+After `ff-cli ops deploy`, the pod continues running old code. The version or behavior hasn't changed.
+
+#### Cause
+
+When using the `latest` image tag, Helm sees no diff in the deployment spec and doesn't trigger a rollout.
+
+#### Solution
+
+Force a pod restart after redeploying:
+
+```bash
+kubectl rollout restart deployment/my-service-agent-bundle -n ff-test
+kubectl rollout status deployment/my-service-agent-bundle -n ff-test --timeout=120s
+```
+
+### FDW Tables Not Queryable as Postgres User
+
+#### Symptoms
+
+Queries against `brk_registry.*` tables fail with permission errors when using the `postgres` user.
+
+#### Cause
+
+The broker's `brk_registry` tables are foreign data wrappers (FDW) from entity-service's database. User mappings exist for `firebroker`, `fireread`, and `firebrand` — but NOT for `postgres`.
+
+#### Solution
+
+Always query FDW tables using the `firebroker` user:
+
+```bash
+PGF_PWD=$(kubectl get secret firefoundry-core-ff-broker-secret -n ff-test -o jsonpath='{.data.PGF_PWD}' | base64 -d)
+kubectl exec -n ff-test firefoundry-core-postgresql-0 -- \
+  env PGPASSWORD="$PGF_PWD" psql -U firebroker -d firefoundry -c "SELECT * FROM brk_registry.model LIMIT 5"
+```
+
+### Broker CreateContainerConfigError After Secret Add
+
+#### Symptoms
+
+After running `ff-cli env broker-secret add`, the broker pod shows `CreateContainerConfigError`.
+
+#### Cause
+
+The broker-secret may have dropped keys with empty values during update. The `APPI_OPENAI_SANDBOX_CS` key (referenced in the broker Deployment template) must exist in the secret even if empty.
+
+#### Solution
+
+Patch the secret to ensure the key exists:
+
+```bash
+kubectl patch secret firefoundry-core-ff-broker-secret -n ff-test \
+  --type='json' -p='[{"op":"add","path":"/data/APPI_OPENAI_SANDBOX_CS","value":""}]'
+```
+
 ### LLM Broker Connection Failures
 
 #### Symptoms
@@ -214,20 +350,20 @@ kubectl scale deployment <deployment-name> --replicas=2 -n ff-dev
 
 ```bash
 # Verify broker is running
-kubectl get pods -n ff-dev | grep broker
-kubectl logs -n ff-dev deploy/firefoundry-core-ff-broker
+kubectl get pods -n ff-test | grep broker
+kubectl logs -n ff-test deploy/firefoundry-core-ff-broker
 
-# Check the broker port (should be 50051, NOT 50061)
-kubectl get svc -n ff-dev | grep broker
+# Check the broker port (should be 50051)
+kubectl get svc -n ff-test | grep broker
 # Expected: firefoundry-core-ff-broker   ClusterIP   10.x.x.x   50051/TCP
 
-# In your agent bundle's values.yaml or environment:
+# In your agent bundle's values.local.yaml configMap.data:
 LLM_BROKER_HOST: "firefoundry-core-ff-broker"
-LLM_BROKER_PORT: "50051"  # Common mistake: using 50061
+LLM_BROKER_PORT: "50051"  # Common mistake: using 50052 or 50061
 
 # Test broker connectivity from within the cluster
 kubectl run test-broker --image=busybox -it --rm -- \
-  nc -zv firefoundry-core-ff-broker.ff-dev.svc.cluster.local 50051
+  nc -zv firefoundry-core-ff-broker.ff-test.svc.cluster.local 50051
 ```
 
 ### Context Service / Working Memory Errors
