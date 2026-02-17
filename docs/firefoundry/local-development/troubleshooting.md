@@ -1,61 +1,187 @@
 # Troubleshooting Guide
 
-Common issues and solutions when working with FireFoundry.
+Common issues and solutions when working with FireFoundry. See also the [Minikube Bootstrap Guide](./minikube-bootstrap.md) and [AKS Bootstrap Guide](../getting-started/aks-bootstrap.md) for setup-specific troubleshooting.
 
-## Image Pull Errors
+---
+
+## ImagePullBackOff
 
 ### Symptoms
 
-Pods stuck in `ImagePullBackOff` status
+Pods stuck in `ImagePullBackOff` or `ErrImagePull` status:
 
-### Causes
-
-- Incorrect ACR credentials
-- Wrong Azure subscription context
-- Missing registry secrets
-
-### Solutions
-
-```bash
-# Verify ACR access
-az acr login --name firebranddevet
-docker pull firebranddevet.azurecr.io/ff-broker:latest
-
-# Recreate registry secrets
-kubectl delete secret myregistrycreds -n ff-dev
-kubectl delete secret myregistrycreds -n ff-control-plane
-
-# Follow registry setup steps again from [Deployment Guide](../platform/deployment.md)
+```
+NAME                              READY   STATUS             RESTARTS   AGE
+firefoundry-core-ff-broker-xxx    0/1     ImagePullBackOff   0          5m
 ```
 
-## Pod Startup Issues
+### Causes and Fixes
+
+**1. Missing registry credentials (most common)**
+
+The `myregistrycreds` secret was not created or was created in the wrong namespace. This usually means `ff-cli cluster init` was not run or did not complete successfully.
+
+```bash
+# Check if the secret exists
+kubectl get secret myregistrycreds -n ff-control-plane
+kubectl get secret myregistrycreds -n ff-dev
+
+# If missing, re-run cluster init
+ff-cli cluster init --license ~/.ff/license.jwt
+```
+
+**2. Expired or invalid registry credentials**
+
+License-exchanged credentials may have expired. Re-run the license exchange:
+
+```bash
+ff-cli cluster init --license ~/.ff/license.jwt
+```
+
+**3. Image tag does not exist**
+
+The requested image version may not exist in the registry.
+
+```bash
+# Check the exact image being pulled
+kubectl describe pod <pod-name> -n <namespace> | grep "Image:"
+
+# Verify the image exists (requires ACR access)
+az acr repository show-tags --name firebranddevet --repository ff-llm-broker
+```
+
+**4. Network connectivity to registry**
+
+The cluster cannot reach `firebranddevet.azurecr.io`. On minikube, check that Docker has network access. On AKS, check network security groups.
+
+```bash
+# Test from within the cluster
+kubectl run test --image=busybox -it --rm -- wget -qO- https://firebranddevet.azurecr.io/v2/
+```
+
+---
+
+## CrashLoopBackOff
 
 ### Symptoms
 
-Pods stuck in `Pending`, `CrashLoopBackOff`, or `Error` states
+Pods restart repeatedly, showing `CrashLoopBackOff` with increasing restart counts:
 
-### Common Causes
+```
+NAME                              READY   STATUS             RESTARTS      AGE
+firefoundry-core-ff-broker-xxx    0/1     CrashLoopBackOff   5 (30s ago)   10m
+```
 
-- Insufficient resources
-- Missing secrets or configmaps
-- Image pull issues
-- Port conflicts
+### Causes and Fixes
 
-### Solutions
+**1. Database not ready yet (transient)**
+
+During initial deployment, services may start before PostgreSQL is ready. This is self-healing -- pods will stabilize after PostgreSQL accepts connections. Wait 2-3 minutes.
 
 ```bash
-# Check pod status and events
-kubectl describe pod <pod-name> -n ff-dev
+# Check PostgreSQL status
+kubectl get pods -n ff-dev | grep postgresql
 
-# Check resource availability
-kubectl top nodes
-kubectl describe node <node-name>
+# Watch for stabilization
+kubectl get pods -n ff-dev -w
+```
 
-# Check logs
+**2. Missing environment variables or secrets**
+
+Services crash if required configuration is missing.
+
+```bash
+# Check pod logs for the error message
 kubectl logs <pod-name> -n ff-dev --previous
 
-# Restart problematic pods
-kubectl delete pod <pod-name> -n ff-dev
+# Common missing vars:
+# - Database connection strings
+# - LLM_BROKER_HOST / LLM_BROKER_PORT
+# - CONTEXT_SERVICE_ADDRESS
+```
+
+**3. Incorrect database credentials**
+
+Default passwords in the Helm chart (`changeme-*`) must match between the PostgreSQL deployment and the service configuration.
+
+```bash
+# Check the shared database secret
+kubectl get secret firefoundry-core-shared-database-secret -n ff-dev -o yaml
+
+# Compare with the service's expected credentials
+kubectl describe pod <pod-name> -n ff-dev | grep -A 2 "DB_PASSWORD\|DATABASE"
+```
+
+**4. Out-of-memory kills (OOMKilled)**
+
+The container exceeded its memory limit.
+
+```bash
+# Check termination reason
+kubectl describe pod <pod-name> -n ff-dev | grep -A 3 "Last State"
+
+# If OOMKilled, increase memory limits in values.yaml:
+# resources:
+#   limits:
+#     memory: 2Gi  # increase from default 1Gi
+```
+
+---
+
+## Pending Pods
+
+### Symptoms
+
+Pods stay in `Pending` status indefinitely:
+
+```
+NAME                              READY   STATUS    RESTARTS   AGE
+firefoundry-core-ff-broker-xxx    0/1     Pending   0          10m
+```
+
+### Causes and Fixes
+
+**1. Insufficient CPU or memory (most common)**
+
+The cluster does not have enough resources to schedule the pod.
+
+```bash
+# Check what's blocking scheduling
+kubectl describe pod <pod-name> -n <namespace> | grep -A 5 "Events"
+
+# Check node resource availability
+kubectl describe nodes | grep -A 5 "Allocated resources"
+
+# On minikube, restart with more resources
+minikube stop
+minikube start --memory=8192 --cpus=4 --disk-size=40g
+```
+
+**2. Node selectors or taints**
+
+The pod requires a node with specific labels or tolerations that don't exist.
+
+```bash
+# Check pod's node requirements
+kubectl describe pod <pod-name> -n <namespace> | grep -A 5 "Node-Selectors\|Tolerations"
+
+# Check node labels
+kubectl get nodes --show-labels
+```
+
+**3. Persistent volume claim (PVC) not bound**
+
+StatefulSets (like PostgreSQL) need persistent volumes.
+
+```bash
+# Check PVC status
+kubectl get pvc -n <namespace>
+
+# If PVC is Pending, check storage class
+kubectl describe pvc <pvc-name> -n <namespace>
+
+# On minikube, the default storage class should work automatically
+kubectl get storageclass
 ```
 
 ## Service Connectivity Issues
@@ -83,33 +209,65 @@ kubectl get endpoints -n ff-dev
 kubectl port-forward svc/firefoundry-ff-broker 50061:50061 -n ff-dev
 ```
 
-## Helm Installation Issues
+## Helm Installation and Timeout Errors
 
 ### Symptoms
 
-Helm install/upgrade fails
+- `helm install` or `ff-cli cluster install` fails with timeout
+- Helm release stuck in `pending-install` or `failed` state
+- `ff-cli env create` hangs or fails
 
-### Common Causes
+### Causes and Fixes
 
-- Missing dependencies
-- Invalid values files
-- Resource conflicts
+**1. Timeout during image pulls (most common on first install)**
 
-### Solutions
+First-time installations pull many large images. The default timeout may not be sufficient.
 
 ```bash
-# Update dependencies
-helm dependency update
+# For cluster install, extend the timeout
+ff-cli cluster install --self-serve --cluster-type local --timeout 20m -y
 
-# Check for conflicts
-helm list -n ff-dev
-helm list -n ff-control-plane
+# For direct Helm installs
+helm install firefoundry-core firebrandanalytics/firefoundry-core \
+  -n ff-dev --timeout 20m --wait
+```
 
-# Dry run to validate
-helm install firefoundry-core . --dry-run --debug -n ff-dev
+**2. Failed Helm release blocking reinstall**
 
-# Clean up failed installations
+If a previous install failed, the release may be in a broken state.
+
+```bash
+# Check release status
+helm list -n ff-dev -a
+helm list -n ff-control-plane -a
+
+# If status is "failed" or "pending-install", uninstall first
 helm uninstall firefoundry-core -n ff-dev
+
+# For control plane
+ff-cli cluster repair
+# or
+ff-cli cluster uninstall -y && ff-cli cluster install --self-serve --cluster-type local -y
+```
+
+**3. Invalid values file**
+
+Syntax errors in custom values files cause Helm to fail.
+
+```bash
+# Validate your values file
+helm template firefoundry-core firebrandanalytics/firefoundry-core \
+  -f my-values.yaml --debug 2>&1 | head -50
+
+# Common issues: wrong indentation, missing quotes around strings with special characters
+```
+
+**4. Missing Helm repository**
+
+```bash
+# Add the FireFoundry Helm repository
+helm repo add firebrandanalytics https://firebrandanalytics.github.io/ff_infra
+helm repo update
 ```
 
 ## Minikube Issues
@@ -143,6 +301,139 @@ minikube delete
 minikube start --memory=8192 --cpus=4 --disk-size=20g
 ```
 
+## FF-CLI Authentication Errors
+
+### Symptoms
+
+- `ff-cli` commands fail with "unauthorized", "forbidden", or "authentication failed"
+- `ff-cli env create` returns API key errors
+- `ff-cli cluster install` fails with license-related errors
+
+### Causes and Fixes
+
+**1. License file not found or invalid**
+
+```bash
+# Verify license file exists
+ls -la ~/.ff/license.jwt
+
+# Check if the license is a valid JWT (should have 3 dot-separated parts)
+cat ~/.ff/license.jwt | tr '.' '\n' | wc -l
+# Expected: 3
+
+# Re-download the license from your provider if needed
+```
+
+**2. Wrong or missing FF_PROFILE**
+
+```bash
+# Check active profile
+echo $FF_PROFILE
+ff-cli profile current
+
+# List available profiles
+ff-cli profile list
+
+# Set profile
+export FF_PROFILE=local
+```
+
+**3. Helm API key mismatch**
+
+After reinstalling the control plane, the API key stored in the profile may no longer match.
+
+```bash
+# Check if the Helm API is accessible
+curl -s http://localhost:8000/management/helm/v1/helmreleases
+
+# If you get "No API key found", the API is reachable but auth is needed
+# ff-cli handles this automatically if the profile is configured correctly
+
+# If profile is stale, recreate it
+ff-cli profile create local --use
+```
+
+**4. Port forwarding not active**
+
+Many `ff-cli` commands communicate through the Helm API, which requires port forwarding to be active.
+
+```bash
+# Check if port forwarding is running
+ps aux | grep port-forward
+
+# Restart if needed
+kubectl port-forward -n ff-control-plane svc/firefoundry-control-kong-proxy 8000:9080 &
+```
+
+---
+
+## Database Connection Failures
+
+### Symptoms
+
+- Services fail to start with "connection refused" or "ECONNREFUSED" in logs
+- PostgreSQL-related errors in pod logs: "password authentication failed", "database does not exist"
+- Migration jobs fail with database errors
+
+### Causes and Fixes
+
+**1. PostgreSQL pod not ready**
+
+On initial deployment, services may start before PostgreSQL is accepting connections. This is usually transient.
+
+```bash
+# Check PostgreSQL pod status
+kubectl get pods -n ff-dev | grep postgresql
+
+# Check PostgreSQL logs
+kubectl logs -n ff-dev -l app.kubernetes.io/name=postgresql
+
+# Wait for PostgreSQL to be ready
+kubectl wait pod -l app.kubernetes.io/name=postgresql -n ff-dev --for=condition=Ready --timeout=120s
+```
+
+**2. Incorrect database credentials**
+
+Default passwords in the chart (`changeme-*`) must be consistent across all services.
+
+```bash
+# Check the shared database secret
+kubectl get secret -n ff-dev | grep database
+
+# View secret contents (base64 encoded)
+kubectl get secret firefoundry-core-shared-database-secret -n ff-dev -o jsonpath='{.data}' | python3 -m json.tool
+```
+
+**3. Database schema not initialized**
+
+Migration jobs must complete before services can connect.
+
+```bash
+# Check migration job status
+kubectl get jobs -n ff-dev
+
+# If a migration job failed, check its logs
+kubectl logs job/<job-name> -n ff-dev
+
+# Restart a failed migration
+kubectl delete job <job-name> -n ff-dev
+# The Helm release controller will recreate it
+```
+
+**4. Network policy blocking database access**
+
+On clusters with network policies enabled, services may not be able to reach PostgreSQL.
+
+```bash
+# Check network policies
+kubectl get networkpolicy -n ff-dev
+
+# Test connectivity from a service pod
+kubectl exec -it <pod-name> -n ff-dev -- nc -zv firefoundry-core-postgresql 5432
+```
+
+---
+
 ## GitHub Token Issues
 
 ### Symptoms
@@ -167,6 +458,8 @@ curl -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/user
 # Recreate token with correct scopes
 # See [Prerequisites Guide](../getting-started/prerequisites.md) for detailed steps
 ```
+
+---
 
 ## Performance Issues
 
