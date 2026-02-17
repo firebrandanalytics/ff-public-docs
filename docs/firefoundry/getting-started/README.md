@@ -16,27 +16,48 @@ For a comprehensive overview, see the [FireFoundry Platform Overview](../README.
 
 ## Installation
 
-_[To be documented]_
+Choose the installation path that matches your target environment:
 
-### Cloud Deployment
+### Local Development (Minikube)
 
-See [Deployment Guide](../platform/deployment.md) for production deployment using Terraform and Kubernetes.
+The fastest way to get started. Sets up FireFoundry on a local Kubernetes cluster using Minikube.
 
-### Local Development
+**[Minikube Bootstrap Guide](../local-development/minikube-bootstrap.md)** -- complete walkthrough from zero to running environment (30-45 minutes).
 
-For local development, see the [Local Development Guide](../local-development/README.md).
+### Cloud Deployment (AKS)
+
+Deploy FireFoundry on Azure Kubernetes Service for team or production use.
+
+**[AKS Bootstrap Guide](./aks-bootstrap.md)** -- step-by-step AKS cluster creation and FireFoundry deployment.
+
+### Other Deployment Options
+
+- [Deployment Guide](../platform/deployment.md) -- general production deployment guidance
+- [Self-Contained Deployment](../platform/self-contained/README.md) -- single Helm release with bundled dependencies
 
 ## First Agent Bundle
 
-_[To be documented]_
+Once FireFoundry is running, create and deploy your first agent bundle:
 
-Quick tutorial to create, test, and deploy a simple agent bundle.
+```bash
+# Scaffold a new project
+ff-cli project create my-first-agent
+cd my-first-agent
+
+# Build the Docker image
+ff-cli ops build my-first-agent --minikube-profile minikube --tag latest -y
+
+# Deploy to your environment
+ff-cli ops install my-first-agent --namespace ff-dev -y
+```
+
+For a detailed walkthrough, see the [Agent Development Guide](../local-development/agent-development.md).
 
 ## Learning Path
 
 ### For Developers
 
-1. [Local Development Setup](../local-development/environment-setup.md)
+1. [Minikube Bootstrap Guide](../local-development/minikube-bootstrap.md)
 2. [Agent Development Guide](../local-development/agent-development.md)
 3. [AgentSDK Documentation](../sdk/agent-sdk/README.md)
 4. [Entity Modeling Tutorial](../sdk/agent-sdk/entity-graph/entity_modeling_tutorial.md)
@@ -44,8 +65,9 @@ Quick tutorial to create, test, and deploy a simple agent bundle.
 ### For Operators
 
 1. [Platform Architecture](../platform/architecture.md)
-2. [Deployment Guide](../platform/deployment.md)
-3. [Operations Guide](../platform/operations.md)
+2. [AKS Bootstrap Guide](./aks-bootstrap.md)
+3. [Deployment Guide](../platform/deployment.md)
+4. [Operations Guide](../platform/operations.md)
 
 ### For Consumers
 
@@ -56,6 +78,8 @@ Quick tutorial to create, test, and deploy a simple agent bundle.
 
 - [Platform Overview](../README.md) - Comprehensive platform documentation
 - [Troubleshooting](../local-development/troubleshooting.md) - Common issues and solutions
+- [Chart Reference](../../ff_local_dev/chart-reference.md) - Helm chart configuration options
+- [FF CLI Reference](../../ff-cli/README.md) - CLI command documentation
 - [Glossary](../README.md#appendices) - Key terms and concepts
 
 ## Next Steps
@@ -63,4 +87,3 @@ Quick tutorial to create, test, and deploy a simple agent bundle.
 Once you're comfortable with FireFoundry basics, explore:
 - [FireIQ Suite](../../fireiq/README.md) - Pre-built applications on FireFoundry
 - [Advanced Features](../sdk/agent-sdk/feature_guides/README.md) - Deep dives into specific capabilities
-
