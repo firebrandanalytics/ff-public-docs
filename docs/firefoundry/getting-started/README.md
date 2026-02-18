@@ -16,43 +16,24 @@ For a comprehensive overview, see the [FireFoundry Platform Overview](../README.
 
 ## Installation
 
-FireFoundry uses the `ff-cli` tool to bootstrap and manage your platform. The CLI handles cluster initialization, control plane deployment, and environment creation.
+Choose the installation path that matches your target environment:
 
-### Install the CLI
+### Local Development (Minikube)
 
-Download the FireFoundry CLI from the [releases page](https://github.com/firebrandanalytics/ff-cli-releases) and add it to your PATH. See [FF CLI Setup](../local-development/ff-cli-setup.md) for detailed platform-specific instructions.
+The fastest way to get started. Sets up FireFoundry on a local Kubernetes cluster using Minikube.
 
-### Bootstrap a Local Cluster
+**[Minikube Bootstrap Guide](../local-development/minikube-bootstrap.md)** -- complete walkthrough from zero to running environment (30-45 minutes).
 
-With minikube running and `ff-cli` installed:
+### Cloud Deployment (AKS)
 
-```bash
-# Initialize the cluster (installs Flux CRDs, creates registry secret)
-ff-cli cluster init --license ~/.ff/license.jwt
+Deploy FireFoundry on Azure Kubernetes Service for team or production use.
 
-# Install the control plane (Kong, Helm API, Flux controllers, FF Console)
-ff-cli cluster install --self-serve --license ~/.ff/license.jwt --cluster-type local -y
+**[AKS Bootstrap Guide](./aks-bootstrap.md)** -- step-by-step AKS cluster creation and FireFoundry deployment.
 
-# Verify control plane pods are healthy
-kubectl wait --for=condition=Ready pods --all -n ff-control-plane --timeout=600s
+### Other Deployment Options
 
-# Start Kong port-forward for API access
-kubectl port-forward -n ff-control-plane svc/firefoundry-control-kong-proxy 8000:9080 &
-
-# Create an environment with core services (Broker, Entity Service, Context Service)
-ff-cli env create -t minimal-self-contained -n ff-test -y
-
-# Wait for environment to be ready
-kubectl wait helmrelease/firefoundry-core -n ff-test --for=condition=Ready --timeout=600s
-```
-
-### Cloud Deployment
-
-See [Deployment Guide](../platform/deployment.md) for production deployment using Terraform and Kubernetes.
-
-### Local Development
-
-For local development, see the [Local Development Guide](../local-development/README.md).
+- [Deployment Guide](../platform/deployment.md) -- general production deployment guidance
+- [Self-Contained Deployment](../platform/self-contained/README.md) -- single Helm release with bundled dependencies
 
 ## First Agent Bundle
 
@@ -102,7 +83,7 @@ For the complete walkthrough including LLM integration, see the [Agent Developme
 
 ### For Developers
 
-1. [Local Development Setup](../local-development/environment-setup.md)
+1. [Minikube Bootstrap Guide](../local-development/minikube-bootstrap.md)
 2. [Agent Development Guide](../local-development/agent-development.md)
 3. [AgentSDK Documentation](../sdk/agent-sdk/README.md)
 4. [Entity Modeling Tutorial](../sdk/agent-sdk/entity-graph/entity_modeling_tutorial.md)
@@ -110,8 +91,9 @@ For the complete walkthrough including LLM integration, see the [Agent Developme
 ### For Operators
 
 1. [Platform Architecture](../platform/architecture.md)
-2. [Deployment Guide](../platform/deployment.md)
-3. [Operations Guide](../platform/operations.md)
+2. [AKS Bootstrap Guide](./aks-bootstrap.md)
+3. [Deployment Guide](../platform/deployment.md)
+4. [Operations Guide](../platform/operations.md)
 
 ### For Consumers
 
@@ -122,6 +104,8 @@ For the complete walkthrough including LLM integration, see the [Agent Developme
 
 - [Platform Overview](../README.md) - Comprehensive platform documentation
 - [Troubleshooting](../local-development/troubleshooting.md) - Common issues and solutions
+- [Chart Reference](../../ff_local_dev/chart-reference.md) - Helm chart configuration options
+- [FF CLI Reference](../../ff-cli/README.md) - CLI command documentation
 - [Glossary](../README.md#appendices) - Key terms and concepts
 
 ## Next Steps
@@ -129,4 +113,3 @@ For the complete walkthrough including LLM integration, see the [Agent Developme
 Once you're comfortable with FireFoundry basics, explore:
 - [FireIQ Suite](../../fireiq/README.md) - Pre-built applications on FireFoundry
 - [Advanced Features](../sdk/agent-sdk/feature_guides/README.md) - Deep dives into specific capabilities
-

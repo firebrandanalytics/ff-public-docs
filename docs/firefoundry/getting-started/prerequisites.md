@@ -2,56 +2,73 @@
 
 This document outlines the prerequisites for installing and running FireFoundry.
 
-## For Cloud Deployment
+## For Cloud Deployment (AKS)
 
-_[To be documented]_
+See the [AKS Bootstrap Guide](./aks-bootstrap.md) for a complete walkthrough.
 
 ### Infrastructure
 
-- Kubernetes cluster (version requirements TBD)
-- Cloud provider account (Azure, AWS, or GCP)
-- Terraform (for infrastructure provisioning)
+- Azure subscription with permissions to create AKS clusters
+- Kubernetes v1.27+ cluster
+- Azure CLI (`az`) v2.50+
 
 ### Tools
 
-- kubectl
-- Helm
-- ff-cli
+- kubectl v1.27+
+- Helm v3.12+
+- ff-cli ([releases](https://github.com/firebrandanalytics/ff-cli-releases))
 
-### Resources
+### Cluster Sizing
 
-- Cluster sizing requirements
-- Storage requirements
-- Network configuration
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| System node pool | 4 vCPU, 16 GB RAM (1 node) | 4 vCPU, 16 GB RAM (2 nodes) |
+| Worker node pool | 2 vCPU, 8 GB RAM (1 node) | 4 vCPU, 16 GB RAM (2-4 nodes) |
+| OS disk | 128 GB per node | 128 GB per node |
 
 ## For Local Development
 
-See the comprehensive [Local Development Prerequisites](../local-development/environment-setup.md) for detailed requirements.
+See the [Minikube Bootstrap Guide](../local-development/minikube-bootstrap.md) for a complete walkthrough.
 
 ### Required Software
 
-- Docker Desktop or similar
-- Minikube
-- Node.js (version 23.x)
+- Docker Desktop or Docker Engine
+- Minikube v1.30+
+- kubectl v1.27+
+- Helm v3.12+
 - ff-cli ([releases](https://github.com/firebrandanalytics/ff-cli-releases))
 
 ### System Requirements
 
-- RAM: Minimum 16GB recommended
-- CPU: Multi-core processor recommended
-- Disk: Sufficient space for Docker images and data
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| RAM | 8 GB available for minikube | 16 GB total system |
+| CPU | 4 cores | 6+ cores |
+| Disk | 40 GB available | 60 GB available |
 
-## Access & Credentials
+## Access and Credentials
 
-_[To be documented]_
+### FireFoundry License
 
-- Cloud provider credentials
-- Container registry access
-- Database access
+A `license.jwt` file is required for all installations. This is provided by Firebrand when you sign up for FireFoundry access.
+
+Place it at the default location:
+```bash
+mkdir -p ~/.ff
+cp /path/to/license.jwt ~/.ff/license.jwt
+```
+
+### LLM Provider API Keys
+
+At least one LLM provider API key is needed for the FF Broker:
+- OpenAI API key, or
+- Azure OpenAI API key
+
+These are configured after installation via `ff-cli env broker-secret add`.
 
 ## Next Steps
 
 Once prerequisites are met:
 
-- **Cloud Deployment**: See [Deployment Guide](../platform/deployment.md)
-- **Local Development**: See [Environment Setup](../local-development/environment-setup.md)
+- **Local Development**: See [Minikube Bootstrap Guide](../local-development/minikube-bootstrap.md)
+- **Cloud Deployment**: See [AKS Bootstrap Guide](./aks-bootstrap.md)
