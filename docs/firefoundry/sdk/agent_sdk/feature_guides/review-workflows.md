@@ -224,9 +224,9 @@ class AnalysisEntity extends AddMixins(
 
   constructor(factory, idOrDto, analysisBot) {
     super(
-      [[factory, idOrDto], []],  // RunnableEntity
-      [analysisBot],              // BotRunnableEntityMixin
-      []                          // FeedbackRunnableEntityMixin - no additional args
+      [factory, idOrDto],   // RunnableEntity args (flat tuple)
+      [analysisBot],        // BotRunnableEntityMixin
+      []                    // FeedbackRunnableEntityMixin - no additional args
     );
   }
 
@@ -389,7 +389,7 @@ class AnalysisEntity extends AddMixins(
 
   constructor(factory: EntityFactory, idOrDto: string | EntityDTO, analysisBot: AnalysisBot) {
     super(
-      [[factory, idOrDto], []],
+      [factory, idOrDto],
       [analysisBot],
       []
     );
@@ -944,7 +944,7 @@ class RequirementsEntity extends AddMixins(
 
   constructor(factory: EntityFactory, idOrDto: string | EntityDTO, requirementsBot: RequirementsBot) {
     super(
-      [[factory, idOrDto], []],
+      [factory, idOrDto],
       [requirementsBot],
       []
     );

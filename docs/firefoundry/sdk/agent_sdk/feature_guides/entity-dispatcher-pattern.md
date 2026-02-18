@@ -241,7 +241,7 @@ class TextAnalysisDispatcher extends AddMixins(
 
   constructor(factory: EntityFactory, idOrDto: string | EntityDTO) {
     super(
-      [[factory, idOrDto], []],
+      [factory, idOrDto],
       [],
       []
     );
