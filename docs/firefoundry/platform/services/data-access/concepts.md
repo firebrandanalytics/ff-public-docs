@@ -251,6 +251,51 @@ Main query: JOINs them, save_as: "combined"
 Next request: QueryAST(connection: "scratch:...", FROM: "combined")
 ```
 
+### Provenance Tracking
+
+When a query result is saved to the scratch pad via `save_as`, DAS automatically records **provenance** — metadata about what query produced the table, which connection it came from, what parameters were used, and when it executed.
+
+**Three-level hierarchy:**
+
+```
+Series (query template: connection + AST)
+├── Permutation (specific parameter values)
+│   ├── Snapshot (2026-02-18T10:00:00Z) → table: "regional_summary"
+│   ├── Snapshot (2026-03-01T10:00:00Z) → table: "regional_summary_snap_20260301T100000"
+│   └── Snapshot (2026-03-15T10:00:00Z) → table: "regional_summary_snap_20260315T100000"
+├── Permutation (different parameter values)
+│   └── Snapshot (2026-02-20T10:00:00Z) → table: "series_a1b2c3d4_20260220T100000"
+```
+
+- **Series** — a query template identified by `SHA256(connection + AST)[:16]`. All executions of the same query structure (regardless of parameter values) share a series ID.
+- **Permutation** — a specific set of parameter values within a series, identified by `SHA256(seriesID + params)[:16]`. Changing parameters creates a new permutation.
+- **Snapshot** — a point-in-time execution stored as a SQLite table. Multiple snapshots can exist for the same permutation.
+
+**What's recorded:**
+
+| Field | Description |
+|-------|-------------|
+| `seriesId` | Hash identifying the query template |
+| `permutationId` | Hash identifying the parameter combination |
+| `connection` | Source database connection |
+| `ast` | Full AST (protobuf JSON) for re-execution |
+| `generatedSql` | Dialect-specific SQL that was executed |
+| `params` | Bound parameter values |
+| `rowCount` | Number of rows returned |
+| `durationMs` | Query execution time |
+| `label` | Optional user-friendly label |
+| `executedAt` | When the query ran |
+
+**Key capabilities enabled by provenance:**
+
+- **Refresh** — re-execute the stored query to update a table's data in place
+- **Snapshot** — re-execute and save as a new timestamped table for comparison
+- **New permutations** — re-execute the same query template with different parameters
+- **Catalog** — search scratch pad contents by source connection, series, time range, or label
+- **Lineage** — trace any materialized table back to its source query and parameters
+
+Provenance requires a PostgreSQL backend (`PG_HOST` configuration). Without it, scratch pads still work but provenance is not tracked.
+
 ## Access Control
 
 ### Connection-Level ACL

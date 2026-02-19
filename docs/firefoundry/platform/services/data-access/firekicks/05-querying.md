@@ -362,6 +362,67 @@ curl -s -X POST "$DA_URL/v1/connections/scratch:user:tutorial/query-ast" \
 
 The scratch pad is the AI's working memory for a conversation. Each `saveAs` is idempotent — saving to the same name overwrites the previous results.
 
+### Provenance: Tracking What Produced Each Table
+
+When provenance tracking is enabled (requires PG backend), DAS automatically records the source query, connection, and parameters for every `saveAs`. This lets you inspect, refresh, and snapshot scratch pad tables.
+
+**Check what produced a table:**
+
+```bash
+curl -s "$DA_URL/admin/scratch/$IDENTITY/tables/top_customers/provenance" \
+  -H "X-API-Key: $API_KEY" | jq
+```
+
+```json
+{
+  "tableName": "top_customers",
+  "seriesId": "a1b2c3d4e5f67890",
+  "connection": "firekicks",
+  "generatedSql": "SELECT customer_id, first_name, ... ORDER BY lifetime_value DESC LIMIT 100",
+  "rowCount": 100,
+  "durationMs": 45,
+  "executedAt": "2026-02-18T10:00:00Z"
+}
+```
+
+**Refresh a table** (re-run the same query with fresh data):
+
+```bash
+curl -s -X POST "$DA_URL/admin/scratch/$IDENTITY/tables/top_customers/refresh" \
+  -H "X-API-Key: $API_KEY" | jq
+```
+
+This re-executes the stored SQL and replaces the table contents — like a materialized view refresh.
+
+**Take a snapshot** (preserve the current version and create a timestamped copy):
+
+```bash
+curl -s -X POST "$DA_URL/admin/scratch/$IDENTITY/tables/top_customers/snapshot" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"label": "Q1 baseline"}' | jq
+```
+
+This creates a new table like `top_customers_snap_20260218T100000` with the same query results, enabling point-in-time comparisons.
+
+**Browse all provenance for an identity:**
+
+```bash
+# All provenance records
+curl -s "$DA_URL/admin/scratch/$IDENTITY/provenance" \
+  -H "X-API-Key: $API_KEY" | jq
+
+# Filter by source connection
+curl -s "$DA_URL/admin/scratch/$IDENTITY/provenance?connection=firekicks" \
+  -H "X-API-Key: $API_KEY" | jq
+
+# List distinct query series
+curl -s "$DA_URL/admin/scratch/$IDENTITY/series" \
+  -H "X-API-Key: $API_KEY" | jq
+```
+
+Provenance turns the scratch pad from disposable temp tables into a managed catalog of materialized results with full lineage.
+
 ## Context-Aware Querying
 
 Each layer of the knowledge architecture improves the quality of AI-generated queries. Here's how the same business question — **"What's the revenue by customer segment for this quarter?"** — gets better with each layer.

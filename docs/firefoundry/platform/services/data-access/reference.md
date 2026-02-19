@@ -715,6 +715,88 @@ Response includes total queries, error rate, average duration, top connections, 
 | DELETE | `/admin/scratch/{identity}` | Purge entire scratch pad |
 | DELETE | `/admin/scratch/{identity}/tables/{table}` | Drop a single table |
 
+### Scratch Pad Provenance API
+
+Provenance endpoints require a PostgreSQL backend (`PG_HOST`).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/scratch/{identity}/provenance` | List provenance records (with filters) |
+| GET | `/admin/scratch/{identity}/tables/{table}/provenance` | Get provenance for a specific table |
+| POST | `/admin/scratch/{identity}/tables/{table}/refresh` | Re-execute stored query, replace table data |
+| POST | `/admin/scratch/{identity}/tables/{table}/snapshot` | Re-execute stored query, save as new timestamped table |
+| POST | `/admin/scratch/{identity}/series/{seriesId}/execute` | Execute series with new parameters |
+| GET | `/admin/scratch/{identity}/series` | List distinct query series |
+
+**List provenance query parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `series_id` | string | Filter by series ID |
+| `permutation_id` | string | Filter by permutation ID |
+| `connection` | string | Filter by source connection |
+| `label` | string | Substring match on label |
+| `from` | string (RFC3339) | Filter `executed_at >= from` |
+| `to` | string (RFC3339) | Filter `executed_at <= to` |
+
+**Provenance record fields:**
+
+```json
+{
+  "id": 1,
+  "identity": "user:alice",
+  "tableName": "top_customers",
+  "seriesId": "a1b2c3d4e5f67890",
+  "permutationId": "f0e1d2c3b4a59876",
+  "connection": "firekicks",
+  "ast": { "from": { "table": { "table": "customers" } }, "..." : "..." },
+  "generatedSql": "SELECT * FROM customers ORDER BY lifetime_value DESC LIMIT 100",
+  "dialect": "postgres",
+  "params": [],
+  "rowCount": 100,
+  "durationMs": 45,
+  "label": "",
+  "executedAt": "2026-02-18T10:00:00Z",
+  "createdAt": "2026-02-18T10:00:00Z"
+}
+```
+
+**Snapshot request body** (optional):
+
+```json
+{
+  "label": "Q1 2026 snapshot"
+}
+```
+
+Returns `201 Created` with the new provenance record. The snapshot table name is auto-generated: `{table}_snap_{YYYYMMDDTHHmmss}`.
+
+**Execute series request body:**
+
+```json
+{
+  "params": ["Europe", "2026-Q1"],
+  "label": "Europe Q1 2026"
+}
+```
+
+Returns `201 Created` with the new provenance record. The table name is auto-generated: `series_{seriesId[:8]}_{YYYYMMDDTHHmmss}`.
+
+**Series summary response:**
+
+```json
+[
+  {
+    "seriesId": "a1b2c3d4e5f67890",
+    "connection": "firekicks",
+    "snapshotCount": 5,
+    "permutationIds": ["f0e1d2c3b4a59876", "1234abcd5678ef90"],
+    "latestSnapshot": "2026-03-15T10:00:00Z",
+    "latestTable": "top_customers_snap_20260315T100000"
+  }
+]
+```
+
 ### Ontology Admin API
 
 | Method | Endpoint | Description |
