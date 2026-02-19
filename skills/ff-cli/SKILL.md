@@ -181,20 +181,103 @@ ff-cli ops build my-agent \
 ### Deployment Operations
 
 ```bash
-# Install to default namespace (ff-dev)
+# Deploy (install or upgrade) — auto-builds the Docker image first
+ff-cli ops deploy my-agent
+
+# Deploy with environment-specific values
+ff-cli ops deploy my-agent --values local    # uses helm/values.local.yaml
+ff-cli ops deploy my-agent --values dev      # uses helm/values.dev.yaml
+
+# Deploy to specific namespace
+ff-cli ops deploy my-agent --namespace ff-test
+
+# Install (first time only, no auto-build)
 ff-cli ops install my-agent
 
-# Install to specific namespace
-ff-cli ops install my-agent --namespace production
-
 # Upgrade existing deployment
-ff-cli ops upgrade my-agent --namespace production
-
-# Upgrade without pod restart
-ff-cli ops upgrade my-agent --no-restart
+ff-cli ops upgrade my-agent
 
 # Uninstall
 ff-cli ops uninstall my-agent --namespace production
+```
+
+**The `--values` flag** selects environment-specific Helm values:
+- `--values local` → chains `helm/values.yaml` + `helm/values.local.yaml` + `helm/secrets.local.yaml`
+- `--values dev` → chains `helm/values.yaml` + `helm/values.dev.yaml` + `helm/secrets.dev.yaml`
+- Auto-detected from profile type (minikube → `local`, cloud → `dev`)
+
+**Note**: `ops deploy` auto-builds the Docker image with `latest` tag before deploying, regardless of what tag is set in values.yaml. On minikube with `pullPolicy: Never`, Kubernetes may not detect the new image if the tag hasn't changed. Workaround: `kubectl rollout restart deployment/<name> -n <namespace>` after deploy.
+
+### Web UI Scaffolding
+
+```bash
+# Add a Next.js web UI to your project
+ff-cli gui add my-gui-name
+```
+
+This scaffolds a complete Next.js 15 app with:
+- Standalone output mode (for Docker deployment)
+- `outputFileTracingRoot` configured for pnpm monorepo
+- Tailwind CSS pre-configured
+- Health check endpoint at `/api/health`
+- Helm chart with service port 80 mapped to container port 3000
+- Liveness/readiness probes
+
+**Important**: The web-UI Helm chart maps service port **80 → container port 3000**. When port-forwarding, target port 80:
+```bash
+ff-cli port-forward my-gui 3005:80 -n ff-test --name my-gui
+```
+
+### Application Registration
+
+```bash
+# Register your application with entity-service
+ff-cli application register --mode internal --internal-port 8081
+```
+
+**Note**: The `--mode internal --internal-port 8081` flags work around a URL construction issue. Save the returned application ID — you'll need it in your agent bundle config.
+
+### Process Management (Port Forwards)
+
+```bash
+# Start a managed port-forward
+ff-cli port-forward <service-name> <local>:<remote> -n <namespace> --name <friendly-name>
+
+# List all managed processes
+ff-cli ps
+
+# View logs for a process
+ff-cli logs <name>
+ff-cli logs <name> --follow    # real-time streaming
+
+# Stop a process
+ff-cli stop <name>
+```
+
+**Tip**: Kong port-forward auto-starts after `ff-cli cluster install` on minikube. Use `ff-cli ps` to check.
+
+### Broker Configuration
+
+```bash
+# Add API keys to broker secrets
+ff-cli env broker-secret add <env-name> --key GOOGLE_API_KEY --value <key>
+
+# Create LLM routing (model group + deployed model)
+ff-cli env broker-config create --name gemini_completion
+
+# Show broker config
+ff-cli env broker-config show <name>
+
+# List broker configs
+ff-cli env broker-config list
+```
+
+**Known bug**: `ff-cli env broker-secret add` reports success but may not update the Kubernetes secret value (ff-cli-go#48). Workaround:
+```bash
+# Manually patch the secret
+kubectl patch secret firefoundry-core-ff-broker-secret -n <namespace> \
+  --type merge -p "{\"data\":{\"GOOGLE_API_KEY\":\"$(echo -n '<key>' | base64)\"}}"
+kubectl rollout restart deployment/firefoundry-core-ff-broker -n <namespace>
 ```
 
 ### Profile Management
@@ -293,35 +376,74 @@ ff-cli tooling update kubectl
 
 ## Common Workflows
 
-### Workflow 1: New Project from Scratch
+### Workflow 1: New Project from Scratch (Local Minikube)
 
 ```bash
 # 1. Create project
-ff-cli project create my-ai-app --agent-name recommendation-engine
+ff-cli application create my-ai-app --skip-git
 
 # 2. Navigate to project
 cd my-ai-app
 
-# 3. Install dependencies
+# 3. Create agent bundle
+ff-cli agent-bundle create my-bundle
+
+# 4. Install dependencies
 pnpm install
 
-# 4. Develop your agent bundle in apps/recommendation-engine/
+# 5. Register application with entity-service
+ff-cli application register --mode internal --internal-port 8081
+# Save the returned application ID
 
-# 5. Build for local testing
-ff-cli ops build recommendation-engine --minikube
+# 6. Develop your agent bundle in apps/my-bundle/src/
 
-# 6. Deploy locally
-ff-cli ops install recommendation-engine --namespace ff-dev
+# 7. Build
+ff-cli ops build
+
+# 8. Deploy with local values
+ff-cli ops deploy --values local
+
+# 9. Port-forward to test
+ff-cli port-forward my-bundle-agent-bundle 3004:3000 -n ff-test --name my-bundle
+
+# 10. Test
+curl http://localhost:3004/health
 ```
 
-### Workflow 2: Adding Agent Bundle to Existing Project
+### Workflow 2: Adding Web UI to Existing Project
 
 ```bash
 # 1. Navigate to project root (where pnpm-workspace.yaml exists)
 cd my-ai-app
 
+# 2. Add web UI
+ff-cli gui add my-gui
+
+# 3. Install dependencies
+cd apps/my-gui && pnpm install && cd ../..
+
+# 4. Create API proxy routes in apps/my-gui/src/app/api/
+# Proxy to your agent bundle using cluster-internal URL
+
+# 5. Configure values.local.yaml with bundle URL
+# BUNDLE_URL: http://my-bundle-agent-bundle.<namespace>.svc.cluster.local:3000
+
+# 6. Build and deploy
+ff-cli ops build
+ff-cli ops deploy --values local
+
+# 7. Port-forward (remember: service port is 80, not 3000)
+ff-cli port-forward my-gui 3005:80 -n ff-test --name my-gui
+```
+
+### Workflow 3: Adding Agent Bundle to Existing Project
+
+```bash
+# 1. Navigate to project root
+cd my-ai-app
+
 # 2. Add new agent bundle
-ff-cli agent-bundle create notification-service --port 3001
+ff-cli agent-bundle create notification-service
 
 # 3. Install dependencies
 pnpm install
@@ -367,36 +489,51 @@ ff-cli ops install my-agent \
 
 ## Project Structure
 
-After `ff-cli project create my-project --agent-name my-agent` (based on actual templates in ff-cli-rs):
+After `ff-cli application create my-project` + `ff-cli agent-bundle create my-agent`:
 
 ```
 my-project/
 ├── apps/
 │   └── my-agent/
 │       ├── src/
-│       │   ├── index.ts           # Entry point
-│       │   ├── agent-bundle.ts    # Agent bundle class
-│       │   └── constructors.ts    # Entity constructors
+│       │   ├── index.ts           # Entry point (FFAgentBundleServer)
+│       │   ├── agent-bundle.ts    # FFAgentBundle subclass + API endpoints
+│       │   ├── constructors.ts    # Entity & bot registration
+│       │   ├── entities/          # Entity classes (AddMixins pattern)
+│       │   ├── bots/              # Bot classes (ComposeMixins pattern)
+│       │   └── prompts/           # Prompt definitions
+│       ├── helm/
+│       │   ├── Chart.yaml
+│       │   ├── values.yaml        # Base Helm values
+│       │   └── values.local.yaml  # Local/minikube overrides
 │       ├── Dockerfile
 │       ├── package.json
-│       ├── tsconfig.json
-│       ├── values.local.yaml      # Local config
-│       └── secrets.yaml.template  # Secrets template
-├── packages/
-│   └── shared-types/              # Shared TypeScript types
-│       └── src/
-│           ├── index.ts
-│           └── core.ts
-├── docs/                          # SDK documentation
-├── scripts/
-│   ├── dev.sh
-│   └── build.sh
+│       └── tsconfig.json
+├── packages/                      # Shared packages (optional)
 ├── pnpm-workspace.yaml
 ├── package.json
 ├── turbo.json
-├── tsconfig.json
-├── docker-compose.yml
-└── docker-compose.env.yml
+└── tsconfig.json
+```
+
+Web UI (after `ff-cli gui add my-gui`):
+```
+apps/
+└── my-gui/
+    ├── src/app/
+    │   ├── layout.tsx             # Root layout
+    │   ├── page.tsx               # Main page
+    │   ├── globals.css            # Tailwind imports
+    │   └── api/                   # API proxy routes (Next.js Route Handlers)
+    │       └── health/route.ts    # Health check (pre-configured)
+    ├── helm/
+    │   ├── Chart.yaml
+    │   ├── values.yaml
+    │   └── values.local.yaml
+    ├── next.config.mjs            # standalone output + outputFileTracingRoot
+    ├── tailwind.config.ts
+    ├── Dockerfile
+    └── package.json
 ```
 
 ## Troubleshooting
@@ -447,6 +584,15 @@ ls pnpm-workspace.yaml
 # List available apps
 ff-cli apps list
 ```
+
+## Known Issues
+
+| Issue | Workaround |
+|-|-|
+| `env broker-secret add` doesn't update K8s secret (ff-cli-go#48) | Use `kubectl patch secret` + `kubectl rollout restart` |
+| `application register` URL construction bug (ff-cli-go#28) | Use `--mode internal --internal-port 8081` |
+| `ops deploy` auto-builds with `latest` tag regardless of values.yaml | Use `kubectl rollout restart` if pod doesn't pick up changes |
+| System application `a0000000-...` not auto-seeded (ff-services-entity#9) | Create manually via entity-service API (see ff-local-dev skill) |
 
 ## Global Flags
 

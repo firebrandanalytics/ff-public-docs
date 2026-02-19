@@ -51,107 +51,172 @@ Entity (What)              Bot (How)
 **Entities** = Persistent data nodes in a graph (like database records with relationships)
 **Bots** = Stateless processors that read/write entities (like controllers with AI capabilities)
 
+### Package Versions
+
+**Critical**: Use these minimum versions for working type inference:
+
+| Package | Minimum Version | Notes |
+|-|-|-|
+| `@firebrandanalytics/ff-agent-sdk` | 4.3.0 | Builder SDK for agent bundles |
+| `@firebrandanalytics/shared-utils` | 4.2.0 | AddMixins/ComposeMixins generics |
+| `@firebrandanalytics/shared-types` | 2.1.0 | Type definitions |
+| `@firebrandanalytics/ff-sdk` | latest | Consumer SDK (for web UIs calling bundles) |
+
+**Warning**: shared-utils versions below 4.2.0 have broken AddMixins type inference, forcing `as any` workarounds on class extends. If you see TypeScript errors on mixin class definitions, check your shared-utils version first.
+
 ### Core Imports
 
 ```typescript
-// Agent Bundle setup
-import { AgentBundle } from "@anthropic/agent-sdk";
+// Agent Bundle
+import { FFAgentBundle } from "@firebrandanalytics/ff-agent-sdk";
+import { FFAgentBundleServer } from "@firebrandanalytics/ff-agent-sdk/server";
 
 // Entity system
 import {
-  Entity,
-  EntityConstructor,
-  EntityGraph,
-  Relationship
-} from "@anthropic/agent-sdk/entities";
+  RunnableEntity,
+  EntityFactory,
+  EntityNode,
+  EntityEdge,
+} from "@firebrandanalytics/ff-agent-sdk";
 
 // Bot system
 import {
-  Bot,
-  BotConstructor,
-  Prompt,
-  Tool
-} from "@anthropic/agent-sdk/bots";
+  MixinBot,
+  BotRunnableEntityMixin,
+  StructuredOutputBotMixin,
+  RegisterBot,
+  BotRequest,
+  Context,
+} from "@firebrandanalytics/ff-agent-sdk";
 
-// Workflow utilities
+// Mixins (from shared-utils)
 import {
-  Waitable,
-  parallel,
-  sequential
-} from "@anthropic/agent-sdk/workflow";
+  AddMixins,
+  ComposeMixins,
+} from "@firebrandanalytics/shared-utils";
+
+// Prompts
+import {
+  PromptGroup,
+  StructuredPromptGroup,
+  PromptTemplateSectionNode,
+  PromptTemplateListNode,
+} from "@firebrandanalytics/ff-agent-sdk";
+
+// Zod for structured output
+import { z } from "zod";
+import { withSchemaMetadata } from "@firebrandanalytics/ff-agent-sdk";
 ```
 
 ### Basic Agent Bundle Structure
 
 ```typescript
-import { AgentBundle } from "@anthropic/agent-sdk";
+import { FFAgentBundle } from "@firebrandanalytics/ff-agent-sdk";
+import { FFAgentBundleServer } from "@firebrandanalytics/ff-agent-sdk/server";
 
-export class MyAgentBundle extends AgentBundle {
-  // Register entity types
-  entities = {
-    Task: TaskEntity,
-    Result: ResultEntity,
-  };
-
-  // Register bot types
-  bots = {
-    Processor: ProcessorBot,
-    Reviewer: ReviewerBot,
-  };
-
-  // Entry point
-  async handleRequest(input: RequestInput) {
-    // 1. Create/load entities
-    const task = await this.entities.Task.create({ ... });
-
-    // 2. Run bots on entities
-    const result = await this.bots.Processor.run(task);
-
-    // 3. Return response
-    return result;
+class MyAgentBundle extends FFAgentBundle {
+  constructor() {
+    super({
+      application_id: process.env.FF_APPLICATION_ID!,
+      type: "agent_bundle",
+    });
   }
-}
-```
 
-### Entity Definition Pattern
-
-```typescript
-@EntityConstructor("Task")
-export class TaskEntity extends Entity {
-  // Persisted fields
-  @Field() title: string;
-  @Field() status: "pending" | "complete";
-  @Field() createdAt: Date;
-
-  // Relationships to other entities
-  @Relationship("Result") results: ResultEntity[];
-  @Relationship("Task") parentTask?: TaskEntity;
-}
-```
-
-### Bot Definition Pattern
-
-```typescript
-@BotConstructor("Processor")
-export class ProcessorBot extends Bot<TaskEntity> {
-  // System prompt
-  prompt = `You are a task processor. Analyze the task and produce results.`;
-
-  // Available tools
-  tools = [
-    this.createResultTool,
-    this.updateStatusTool,
-  ];
-
-  @Tool("Create a result for this task")
-  async createResultTool(content: string) {
-    return await this.context.entities.Result.create({
-      content,
-      task: this.entity,
+  async onInitialize() {
+    // Register entities in constructors.ts, reference them here
+    // Set up API endpoints
+    this.router.post("/api/process", async (req, res) => {
+      const factory = this.getEntityFactory();
+      const entity = await factory.create(MyEntity, { /* data */ });
+      await entity.start();
+      res.json({ entity_id: entity.id });
     });
   }
 }
+
+// Entry point (index.ts)
+const bundle = new MyAgentBundle();
+const server = new FFAgentBundleServer(bundle);
+server.start();
 ```
+
+### Entity Definition with AddMixins
+
+Entities use `AddMixins` to compose base classes with mixins. The generic parameter is a tuple of the composed types:
+
+```typescript
+import { RunnableEntity, BotRunnableEntityMixin } from "@firebrandanalytics/ff-agent-sdk";
+import { AddMixins } from "@firebrandanalytics/shared-utils";
+
+// Type helper chain: PTH -> BTH -> ENH -> RETH
+interface MyEntityRETH {
+  // Define your entity's type helpers here
+}
+
+class MyEntity extends AddMixins(
+  RunnableEntity,
+  BotRunnableEntityMixin
+)<[RunnableEntity<MyEntityRETH>, BotRunnableEntityMixin<MyEntityRETH>]> {
+
+  constructor(factory: EntityFactory, idOrDto: string | object) {
+    // CRITICAL: flat tuples in super(), NOT nested arrays
+    super([factory, idOrDto] as any, ["MyBotName"]);
+  }
+
+  async *run_impl() {
+    // Entity execution logic — async generator
+    yield* await this.runBot("MyBotName", input);
+  }
+}
+```
+
+**CRITICAL**: The `super()` call requires **flat tuples**, NOT nested arrays. This is the most common source of bugs:
+```typescript
+// CORRECT — flat tuples:
+super([factory, idOrDto] as any, ["BotName"]);
+
+// WRONG — nested arrays break entity ID propagation:
+super([[factory, idOrDto], []], ["BotName"]);
+```
+
+### Bot Definition with ComposeMixins
+
+Bots use `ComposeMixins` for combining base bot with mixins like structured output:
+
+```typescript
+import { MixinBot, StructuredOutputBotMixin, RegisterBot } from "@firebrandanalytics/ff-agent-sdk";
+import { ComposeMixins } from "@firebrandanalytics/shared-utils";
+import { z } from "zod";
+import { withSchemaMetadata } from "@firebrandanalytics/ff-agent-sdk";
+
+// Zod schema with metadata for LLM
+const MyOutputSchema = withSchemaMetadata(
+  z.object({
+    summary: z.string().describe("Brief summary"),
+    score: z.number().min(0).max(1).describe("Confidence score"),
+  })
+);
+
+interface MyBotBTH {
+  // Bot type helpers
+}
+
+@RegisterBot
+class MyBot extends ComposeMixins(
+  MixinBot,
+  StructuredOutputBotMixin
+)<[
+  MixinBot<MyBotBTH, [StructuredOutputBotMixin<MyBotBTH, typeof MyOutputSchema>]>,
+  [StructuredOutputBotMixin<MyBotBTH, typeof MyOutputSchema>]
+]> {
+  // Required: return a label for this bot
+  get_semantic_label_impl(): string {
+    return "MyBot";
+  }
+}
+```
+
+**Note**: `get_semantic_label_impl()` is required on all bot subclasses — just return the bot name.
 
 ---
 
@@ -249,86 +314,140 @@ When user asks about workflows:
 
 ## Common Patterns Quick Reference
 
-### Creating and Linking Entities
+### Creating Entities with EntityFactory
 
 ```typescript
-// Create parent entity
-const project = await this.entities.Project.create({
-  name: "My Project",
-  status: "active",
+// In your agent bundle or API endpoint:
+const factory = this.getEntityFactory();
+
+// Create a new entity
+const entity = await factory.create(MyEntity, {
+  name: "my-entity-name",
+  data: { key: "value" },
 });
 
-// Create child with relationship
-const task = await this.entities.Task.create({
-  title: "First Task",
-  project: project,  // Automatic relationship
-});
+// Start a runnable entity (async generator execution)
+await entity.start();
 
-// Query relationships
-const projectTasks = await project.tasks.getAll();
+// Create child entities within run_impl (orchestration)
+async *run_impl() {
+  const child = await this.appendCall(ChildEntity, "child-name", { input: data });
+  yield* await child.start();
+}
 ```
 
-### Running Bots on Entities
+### Entity Graph Relationships
 
 ```typescript
-// Run bot and get result
-const analysis = await this.bots.Analyzer.run(document);
+// appendCall creates a child entity with a "Calls" edge
+const child = await this.appendCall(ChildEntity, "step-1", inputData);
 
-// Run with options
-const result = await this.bots.Processor.run(task, {
-  maxTokens: 4000,
-  temperature: 0.7,
-});
+// appendOrRetrieveCall is idempotent — returns existing if name matches
+const child = await this.appendOrRetrieveCall(ChildEntity, "step-1", inputData);
+
+// Parallel child entities with HierarchicalTaskPoolRunner
+const children = await this.parallelCalls([
+  { entityClass: ImageEntity, name: "image-1", input: prompt1 },
+  { entityClass: ImageEntity, name: "image-2", input: prompt2 },
+]);
 ```
 
-### Parallel Execution
+### Running Bots from Entities
 
 ```typescript
-import { parallel } from "@anthropic/agent-sdk/workflow";
+// In a BotRunnableEntityMixin entity's run_impl:
+async *run_impl() {
+  const request = new BotRequest({
+    id: this.id,
+    input: this.getEntityData(),
+    args: {},
+    context: new Context(),
+  });
 
-// Process multiple entities concurrently
-const results = await parallel(
-  tasks.map(task => () => this.bots.Processor.run(task))
+  // Delegate to the registered bot
+  yield* await this.runBot("MyBotName", request);
+}
+```
+
+### Structured Output with Zod
+
+```typescript
+import { z } from "zod";
+import { withSchemaMetadata } from "@firebrandanalytics/ff-agent-sdk";
+
+// Always wrap schemas with withSchemaMetadata for LLM compatibility
+const AnalysisSchema = withSchemaMetadata(
+  z.object({
+    summary: z.string().describe("One-sentence summary"),
+    confidence: z.number().min(0).max(1).describe("Confidence level"),
+    categories: z.array(z.string()).describe("Relevant categories"),
+  })
 );
 ```
 
-### Waitables for Background Work
+### Constructors Registration Pattern
 
 ```typescript
-// Start background job
-const waitable = await this.bots.LongRunningBot.runAsync(entity);
+// constructors.ts — register all entity and bot classes
+export const constructors = {
+  entities: {
+    MyEntity: MyEntity,
+    ChildEntity: ChildEntity,
+  },
+  bots: {
+    MyBot: MyBot,
+  },
+};
+```
 
-// Check status later
-const status = await waitable.getStatus();
+### Consumer SDK (for Web UIs)
 
-// Wait for completion
-const result = await waitable.wait();
+```typescript
+// In Next.js API routes — server-side only
+import { RemoteAgentBundleClient } from "@firebrandanalytics/ff-sdk";
+
+const client = new RemoteAgentBundleClient(process.env.BUNDLE_URL!);
+
+// call_api_endpoint takes route WITHOUT /api/ prefix
+const result = await client.call_api_endpoint("search", {
+  method: "POST",
+  body: JSON.stringify({ query: "test" }),
+});
 ```
 
 ---
 
 ## Troubleshooting
 
-### "Entity not found" errors
-- Check entity is registered in `AgentBundle.entities`
-- Verify entity constructor decorator: `@EntityConstructor("Name")`
-- Ensure entity was created before querying
+### TypeScript errors on AddMixins/ComposeMixins class extends
+- **Most common cause**: shared-utils version below 4.2.0. Upgrade to 4.2.0+.
+- Check `pnpm list @firebrandanalytics/shared-utils` to verify version
+- The generic type parameter must match the composed class tuple exactly
 
-### "Bot has no tools" warnings
-- Tools must be decorated with `@Tool("description")`
-- Tool methods must be async
-- Check tool is in bot's `tools` array
+### `this.id === undefined` in entity
+- Check `super()` call uses **flat tuples**: `super([factory, idOrDto] as any, ["BotName"])`
+- Nested arrays `super([[factory, idOrDto], []], ...)` silently break ID propagation
+- This is a known SDK issue (ff-agent-sdk#56)
 
-### Type errors with relationships
-- Ensure both entity types are registered
-- Use `@Relationship("EntityName")` decorator
-- Check circular dependency issues
+### `get_semantic_label_impl is not a function`
+- All bot subclasses must implement `get_semantic_label_impl()` returning the bot name
+- This method is undocumented in some SDK versions but required at runtime
+
+### Entity not found / not registered
+- Check entity class is exported from `constructors.ts`
+- Verify the constructor name matches what's referenced in `runBot()` calls
+- Ensure entity class is imported (not just type-imported)
+
+### Bot structured output not parsing
+- Wrap Zod schemas with `withSchemaMetadata()` before passing to ComposeMixins
+- Use `.describe()` on each field — the LLM needs field descriptions
+- Check broker model group is configured and routing to a capable model
 
 ### For deployment/runtime issues
-→ Use the `ff-cli` skill and check:
+Use the `ff-cli` skill and check:
 - `ff-cli ops doctor` for prerequisites
-- Pod logs via `kubectl logs`
-- Environment configuration
+- Pod logs via `ff-cli logs <name>` or `kubectl logs`
+- Environment configuration in `helm/values.local.yaml`
 
 ---
 

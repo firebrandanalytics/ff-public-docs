@@ -220,20 +220,40 @@ Once your control plane is running:
 
 1. **Create an environment** for deploying agent bundles:
    ```bash
+   # List available templates
+   ff-cli env template list
+
+   # Create from a template (e.g., websearch-enabled)
+   ff-cli env create -t <template-name>
+
+   # Or create interactively
    ff-cli environment create --simple
    ```
 
-2. **Create a new project**:
+   **Note**: There's no `env update` command. To change subcharts (e.g., enable websearch after the fact), you must `ff-cli env delete --purge --force` and recreate.
+
+2. **Create the system application** (required for SDK v4):
    ```bash
-   ff-cli project create my-first-app
+   # Port-forward entity-service first
+   ff-cli port-forward firefoundry-core-entity-service 8080:8080 -n ff-test --name entity
+
+   curl -s -X POST http://localhost:8080/api/applications \
+     -H "Content-Type: application/json" \
+     -d '{"id":"a0000000-0000-0000-0000-000000000000","name":"System","type":"system","description":"System application"}'
+   ```
+
+3. **Create a new project**:
+   ```bash
+   ff-cli application create my-first-app --skip-git
    cd my-first-app
+   ff-cli agent-bundle create my-bundle
    pnpm install
    ```
 
-3. **Build and deploy**:
+4. **Build and deploy**:
    ```bash
-   ff-cli ops build my-first-app --minikube
-   ff-cli ops install my-first-app
+   ff-cli ops build
+   ff-cli ops deploy --values local
    ```
 
 ## Troubleshooting
@@ -431,17 +451,53 @@ kubectl get pods -n ff-dev -w
 
 ### Accessing Services
 
-With minikube tunnel running:
+With minikube tunnel running (or use `ff-cli port-forward` for managed port-forwards):
 
 ```bash
 # Start tunnel (separate terminal)
 minikube tunnel
 
-# Port-forward to specific services
-kubectl port-forward -n ff-dev svc/firefoundry-core-ff-broker 50052:50052
-kubectl port-forward -n ff-dev svc/firefoundry-core-context-service 50051:50051
-kubectl port-forward -n ff-dev svc/firefoundry-core-entity-service 8080:8080
+# Port-forward to specific services (prefer ff-cli for managed processes)
+ff-cli port-forward firefoundry-core-kong-proxy 8000:80 -n ff-test --name kong
+ff-cli port-forward firefoundry-core-entity-service 8080:8080 -n ff-test --name entity
+ff-cli port-forward firefoundry-core-ff-broker 50051:50051 -n ff-test --name broker
+
+# Or with raw kubectl:
+kubectl port-forward -n ff-test svc/firefoundry-core-ff-broker 50051:50051
+kubectl port-forward -n ff-test svc/firefoundry-core-context-service 50051:50051
+kubectl port-forward -n ff-test svc/firefoundry-core-entity-service 8080:8080
 ```
+
+**Note**: The broker gRPC port is **50051** (not 50052).
+
+### Post-Install: System Application
+
+SDK v4 agent bundles require the system application `a0000000-0000-0000-0000-000000000000` to exist in entity-service. This is not auto-seeded (ff-services-entity#9). Create it manually after entity-service is running:
+
+```bash
+curl -s -X POST http://localhost:8080/api/applications \
+  -H "Content-Type: application/json" \
+  -d '{"id":"a0000000-0000-0000-0000-000000000000","name":"System","type":"system","description":"System application"}'
+```
+
+### Post-Install: Broker LLM Routing
+
+For agent bundles to make LLM calls, you need at least one model routing chain configured in the broker. Use `ff-cli env broker-config create` to set this up:
+
+```bash
+# Add your LLM provider API key
+ff-cli env broker-secret add <env-name> --key GOOGLE_API_KEY --value <your-key>
+
+# Create a model routing config
+ff-cli env broker-config create --name gemini_completion
+```
+
+**Known issue**: `ff-cli env broker-secret add` may not actually update the K8s secret (ff-cli-go#48). Verify with:
+```bash
+kubectl get secret firefoundry-core-ff-broker-secret -n <namespace> \
+  -o jsonpath='{.data.GOOGLE_API_KEY}' | base64 -d
+```
+If the old value persists, use `kubectl patch secret` directly.
 
 ### Environment Configuration Pattern
 

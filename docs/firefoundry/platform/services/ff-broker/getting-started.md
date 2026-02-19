@@ -22,6 +22,152 @@ curl http://localhost:3000/health
 ff-brk health
 ```
 
+## Quick Setup (Atomic Endpoint)
+
+The setup endpoint creates the entire model routing chain in a single atomic transaction: provider account, deployed model, model group, and member. This is what `ff-cli env broker-config create` uses under the hood.
+
+```
+POST /api/config/setup
+```
+
+### Request Schema
+
+```json
+{
+  "provider": "string (required) — hosting provider code (e.g., 'open-ai', 'vertex-ai', 'azure-openai')",
+  "model": "string (required) — model code from registry (e.g., 'gemini-2.5', 'gpt-4o')",
+  "variant": "string (optional, default: 'standard') — model variant (e.g., 'pro', 'mini')",
+  "auth": {
+    "method": "string (required) — one of: 'env_var', 'service_account', 'google_adc'",
+    "config": "object (required) — provider-specific auth config"
+  },
+  "deployment_config": "object (optional) — extra deployment config merged into deployed_model.config",
+  "model_group": {
+    "name": "string (required) — model group name agents reference as 'modelPool'",
+    "strategy": "string (optional, default: 'round_robin') — selection strategy code"
+  }
+}
+```
+
+### Auth Config by Provider
+
+**OpenAI** (`auth.method: "env_var"`):
+```json
+{ "auth": { "method": "env_var", "config": { "env_var_name": "OPENAI_API_KEY" } } }
+```
+
+**Google AI Studio / Gemini** (`auth.method: "env_var"`):
+```json
+{ "auth": { "method": "env_var", "config": { "env_var_name": "GOOGLE_API_KEY" } } }
+```
+
+**Vertex AI** (`auth.method: "google_adc"`):
+```json
+{ "auth": { "method": "google_adc", "config": { "project_id": "your-gcp-project" } } }
+```
+
+**Azure OpenAI** (`auth.method: "env_var"`):
+```json
+{ "auth": { "method": "env_var", "config": { "env_var_name": "AZURE_OPENAI_API_KEY" } } }
+```
+
+### Complete Examples
+
+**Gemini 2.5 Pro (text completion via Google AI Studio):**
+```bash
+curl -X POST http://localhost:3000/api/config/setup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "vertex-ai",
+    "model": "gemini-2.5",
+    "variant": "pro",
+    "auth": { "method": "env_var", "config": { "env_var_name": "GOOGLE_API_KEY" } },
+    "model_group": { "name": "gemini_completion", "strategy": "round_robin" }
+  }'
+```
+
+**OpenAI GPT-4o (text completion):**
+```bash
+curl -X POST http://localhost:3000/api/config/setup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "open-ai",
+    "model": "gpt-4o",
+    "auth": { "method": "env_var", "config": { "env_var_name": "OPENAI_API_KEY" } },
+    "model_group": { "name": "openai_completion", "strategy": "round_robin" }
+  }'
+```
+
+**OpenAI GPT Image 1.5 (image generation):**
+```bash
+curl -X POST http://localhost:3000/api/config/setup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "open-ai",
+    "model": "gpt-image-1.5",
+    "auth": { "method": "env_var", "config": { "env_var_name": "OPENAI_API_KEY" } },
+    "model_group": { "name": "image_generation", "strategy": "round_robin" }
+  }'
+```
+
+**Add a second model to an existing group (failover):**
+```bash
+curl -X POST http://localhost:3000/api/config/setup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "open-ai",
+    "model": "gpt-4o",
+    "variant": "mini",
+    "auth": { "method": "env_var", "config": { "env_var_name": "OPENAI_API_KEY" } },
+    "model_group": { "name": "openai_completion", "strategy": "failover" }
+  }'
+```
+
+Note: If the model group already exists, the strategy field is ignored and a warning is returned.
+
+### Response
+
+```json
+{
+  "provider_account": { "id": 1, "code": "vertex-ai-env_var", "created": true },
+  "deployed_model": { "id": 1, "name": "vertex-ai-gemini-2.5-pro", "hosted_model_id": 6, "created": true },
+  "model_group": { "id": 1, "name": "gemini_completion", "strategy": "round_robin", "created": true },
+  "member": { "id": 1, "sequence_order": 1, "created": true },
+  "warnings": []
+}
+```
+
+The `created` fields indicate whether each resource was newly created or already existed (idempotent upsert).
+
+### Using ff-cli
+
+The CLI wraps the setup endpoint — it auto-discovers the broker via port-forward:
+
+```bash
+ff-cli env broker-config create --name gemini_completion
+```
+
+### What the Setup Endpoint Does (10 Steps)
+
+1. Resolves the hosted model from the registry (provider + model + variant)
+2. Validates the provider has a ProviderClassMapper implementation (warns if not)
+3. Validates auth config against provider requirements
+4. Validates deployment config if provided
+5. Upserts provider_account (creates or updates auth config)
+6. Upserts deployed_model (creates or updates config, auto-populates `{ "model": "<model>-<variant>" }`)
+7. Links provider_account to deployed_model
+8. Resolves the selection strategy (round_robin, failover, etc.)
+9. Upserts model_group (creates or reuses existing)
+10. Upserts model_group_member (links deployed_model to model_group)
+
+All steps run in a single database transaction — if any step fails, nothing is committed.
+
+---
+
+## Manual Step-by-Step Setup
+
+If you need more control over individual resources, use the granular endpoints below.
+
 ## Step 2: Register a Customer
 
 Before routing requests, you need a customer record in the database. Use the HTTP config API:

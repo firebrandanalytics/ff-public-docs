@@ -95,6 +95,14 @@ Image generation with blob storage integration.
 
 The HTTP Config Server provides REST endpoints for broker configuration management. Default port: `3000`.
 
+### Setup Endpoint (Atomic)
+
+| Method | Path | Description |
+|-|-|-|
+| POST | `/api/config/setup` | Atomic model routing chain setup (provider account + deployed model + model group + member) |
+
+**Request body**: See [Getting Started — Quick Setup](./getting-started.md#quick-setup-atomic-endpoint) for full schema and examples.
+
 ### Customer Endpoints
 
 | Method | Path | Description |
