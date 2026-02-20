@@ -87,52 +87,7 @@ You should see both packages build successfully:
 
 ## Understanding the Generated Code
 
-Let's review the three files ff-cli generated in `apps/coder-bundle/src/`.
-
-### `index.ts` -- Server Entry Point
-
-```typescript
-import {
-  createStandaloneAgentBundle,
-  logger,
-} from "@firebrandanalytics/ff-agent-sdk";
-import { CoderBundleAgentBundle } from "./agent-bundle.js";
-
-const port = parseInt(process.env.PORT || "3000", 10);
-
-async function startServer() {
-  try {
-    logger.info(`Starting CoderBundle server on port ${port}`);
-
-    const server = await createStandaloneAgentBundle(
-      CoderBundleAgentBundle,
-      { port }
-    );
-
-    logger.info(`CoderBundle server running on port ${port}`);
-    logger.info(`Health check: http://localhost:${port}/health`);
-    logger.info(`Ready check: http://localhost:${port}/ready`);
-    logger.info(`Invoke endpoint: http://localhost:${port}/invoke`);
-
-    process.on("SIGTERM", async () => {
-      logger.info("SIGTERM received, shutting down gracefully");
-      process.exit(0);
-    });
-
-    process.on("SIGINT", async () => {
-      logger.info("SIGINT received, shutting down gracefully");
-      process.exit(0);
-    });
-  } catch (error) {
-    logger.error("Failed to start server:", error);
-    process.exit(1);
-  }
-}
-
-startServer();
-```
-
-`createStandaloneAgentBundle` wraps your agent bundle in an Express server with built-in health, ready, invoke, and API endpoints.
+The scaffolded bundle includes `index.ts` (server entry point), `agent-bundle.ts` (bundle class), and `constructors.ts` (entity registry). The server entry point is standard boilerplate -- let's focus on the two files you'll modify.
 
 ### `agent-bundle.ts` -- Bundle Class
 
@@ -145,20 +100,20 @@ import {
 } from "@firebrandanalytics/ff-agent-sdk";
 import { CoderBundleConstructors } from "./constructors.js";
 
-const APP_ID = "37f3b877-f486-4bb7-a86b-173b48cc094d";
+const AGENT_BUNDLE_ID = "37f3b877-f486-4bb7-a86b-173b48cc094d";
 
 export class CoderBundleAgentBundle extends FFAgentBundle<any> {
   constructor() {
     super(
       {
-        id: APP_ID,
-        application_id: APP_ID,
+        id: AGENT_BUNDLE_ID,
+        application_id: AGENT_BUNDLE_ID,
         name: "CoderBundle",
         type: "agent_bundle",
         description: "Code sandbox demo using GeneralCoderBot and Code Sandbox Service",
       },
       CoderBundleConstructors,
-      createEntityClient(APP_ID)
+      createEntityClient(AGENT_BUNDLE_ID)
     );
   }
 
@@ -170,8 +125,8 @@ export class CoderBundleAgentBundle extends FFAgentBundle<any> {
 ```
 
 Key points:
-- `APP_ID` is a UUID that uniquely identifies this bundle in the FireFoundry cluster
-- `createEntityClient(APP_ID)` connects to the Entity Service for persistence (no direct database access)
+- `AGENT_BUNDLE_ID` is a UUID that uniquely identifies this agent bundle. The `application_id` references the parent application that contains this bundle.
+- `createEntityClient(AGENT_BUNDLE_ID)` connects to the Entity Service for entity persistence
 - `CoderBundleConstructors` is where we'll register our custom entity types
 
 ### `constructors.ts` -- Entity Registry
@@ -190,8 +145,6 @@ export const CoderBundleConstructors = {
 ## Key Points
 
 > **ff-cli does the scaffolding** -- Always use `ff-cli application create` and `ff-cli agent-bundle create` for new projects. This ensures the correct monorepo structure, build configuration, and deployment files.
-
-> **No direct database access** -- All entity persistence goes through `createEntityClient()` which communicates with the Entity Service. Never connect directly to PostgreSQL from your agent bundle.
 
 ---
 
