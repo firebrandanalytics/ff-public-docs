@@ -55,12 +55,17 @@ apps/coder-bundle/
 
 ## Add Dependencies
 
-The coder bundle needs two additional FireFoundry packages beyond the base SDK:
+The coder bundle needs one additional FireFoundry package beyond the base SDK:
 
 - `@firebrandanalytics/ff-sandbox-client` -- client library for the Code Sandbox Service
-- `@firebrandanalytics/shared-types` and `@firebrandanalytics/shared-utils` -- platform types and utilities
 
-Update `apps/coder-bundle/package.json` to include these dependencies:
+Add it to `apps/coder-bundle/package.json`:
+
+```bash
+pnpm add @firebrandanalytics/ff-sandbox-client
+```
+
+Your dependencies section should look like:
 
 ```json
 {
@@ -69,46 +74,13 @@ Update `apps/coder-bundle/package.json` to include these dependencies:
     "@firebrandanalytics/shared-types": "^2.1.1",
     "@firebrandanalytics/shared-utils": "^4.1.1",
     "@firebrandanalytics/ff-sandbox-client": "^0.1.0",
-    "@shared/types": "workspace:*",
     "express": "^4.18.2",
     "zod": "^3.22.4"
   }
 }
 ```
 
-> **Note**: If you're using a local SDK build (e.g., a `.tgz` file), change the SDK and sandbox client dependencies to file references:
-> ```json
-> "@firebrandanalytics/ff-agent-sdk": "file:../../packages/firebrandanalytics-ff-agent-sdk-4.2.3.tgz",
-> "@firebrandanalytics/ff-sandbox-client": "file:../../packages/firebrandanalytics-ff-sandbox-client-0.1.0.tgz"
-> ```
-
-## Configure npm Registry
-
-The `.npmrc` file at the project root configures access to FireFoundry's private npm packages on GitHub Packages:
-
-```ini
-@firebrandanalytics:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=${NPM_GITHUB_TOKEN}
-```
-
-Make sure the `NPM_GITHUB_TOKEN` environment variable is set in your shell with a GitHub Personal Access Token that has `read:packages` scope.
-
-## Handle Workspace Protocol Overrides
-
-Some published FireFoundry packages internally reference other packages using pnpm's `workspace:*` protocol. When consumed outside the FireFoundry SDK monorepo, these references need to be resolved.
-
-Add pnpm overrides to the root `package.json`:
-
-```json
-{
-  "pnpm": {
-    "overrides": {
-      "@firebrandanalytics/shared-types": "^2.1.1",
-      "@firebrandanalytics/shared-utils": "^4.1.1"
-    }
-  }
-}
-```
+> **Note**: `ff-cli application create` automatically configures npm registry access for FireFoundry packages. If you run into authentication issues during install, see the [Local Development Guide](../../guides/local_dev_setup.md) for registry setup instructions.
 
 ## Install and Build
 
@@ -228,7 +200,7 @@ export const CoderBundleConstructors = {
 } as const;
 ```
 
-`FFConstructors` provides the base entity types. We'll add `CodeTaskEntity` here in Part 4.
+`FFConstructors` provides the base entity types. We'll add `CodeTaskEntity` and `DataScienceTaskEntity` here in Part 4.
 
 ## Key Points
 

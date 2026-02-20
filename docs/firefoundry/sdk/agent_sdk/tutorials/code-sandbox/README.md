@@ -1,28 +1,38 @@
 # Code Sandbox Tutorial
 
-Build a code generation and execution agent bundle using the CoderBot hierarchy and Code Sandbox Service. The bundle includes two bots: a TypeScript bot for general computation and a Python data science bot that queries a database through the Data Access Service (DAS).
+Imagine asking a question in plain English -- *"What is the average order value by customer segment?"* -- and getting back a precise, data-driven answer seconds later. Behind the scenes, an LLM writes Python code, executes it against a real database, and returns the result. No notebooks, no manual queries, no context-switching.
+
+That's what you'll build in this tutorial: an AI-powered agent that turns natural language into executable code, runs it in a secure sandbox, and hands back structured results. You'll actually build two agents -- a **TypeScript bot** for general computation and a **Python data science bot** that queries a live database using pandas, numpy, and the Data Access Service (DAS).
+
+By the end, you'll have a working REST API where you can POST a question like *"Which customer segment has the highest return rate?"* and get back a JSON response with the answer.
 
 ## What You'll Learn
 
-- Using the `GeneralCoderBot` variant for language-configurable code generation
-- Creating prompts that produce the two-block output format CoderBot expects (JSON metadata + code block)
+- Turning natural language prompts into executable code with `GeneralCoderBot`
+- Writing prompts that produce the two-block output format CoderBot expects (JSON metadata + code block)
 - Building a data science prompt with database schema context and DAS query instructions
-- Configuring **profiles** for sandbox execution (runtime, harness, and DAS connections)
+- Configuring **profiles** so the sandbox knows which runtime, harness, and database connections to use
 - Wiring entities to bots with `BotRunnableEntityMixin` and `@RegisterBot`
-- Configuring working memory paths for code storage before sandbox execution
-- Integrating with the Code Sandbox Service via `@firebrandanalytics/ff-sandbox-client`
+- Executing generated code safely in the Code Sandbox Service
 - Building custom API endpoints with `@ApiEndpoint`
 
 ## What You'll Build
 
-An agent bundle with:
+An agent bundle with two endpoints:
 
-- **CodeTaskEntity** -- stores the user prompt and orchestrates TypeScript code generation + execution
-- **DataScienceTaskEntity** -- stores the user prompt and orchestrates Python data science analysis
-- **DemoCoderBot** -- a `GeneralCoderBot` that generates and executes TypeScript code using the `finance-typescript` profile
-- **DemoDataScienceBot** -- a `GeneralCoderBot` that generates Python+pandas code, queries a database via DAS, and returns analysis results using the `firekicks-datascience` profile
-- **CoderPrompt** -- instructs the LLM to produce JSON metadata and a TypeScript code block
-- **DataScienceCoderPrompt** -- instructs the LLM to produce Python code that queries via DAS and performs data analysis
+- **`POST /api/execute`** -- accepts a natural language prompt, generates TypeScript code, executes it, and returns the result
+- **`POST /api/analyze`** -- accepts a data science question, generates Python+pandas code that queries a database via DAS, and returns the analysis
+
+Under the hood:
+
+| Component | Purpose |
+|-----------|---------|
+| **CoderPrompt** | Instructs the LLM to produce TypeScript code |
+| **DataScienceCoderPrompt** | Instructs the LLM to produce Python code with DAS queries |
+| **DemoCoderBot** | Generates and executes TypeScript via the `finance-typescript` profile |
+| **DemoDataScienceBot** | Generates and executes Python via the `firekicks-datascience` profile |
+| **CodeTaskEntity** | Orchestrates TypeScript code generation + execution |
+| **DataScienceTaskEntity** | Orchestrates Python data science analysis |
 
 ## Prerequisites
 

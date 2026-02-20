@@ -63,7 +63,6 @@ Edit `helm/secrets.yaml` with your Entity Service and other connection details.
 Build the agent bundle Docker image, targeting the minikube Docker daemon:
 
 ```bash
-export GITHUB_TOKEN=$NPM_GITHUB_TOKEN
 ff-cli ops build coder-bundle --profile minikube
 ```
 
