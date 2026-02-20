@@ -1,6 +1,6 @@
 # Part 4: Entity & Bundle
 
-In this part, you'll create `CodeTaskEntity` and `DataScienceTaskEntity` to connect user prompts to the bots, update the constructors registry, wire the agent bundle with API endpoints, and verify the full build.
+In this part, you'll create `CodeTaskEntity` and `DataScienceTaskEntity` to connect user requests to the bots, update the constructors registry, wire the agent bundle with API endpoints, and verify the full build.
 
 ## Understanding the Entity-Bot Connection
 
@@ -416,10 +416,11 @@ POST /api/execute { "prompt": "Calculate Fibonacci" }
        |             |
        |             v
        |        DemoCoderBot (GeneralCoderBot)
+       |             |-- Intrinsic prompt (output format, run() contract)
        |             |-- Send prompt to LLM via broker
        |             |-- LLM returns JSON + TypeScript code
        |             |-- CoderBot postprocesses:
-       |             |     extract → validate → store → execute → return
+       |             |     extract -> validate -> store -> execute -> return
        |             |
        |             v
        |        GeneralCoderOutput { description, result, stdout }
@@ -449,10 +450,11 @@ POST /api/analyze { "prompt": "What is the average order value by segment?" }
        |             |
        |             v
        |        DemoDataScienceBot (GeneralCoderBot)
+       |             |-- Intrinsic prompt + domain prompt (schema, DAS)
        |             |-- Send prompt to LLM via broker
        |             |-- LLM returns JSON + Python code
        |             |-- CoderBot postprocesses:
-       |             |     extract → validate → store → execute → return
+       |             |     extract -> validate -> store -> execute -> return
        |             |-- Sandbox provides das['firekicks'] client
        |             |-- Python code calls das['firekicks'].query_df(...)
        |             |

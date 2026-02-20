@@ -53,19 +53,9 @@ apps/coder-bundle/
   firefoundry.json
 ```
 
-## Add Dependencies
+## Dependencies
 
-The coder bundle needs one additional FireFoundry package beyond the base SDK:
-
-- `@firebrandanalytics/ff-sandbox-client` -- client library for the Code Sandbox Service
-
-Add it to `apps/coder-bundle/package.json`:
-
-```bash
-pnpm add @firebrandanalytics/ff-sandbox-client
-```
-
-Your dependencies section should look like:
+The scaffolded `package.json` already includes the required dependencies. No additional packages are needed -- `GeneralCoderBot` manages its own sandbox client internally.
 
 ```json
 {
@@ -73,7 +63,6 @@ Your dependencies section should look like:
     "@firebrandanalytics/ff-agent-sdk": "^4.2.0",
     "@firebrandanalytics/shared-types": "^2.1.1",
     "@firebrandanalytics/shared-utils": "^4.1.1",
-    "@firebrandanalytics/ff-sandbox-client": "^0.1.0",
     "express": "^4.18.2",
     "zod": "^3.22.4"
   }
@@ -210,4 +199,4 @@ export const CoderBundleConstructors = {
 
 ---
 
-**Next:** [Part 2: The Prompt](./part-02-prompt.md) -- Create the prompt that instructs the LLM to generate code in the format CoderBot expects.
+**Next:** [Part 2: The Domain Prompt](./part-02-prompt.md) -- Learn how GeneralCoderBot handles intrinsic prompts and how to write a domain prompt for your use case.

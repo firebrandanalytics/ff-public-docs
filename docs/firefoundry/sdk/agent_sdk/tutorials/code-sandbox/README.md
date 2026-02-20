@@ -9,9 +9,8 @@ By the end, you'll have a working REST API where you can POST a question like *"
 ## What You'll Learn
 
 - Turning natural language prompts into executable code with `GeneralCoderBot`
-- Writing prompts that produce the two-block output format CoderBot expects (JSON metadata + code block)
-- Building a data science prompt with database schema context and DAS query instructions
-- Configuring **profiles** so the sandbox knows which runtime, harness, and database connections to use
+- Writing domain prompts that provide schema context and data access instructions
+- Using **profiles** as the single source of truth for language, runtime, harness, and DAS connections
 - Wiring entities to bots with `BotRunnableEntityMixin` and `@RegisterBot`
 - Executing generated code safely in the Code Sandbox Service
 - Building custom API endpoints with `@ApiEndpoint`
@@ -27,10 +26,8 @@ Under the hood:
 
 | Component | Purpose |
 |-----------|---------|
-| **CoderPrompt** | Instructs the LLM to produce TypeScript code |
-| **DataScienceCoderPrompt** | Instructs the LLM to produce Python code with DAS queries |
 | **DemoCoderBot** | Generates and executes TypeScript via the `finance-typescript` profile |
-| **DemoDataScienceBot** | Generates and executes Python via the `firekicks-datascience` profile |
+| **DemoDataScienceBot** | Generates and executes Python via the `firekicks-datascience` profile, with a domain prompt providing schema and DAS context |
 | **CodeTaskEntity** | Orchestrates TypeScript code generation + execution |
 | **DataScienceTaskEntity** | Orchestrates Python data science analysis |
 
@@ -46,8 +43,8 @@ Under the hood:
 | Part | Title | Topics |
 |------|-------|--------|
 | [Part 1](./part-01-setup.md) | Project Setup | Scaffolding with ff-cli, SDK dependency wiring, project structure |
-| [Part 2](./part-02-prompt.md) | The Prompt | CoderBot output format, PromptTemplateSectionNode, CoderPrompt, DataScienceCoderPrompt |
-| [Part 3](./part-03-bot.md) | The Bot | GeneralCoderBot, SandboxClient, profiles, @RegisterBot |
+| [Part 2](./part-02-prompt.md) | The Domain Prompt | CoderBot intrinsic prompts, domain prompt design, schema context, DAS instructions |
+| [Part 3](./part-03-bot.md) | The Bot | GeneralCoderBot, profile-driven constructor, @RegisterBot |
 | [Part 4](./part-04-entity-and-bundle.md) | Entity & Bundle | CodeTaskEntity, DataScienceTaskEntity, BotRunnableEntityMixin, agent bundle wiring, API endpoints |
 | [Part 5](./part-05-deploy-and-test.md) | Deploy & Test | Local cluster setup, deployment with ff-cli, testing with curl |
 
@@ -69,9 +66,11 @@ CodeTaskEntity.run()     DataScienceTaskEntity.run()
 DemoCoderBot             DemoDataScienceBot
   (TypeScript)              (Python)
        |                       |
-       |-- CoderPrompt         |-- DataScienceCoderPrompt
-       |-- LLM call            |-- LLM call
-       |                       |
+       |-- profile:            |-- profile:
+       |   finance-typescript  |   firekicks-datascience
+       |-- intrinsic prompt    |-- intrinsic prompt
+       |-- LLM call            |-- domain prompt (schema)
+       |                       |-- LLM call
        v                       v
 Code Sandbox Service     Code Sandbox Service
   profile:                 profile:
@@ -79,7 +78,7 @@ Code Sandbox Service     Code Sandbox Service
        |                       |
        v                       v
   TypeScript harness       Python harness
-  (isolated execution)     (DAS → database queries)
+  (isolated execution)     (DAS -> database queries)
        |                       |
        v                       v
 Execution Result         Execution Result

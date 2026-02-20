@@ -1,76 +1,35 @@
 # Part 3: The Bot
 
-In this part, you'll create `DemoCoderBot` and `DemoDataScienceBot` -- two `GeneralCoderBot` variants wired to the prompts from Part 2 and the Code Sandbox Service.
+In this part, you'll create `DemoCoderBot` and `DemoDataScienceBot` using `GeneralCoderBot`'s profile-driven constructor.
 
 ## Understanding GeneralCoderBot
 
-`GeneralCoderBot` is a ready-made CoderBot variant designed for general-purpose code generation. It provides:
+`GeneralCoderBot` is a ready-made CoderBot variant designed for profile-driven code generation. It handles:
 
-- **Language configuration** -- TypeScript or Python
-- **Harness selection** -- determines the execution environment (`finance`, `datascience`)
-- **Profile support** -- named configurations that bundle runtime, harness, and DAS connections
-- **Module import preamble** -- auto-prepended to generated code
-- **Run script** -- calls your generated `run()` function
+- **Profile metadata** -- fetches language, harness, DAS connections, and run script contract from the sandbox manager at initialization
+- **SandboxClient** -- self-creates from environment variables (`CODE_SANDBOX_URL`)
+- **Intrinsic prompts** -- output format and `run()` contract (built automatically)
 - **Result processing** -- extracts `{ description, result, stdout, metadata }`
 
 You don't need to implement the 9-stage postprocessing pipeline -- that's inherited from `CoderBot`. You just need to:
 
-1. Create a `PromptGroup` with your system prompt and user input
-2. Instantiate `GeneralCoderBot` with the prompt group and a `SandboxClient`
-3. Configure the `profile` for sandbox execution
-4. Register it with `@RegisterBot` so entities can look it up
+1. Choose a profile (determines language, runtime, harness, DAS connections)
+2. Optionally provide a domain prompt (for domain-specific context)
+3. Register with `@RegisterBot` so entities can look it up
 
 ## Creating DemoCoderBot
 
 Create the file `apps/coder-bundle/src/bots/DemoCoderBot.ts`:
 
 ```typescript
-import {
-  GeneralCoderBot,
-  PromptGroup,
-  Prompt,
-  PromptTemplateTextNode,
-  RegisterBot,
-} from "@firebrandanalytics/ff-agent-sdk";
-import type { CODER_PTH } from "@firebrandanalytics/ff-agent-sdk";
-import { SandboxClient } from "@firebrandanalytics/ff-sandbox-client";
-import { CoderPrompt } from "../prompts/CoderPrompt.js";
-
-// Build the prompt group.
-// The system section carries the CoderPrompt instructions.
-// The input section carries the user's natural language request.
-const systemPrompt = new CoderPrompt("system");
-
-const inputPrompt = new Prompt<CODER_PTH>({
-  role: "user",
-  static_args: {},
-});
-inputPrompt.add_section(
-  new PromptTemplateTextNode<CODER_PTH>({
-    content: (request) => request.input as string,
-  })
-);
-
-const coderPromptGroup = new PromptGroup<CODER_PTH>([
-  { name: "coder_system", prompt: systemPrompt as any },
-  { name: "coder_input", prompt: inputPrompt },
-]);
-
-// Create the sandbox client.
-const sandboxClient = new SandboxClient({
-  serviceUrl: process.env.CODE_SANDBOX_URL || "http://code-sandbox-manager:8080",
-  apiKey: process.env.CODE_SANDBOX_API_KEY || "sandbox-dev-api-key",
-});
+import { GeneralCoderBot, RegisterBot } from "@firebrandanalytics/ff-agent-sdk";
 
 /**
- * DemoCoderBot -- TypeScript code generation and execution bot.
+ * DemoCoderBot -- TypeScript code generation and execution.
  *
- * Uses the v2 profile API — the `finance-typescript` profile provides
- * the TypeScript finance harness for code execution.
- *
- * @RegisterBot makes this bot discoverable by BotRunnableEntityMixin.
- * When CodeTaskEntity calls entity.run(), the mixin looks up "DemoCoderBot"
- * from the global registry and invokes it.
+ * Profile-driven: the `finance-typescript` profile resolves runtime,
+ * harness, and execution environment. No domain prompt needed for
+ * general-purpose TypeScript computation.
  */
 @RegisterBot("DemoCoderBot")
 export class DemoCoderBot extends GeneralCoderBot {
@@ -78,50 +37,47 @@ export class DemoCoderBot extends GeneralCoderBot {
     super({
       name: "DemoCoderBot",
       modelPoolName: "firebrand-gpt-5.2-failover",
-      promptGroup: coderPromptGroup,
-      sandboxClient: sandboxClient,
-      language: "typescript",
-      harness: "finance",
       profile: process.env.CODE_SANDBOX_TS_PROFILE || "finance-typescript",
-      maxTries: 5,
-      maxSandboxRetries: 3,
     });
-  }
-
-  public override get_semantic_label_impl(): string {
-    return "DemoCoderBot";
   }
 }
 ```
 
-### Walkthrough
+That's the entire bot. Three constructor args: `name`, `modelPoolName`, and `profile`.
 
-**PromptGroup construction:**
+### What the Profile Provides
 
-The `PromptGroup` combines two prompts into a chat conversation:
-1. `coder_system` -- the `CoderPrompt` from Part 2, rendered as a system message
-2. `coder_input` -- a user message containing the natural language request
+When `DemoCoderBot.init()` runs, it fetches metadata from the sandbox manager:
 
-The `PromptTemplateTextNode` with `content: (request) => request.input as string` dynamically renders the user's input text at request time. The `request.input` comes from the entity's `get_bot_request_args()` method (covered in Part 4).
+```
+GET /profiles/finance-typescript/metadata
+→ {
+    "language": "typescript",
+    "harness": "finance",
+    "runScriptPrompt": "Export an async run() function...",
+    "dasConnections": []
+  }
+```
 
-**Type casting:**
+GeneralCoderBot uses this to:
+- Set the target language for code generation
+- Build intrinsic prompt sections (output format, `run()` contract from `runScriptPrompt`)
+- Know which DAS connections are available (none, for TypeScript)
 
-The `as any` cast on the system prompt bridges the prompt's simple `PromptTypeHelper<string, {}>` to the bot's `CODER_PTH` type. This is safe because the prompt doesn't reference any of the extra CoderPromptArgs fields.
+### What You Don't Need to Provide
 
-**SandboxClient:**
+Compare this to what was required before the profile-driven refactor:
 
-The client is created with a `serviceUrl` pointing to the Code Sandbox Manager service. In production, this is a Kubernetes service URL configured via environment variables. The default points to `code-sandbox-manager:8080`.
+| Before | Now |
+|--------|-----|
+| Create a `PromptGroup` with system + user prompts | Handled intrinsically |
+| Instantiate `SandboxClient` with URL and API key | Self-created from env vars |
+| Specify `language: "typescript"` | From profile metadata |
+| Specify `harness: "finance"` | From profile metadata |
+| Write output format prompt sections | Built automatically |
+| Write `run()` contract instructions | From `runScriptPrompt` metadata |
 
-**Profile configuration:**
-
-The `profile` field tells the sandbox which named configuration to use for execution. Profiles are created in the Code Sandbox Manager's admin API and bundle together:
-- A **runtime** (Kubernetes pod template with resource limits)
-- A **harness** (TypeScript or Python execution environment)
-- **DAS connections** (database access via Data Access Service)
-
-By using profiles, the bot never handles database credentials or runtime configuration directly.
-
-**@RegisterBot:**
+### `@RegisterBot`
 
 The decorator registers `DemoCoderBot` in the global component registry. When `CodeTaskEntity` (Part 4) uses `BotRunnableEntityMixin` with bot name `"DemoCoderBot"`, the mixin calls `FFAgentBundle.getBotOrThrow("DemoCoderBot")` to retrieve this instance.
 
@@ -130,49 +86,16 @@ The decorator registers `DemoCoderBot` in the global component registry. When `C
 Create the file `apps/coder-bundle/src/bots/DemoDataScienceBot.ts`:
 
 ```typescript
-import {
-  GeneralCoderBot,
-  PromptGroup,
-  Prompt,
-  PromptTemplateTextNode,
-  RegisterBot,
-} from "@firebrandanalytics/ff-agent-sdk";
-import type { CODER_PTH } from "@firebrandanalytics/ff-agent-sdk";
-import { SandboxClient } from "@firebrandanalytics/ff-sandbox-client";
-import { DataScienceCoderPrompt } from "../prompts/DataScienceCoderPrompt.js";
-
-// Build the prompt group.
-const systemPrompt = new DataScienceCoderPrompt("system");
-
-const inputPrompt = new Prompt<CODER_PTH>({
-  role: "user",
-  static_args: {},
-});
-inputPrompt.add_section(
-  new PromptTemplateTextNode<CODER_PTH>({
-    content: (request) => request.input as string,
-  })
-);
-
-const dataSciencePromptGroup = new PromptGroup<CODER_PTH>([
-  { name: "datasci_system", prompt: systemPrompt as any },
-  { name: "datasci_input", prompt: inputPrompt },
-]);
-
-// Create the sandbox client.
-const sandboxClient = new SandboxClient({
-  serviceUrl: process.env.CODE_SANDBOX_URL || "http://code-sandbox-manager:8080",
-  apiKey: process.env.CODE_SANDBOX_API_KEY || "sandbox-dev-api-key",
-});
+import { GeneralCoderBot, RegisterBot } from "@firebrandanalytics/ff-agent-sdk";
 
 /**
- * DemoDataScienceBot -- Python data science code generation and execution bot.
+ * DemoDataScienceBot -- Python data science code generation and execution.
  *
- * Generates Python+pandas code that queries the database via DAS
- * and performs data analysis (correlations, regressions, aggregations, etc.).
+ * Profile-driven: the `firekicks-datascience` profile resolves runtime,
+ * harness, DAS connections, and execution environment.
  *
- * Uses the v2 profile API — the `firekicks-datascience` profile provides
- * frozen DAS clients to the execution context. No raw DB credentials needed.
+ * The domain prompt provides the database schema, DAS usage patterns,
+ * and data handling guidance specific to FireKicks.
  */
 @RegisterBot("DemoDataScienceBot")
 export class DemoDataScienceBot extends GeneralCoderBot {
@@ -180,34 +103,76 @@ export class DemoDataScienceBot extends GeneralCoderBot {
     super({
       name: "DemoDataScienceBot",
       modelPoolName: "firebrand-gpt-5.2-failover",
-      promptGroup: dataSciencePromptGroup,
-      sandboxClient: sandboxClient,
-      language: "python",
-      harness: "datascience",
       profile: process.env.CODE_SANDBOX_DS_PROFILE || "firekicks-datascience",
-      maxTries: 5,
-      maxSandboxRetries: 3,
+      domainPrompt: FIREKICKS_DOMAIN_PROMPT,
     });
   }
-
-  public override get_semantic_label_impl(): string {
-    return "DemoDataScienceBot";
-  }
 }
+
+// ---------------------------------------------------------------------------
+// Domain prompt — FireKicks data science context
+// ---------------------------------------------------------------------------
+
+const FIREKICKS_DOMAIN_PROMPT = `You are a data science assistant for FireKicks, an athletic footwear company.
+You receive natural language questions about the FireKicks business and produce Python code that queries the database and performs analysis.
+
+## Querying Data
+
+Use the DAS (Data Access Service) client for all database queries:
+- \`das['firekicks'].query_df('SELECT ...')\` returns a pandas DataFrame
+- \`das['firekicks'].query_rows('SELECT ...')\` returns a list of dicts
+- Do NOT use \`dbs[]\` or any direct database connection — always use \`das[]\`
+
+Import packages you need at the top of your code (e.g., \`import pandas as pd\`).
+
+## Database Schema (FireKicks - PostgreSQL)
+
+customers (customer_id PK, first_name, last_name, email, phone, date_of_birth, gender, registration_date, customer_segment [premium|athlete|bargain-hunter|regular], lifetime_value, preferred_channel, city, state, zip_code)
+orders (order_id PK, customer_id FK→customers, order_date, order_channel, retail_partner_id FK→retail_partners NULL, subtotal, tax_amount, shipping_cost, discount_amount, total_amount, order_status)
+order_items (order_item_id PK, order_id FK→orders, product_id FK→products, quantity, unit_price, discount_applied, line_total)
+products (product_id PK, product_name, category, subcategory, brand_line, base_cost, msrp, release_date, discontinued_date, color_variant, size_range, supplier_id FK→product_suppliers)
+product_reviews (review_id PK, product_id FK→products, customer_id FK→customers, rating [1-5], review_date, review_text, verified_purchase)
+returns (return_id PK, order_id FK→orders, product_id FK→products, return_date, reason, refund_amount)
+inventory (inventory_id PK, product_id FK→products, warehouse_location, quantity_on_hand, reorder_point, last_restocked_date)
+campaigns (campaign_id PK, campaign_name, campaign_type, start_date, end_date, budget, target_segment, channel)
+campaign_performance (performance_id PK, campaign_id FK→campaigns, date, impressions, clicks, conversions, spend, revenue_attributed)
+email_events (event_id PK, campaign_id FK→campaigns, customer_id FK→customers, event_type, event_timestamp)
+customer_preferences (preference_id PK, customer_id FK→customers, preferred_category, shoe_size, price_sensitivity, brand_loyalty_score)
+customer_segments_history (segment_history_id PK, customer_id FK→customers, segment, segment_start_date, segment_end_date, reason_for_change)
+customer_acquisition (acquisition_id PK, date, channel, new_customers, acquisition_cost, first_purchase_revenue)
+customer_addresses (address_id PK, customer_id FK→customers, street_address, city, state, zip_code, country, is_primary)
+daily_sales_summary (summary_date PK, channel, total_orders, total_revenue, total_cost, total_profit, avg_order_value)
+monthly_financials (month_date PK, revenue, cogs, marketing_expense, operations_expense, shipping_expense, net_profit, profit_margin)
+shipping_performance (shipment_id PK, order_id FK→orders, ship_date, delivery_date, carrier, shipping_method, on_time)
+retail_partners (retail_partner_id PK, partner_name, partner_type, city, state, commission_rate, partnership_start_date)
+product_suppliers (supplier_id PK, supplier_name, country, lead_time_days, quality_rating, primary_material)
+website_traffic (traffic_id PK, date, sessions, unique_visitors, page_views, bounce_rate, avg_session_duration, conversion_rate)
+
+Views: product_performance (pre-aggregated product stats), campaign_roi_summary (campaign ROI), customer_nearest_store (spatial join).
+
+~10,000 customers, ~131,000 orders, ~200 products, ~50,000 reviews, ~10,000 returns.
+
+## Data Handling Rules
+
+- Return JSON-serializable results. Use \`.to_dict('records')\` for DataFrames.
+- Cast Decimal/numeric columns with \`.astype(float)\` before calculations.
+- For statistical analysis, use scipy.stats (e.g., \`scipy.stats.pearsonr\`, \`scipy.stats.linregress\`).
+- Round numeric results to 4 decimal places.
+- Do not produce visualizations or plots — return numeric/tabular results only.
+- Handle edge cases (empty results, division by zero) gracefully.`;
 ```
 
 ### Key Differences from DemoCoderBot
 
 | | DemoCoderBot | DemoDataScienceBot |
 |---|---|---|
-| **Language** | `typescript` | `python` |
-| **Harness** | `finance` | `datascience` |
 | **Profile** | `finance-typescript` | `firekicks-datascience` |
-| **Prompt** | `CoderPrompt` (generic TS) | `DataScienceCoderPrompt` (schema + DAS) |
+| **Language** | TypeScript (from profile) | Python (from profile) |
+| **Domain prompt** | None | FireKicks schema + DAS + rules |
 | **Database access** | None | Via DAS (`das['firekicks']`) |
 | **Entry point** | `export async function run()` | `def run():` |
 
-The `datascience` harness pre-imports `pandas`, `numpy`, and `scipy.stats` into the execution scope and provides the `das` dict with configured DAS client connections.
+The domain prompt describes the FireKicks data domain -- schema, query patterns, and output rules. The profile resolves the Python runtime, datascience harness, and DAS connections server-side.
 
 ## Configuration Options
 
@@ -217,11 +182,8 @@ The `GeneralCoderBotConstructorArgs` accepts:
 |-------|------|---------|-------------|
 | `name` | `string` | required | Bot name identifier |
 | `modelPoolName` | `string` | required | LLM model pool to use |
-| `promptGroup` | `PromptGroup<CODER_PTH>` | required | Prompt group for code generation |
-| `sandboxClient` | `SandboxClient` | required | Code Sandbox client instance |
-| `language` | `"typescript" \| "python"` | `"typescript"` | Target language |
-| `harness` | `string` | -- | Harness type (`finance`, `datascience`) |
-| `profile` | `string` | -- | Named sandbox profile for execution |
+| `profile` | `string` | required | Named sandbox profile (resolves language, harness, DAS, run script) |
+| `domainPrompt` | `string` | -- | Domain-specific prompt content (schema, business rules, package guidance) |
 | `maxTries` | `number` | `8` | Max LLM retry attempts |
 | `maxSandboxRetries` | `number` | `3` | Max sandbox execution retries |
 | `errorPromptProviders` | `CoderErrorPromptProviders` | SDK defaults | Custom error handling prompts |
@@ -232,17 +194,19 @@ Profiles are a key concept in the Code Sandbox architecture. Instead of passing 
 
 ```
 Profile: "firekicks-datascience"
-  ├── Runtime: python-datascience-runtime
-  │     ├── Image: ff-code-sandbox-harness-python:latest
-  │     ├── CPU: 500m, Memory: 512Mi
-  │     └── Timeout: 120s
-  ├── Harness: datascience
-  ├── DAS connections:
-  │     └── firekicks → das.ff-dev.svc.cluster.local:8080
-  └── Run script: (default for datascience harness)
+  +-- Runtime: python-datascience-runtime
+  |     +-- Image: ff-code-sandbox-harness-python:latest
+  |     +-- CPU: 500m, Memory: 512Mi
+  |     +-- Timeout: 120s
+  +-- Harness: datascience
+  +-- DAS connections:
+  |     +-- firekicks -> das.ff-dev.svc.cluster.local:8080
+  +-- Run script: (default for datascience harness)
 ```
 
 The bot just sends `profile: "firekicks-datascience"` with the execution request, and the sandbox manager resolves everything server-side. This keeps credentials out of the bot code and makes it easy to change runtime configuration without redeploying the bot.
+
+At init time, GeneralCoderBot also fetches **profile metadata** to build its intrinsic prompt. The metadata includes the `runScriptPrompt` -- a natural language description of the run script contract that the LLM needs to follow (e.g., "define a `run()` function that returns..."). This is separate from the actual run script code (which is an implementation detail the LLM doesn't need to see).
 
 ## Build and Verify
 
@@ -250,17 +214,17 @@ The bot just sends `profile: "firekicks-datascience"` with the execution request
 pnpm run build
 ```
 
-Both bots compile as standalone modules. They import their respective prompts and the `SandboxClient`. They don't execute anything yet -- that happens when an entity triggers `run()` in Part 4.
+Both bots compile as standalone modules. They don't execute anything yet -- that happens when an entity triggers `run()` in Part 4.
 
 ## Key Points
 
-> **GeneralCoderBot handles the pipeline** -- All 9 stages of code generation, validation, storage, and execution are inherited. You only configure the language, harness, profile, prompt, and sandbox connection.
+> **Profile is the single source of truth** -- Language, harness, DAS connections, and run script contract all come from the profile. The bot just provides a profile name.
 
-> **Profiles decouple configuration from code** -- The bot sends a profile name; the sandbox manager resolves runtime, harness, DAS connections, and run scripts server-side. No credentials in bot code.
+> **Domain prompt is optional** -- Only provide one when the LLM needs specific domain context (schemas, business rules, data access patterns). General-purpose bots work without one.
+
+> **SandboxClient is self-managed** -- GeneralCoderBot creates its own `SandboxClient` from the `CODE_SANDBOX_URL` environment variable. No client construction in your bot code.
 
 > **@RegisterBot enables entity-bot wiring** -- Entities don't hold direct references to bots. Instead, `BotRunnableEntityMixin` looks up the bot by name from the global registry.
-
-> **PromptGroup = chat conversation** -- Each entry in the group becomes a message in the LLM conversation. System prompts carry instructions; user prompts carry the input.
 
 ---
 

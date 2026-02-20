@@ -220,9 +220,9 @@ import "../bots/DemoDataScienceBot.js";
 ### "Code block not found"
 
 The LLM didn't produce the expected two-block format. Check:
-- The prompt instructions are clear about the output format
 - The model pool name matches a configured LLM broker pool
-- The prompt group is wired correctly (system + user messages)
+- The profile metadata was fetched successfully at init (check logs for errors)
+- If using a domain prompt, ensure it doesn't conflict with the intrinsic output format instructions
 
 ### "Profile not found: firekicks-datascience"
 
@@ -309,21 +309,19 @@ In this tutorial, you've created a complete agent bundle that:
 ### Architecture Recap
 
 ```
-CoderPrompt                → Instructs the LLM for TypeScript (system message)
-DataScienceCoderPrompt     → Instructs the LLM for Python+DAS (system message)
-DemoCoderBot               → GeneralCoderBot with TypeScript config + finance profile
-DemoDataScienceBot         → GeneralCoderBot with Python config + datascience profile
-CodeTaskEntity             → Entity + BotRunnableEntityMixin → DemoCoderBot
-DataScienceTaskEntity      → Entity + BotRunnableEntityMixin → DemoDataScienceBot
-CoderBundleAgentBundle     → API endpoints (/execute, /analyze) + entity factory
+DemoCoderBot               -> GeneralCoderBot with finance-typescript profile (no domain prompt)
+DemoDataScienceBot         -> GeneralCoderBot with firekicks-datascience profile + domain prompt
+CodeTaskEntity             -> Entity + BotRunnableEntityMixin -> DemoCoderBot
+DataScienceTaskEntity      -> Entity + BotRunnableEntityMixin -> DemoDataScienceBot
+CoderBundleAgentBundle     -> API endpoints (/execute, /analyze) + entity factory
 ```
 
 ### Key Patterns Learned
 
-- **CoderBot hierarchy** -- Abstract base class with template method pattern for code generation
-- **GeneralCoderBot** -- Ready-made variant for general-purpose code execution
-- **Two-block LLM output** -- JSON metadata + language code block
-- **Profiles** -- Named configurations that bundle runtime, harness, and DAS connections
+- **Profile-driven bots** -- Profile is the single source of truth for language, harness, DAS connections, and run script contract
+- **Intrinsic vs domain prompts** -- CoderBot owns the output format and `run()` contract; you own the domain context
+- **GeneralCoderBot** -- Ready-made variant with a minimal constructor (`name`, `modelPoolName`, `profile`, optional `domainPrompt`)
+- **Two-block LLM output** -- JSON metadata + language code block (handled intrinsically)
 - **DAS integration** -- Secure database access through the Data Access Service, no credentials in bot code
 - **BotRunnableEntityMixin** -- Decoupled entity-bot wiring via registry
 - **Working memory** -- Code storage before sandbox execution
@@ -336,7 +334,7 @@ CoderBundleAgentBundle     → API endpoints (/execute, /analyze) + entity facto
 - **Custom error prompts** -- Override `errorPromptProviders` for better error recovery
 - **Build a web UI** -- Use `@firebrandanalytics/ff-sdk` to build a frontend with separate panels for code generation and data analysis
 - **Add code history** -- Create a collection entity to track past executions and their results
-- **Custom run scripts** -- Override the default run script in a profile for specialized execution behavior
+- **Multiple domain bots** -- Create additional GeneralCoderBot subclasses with different profiles and domain prompts for other business domains
 
 ---
 
