@@ -14,8 +14,8 @@ FireKicks sources sneakers and athletic footwear from dozens of suppliers. Each 
   "category": "RUNNING",
   "subcategory": "  Road Running  ",
   "brand_line": "  NIKE AIR  ",
-  "wholesale_price": "45.50",
-  "retail_price": "89.99"
+  "base_cost": "45.50",
+  "msrp": "89.99"
 }
 ```
 
@@ -43,7 +43,7 @@ The decorator pipeline processes each field in two phases:
 
 This ordering matters. If a supplier sends `" 89.99 "` as a string, the coercion phase trims the whitespace and converts it to the number `89.99`. Only then does the validation phase check that the price is positive. If you validated first, you'd reject perfectly good data that just needed cleaning.
 
-Decorators on a property execute **top-to-bottom** in source order. Within each phase, coercion decorators run before validation decorators regardless of their position in the source — but writing them in coerce-then-validate order keeps your code readable.
+Decorators on a property execute **top-to-bottom** in source order. Place coercion decorators (like `@CoerceTrim`, `@CoerceType`) **above** validation decorators (like `@ValidateRequired`, `@ValidateRange`) in your decorator stack so that values are cleaned before they are checked.
 
 ## Your First @ValidatedClass
 
@@ -124,11 +124,11 @@ class SupplierProductDraftV1 {
 
   @CoerceType('number')
   @ValidateRange(0.01)
-  wholesale_price: number;
+  base_cost: number;
 
   @CoerceType('number')
   @ValidateRange(0.01)
-  retail_price: number;
+  msrp: number;
 }
 ```
 
@@ -180,7 +180,7 @@ Available case styles: `'lower'`, `'upper'`, `'title'`, `'camel'`, `'pascal'`, `
 ```typescript
 @CoerceType('number')
 @ValidateRange(0.01)
-wholesale_price: number;
+base_cost: number;
 ```
 
 Suppliers often send prices as strings — `"89.99"` instead of `89.99`. Some send them as strings because their export format is CSV (where everything is a string). Others send them as strings because their internal system stores prices as formatted text.
@@ -191,7 +191,7 @@ Suppliers often send prices as strings — `"89.99"` instead of `89.99`. Some se
 
 ```typescript
 @ValidateRange(0.01)
-wholesale_price: number;
+base_cost: number;
 ```
 
 After type coercion, the price is a real number. Now we can validate it. `@ValidateRange(0.01)` ensures the price is at least 0.01 — no zero-dollar products and no negative prices. The first argument is the minimum; you can optionally pass a second argument for maximum: `@ValidateRange(0.01, 9999.99)`.
@@ -210,8 +210,8 @@ const rawInput = {
   category: 'RUNNING',
   subcategory: '  Road Running  ',
   brand_line: '  NIKE AIR  ',
-  wholesale_price: '45.50',
-  retail_price: '89.99'
+  base_cost: '45.50',
+  msrp: '89.99'
 };
 
 const draft = await factory.create(SupplierProductDraftV1, rawInput);
@@ -226,8 +226,8 @@ console.log(draft);
   "category": "running",
   "subcategory": "road running",
   "brand_line": "nike air",
-  "wholesale_price": 45.5,
-  "retail_price": 89.99
+  "base_cost": 45.5,
+  "msrp": 89.99
 }
 ```
 
@@ -239,8 +239,8 @@ Every field has been cleaned. Let's trace what happened to each one:
 | category | `"RUNNING"` | `"RUNNING"` | `"running"` | — | `"running"` |
 | subcategory | `"  Road Running  "` | `"Road Running"` | `"road running"` | — | `"road running"` |
 | brand_line | `"  NIKE AIR  "` | `"NIKE AIR"` | `"nike air"` | — | `"nike air"` |
-| wholesale_price | `"45.50"` | — | — | `45.5` | `45.5` |
-| retail_price | `"89.99"` | — | — | `89.99` | `89.99` |
+| base_cost | `"45.50"` | — | — | `45.5` | `45.5` |
+| msrp | `"89.99"` | — | — | `89.99` | `89.99` |
 
 ## Reading the Output: What Happens When Validation Fails
 
@@ -251,8 +251,8 @@ try {
   await factory.create(SupplierProductDraftV1, {
     product_name: '',           // empty — fails @ValidateRequired
     category: 'RUNNING',
-    wholesale_price: '-5.00',   // negative — fails @ValidateRange after coercion to -5
-    retail_price: '89.99'
+    base_cost: '-5.00',   // negative — fails @ValidateRange after coercion to -5
+    msrp: '89.99'
   });
 } catch (error) {
   if (error instanceof ValidationError) {
@@ -275,7 +275,7 @@ For the negative price, the error would be:
 
 ```typescript
 {
-  propertyPath: "wholesale_price",
+  propertyPath: "base_cost",
   message: "Value must be >= 0.01",
   rule: "ValidateRange",
   actualValue: -5
@@ -296,8 +296,8 @@ const messyInput = {
   category: '   running   ',
   subcategory: '   ROAD running   ',
   brand_line: '   Adidas BOOST   ',
-  wholesale_price: '62.00',
-  retail_price: '119.99'
+  base_cost: '62.00',
+  msrp: '119.99'
 };
 
 const draft = await factory.create(SupplierProductDraftV1, messyInput);
@@ -311,8 +311,8 @@ const draft = await factory.create(SupplierProductDraftV1, messyInput);
   "category": "running",
   "subcategory": "road running",
   "brand_line": "adidas boost",
-  "wholesale_price": 62,
-  "retail_price": 119.99
+  "base_cost": 62,
+  "msrp": 119.99
 }
 ```
 

@@ -27,17 +27,17 @@ Here are three real supplier payloads for the same shoe:
 {
   "productInfo": {
     "name": "Blaze Runner",
-    "categoryCode": "Running",
-    "subcategoryCode": "men's"
+    "category": "Running",
+    "subcategory": "men's",
+    "brandLine": "performance"
   },
   "pricing": {
-    "cost": "89.99",
-    "retailPrice": 159.99
+    "retail": 159.99,
+    "wholesale": 89.99
   },
   "specs": {
-    "brandLine": "performance",
     "colorway": "Black and White",
-    "sizes": "7 to 13"
+    "sizeRange": "7 to 13"
   }
 }
 ```
@@ -217,25 +217,25 @@ class SupplierBMapping extends SupplierSubmissionMapping {
   @ValidateRequired()
   product_name: string;
 
-  @DerivedFrom('$.productInfo.categoryCode')
+  @DerivedFrom('$.productInfo.category')
   @CoerceTrim()
   @CoerceCase('lower')
   category: string;
 
-  @DerivedFrom('$.productInfo.subcategoryCode')
+  @DerivedFrom('$.productInfo.subcategory')
   @CoerceTrim()
   subcategory: string;
 
-  @DerivedFrom('$.specs.brandLine')
+  @DerivedFrom('$.productInfo.brandLine')
   @CoerceTrim()
   @CoerceCase('lower')
   brand_line: string;
 
-  @DerivedFrom('$.pricing.cost')
-  @CoerceType('number')  // "89.99" -> 89.99
+  @DerivedFrom('$.pricing.wholesale')
+  @CoerceType('number')
   base_cost: number;
 
-  @DerivedFrom('$.pricing.retailPrice')
+  @DerivedFrom('$.pricing.retail')
   @CoerceType('number')
   msrp: number;
 
@@ -243,7 +243,7 @@ class SupplierBMapping extends SupplierSubmissionMapping {
   @CoerceTrim()
   color_variant: string;
 
-  @DerivedFrom('$.specs.sizes')
+  @DerivedFrom('$.specs.sizeRange')
   @CoerceTrim()
   size_range: string;
 }
@@ -254,9 +254,9 @@ Look at what just happened. There's no manual object destructuring. No `payload.
 **Input:**
 ```json
 {
-  "productInfo": { "name": "Blaze Runner", "categoryCode": "Running" },
-  "pricing": { "cost": "89.99", "retailPrice": 159.99 },
-  "specs": { "brandLine": "performance", "colorway": "Black and White", "sizes": "7 to 13" }
+  "productInfo": { "name": "Blaze Runner", "category": "Running", "subcategory": "men's", "brandLine": "performance" },
+  "pricing": { "retail": 159.99, "wholesale": 89.99 },
+  "specs": { "colorway": "Black and White", "sizeRange": "7 to 13" }
 }
 ```
 
@@ -265,6 +265,7 @@ Look at what just happened. There's no manual object destructuring. No `payload.
 {
   "product_name": "Blaze Runner",
   "category": "running",
+  "subcategory": "men's",
   "brand_line": "performance",
   "base_cost": 89.99,
   "msrp": 159.99,
@@ -273,7 +274,7 @@ Look at what just happened. There's no manual object destructuring. No `payload.
 }
 ```
 
-The nested camelCase structure is flattened into a consistent schema. The string price `"89.99"` is coerced to a number. The title-case `"Running"` is lowered to `"running"`.
+The nested camelCase structure is flattened into a consistent schema. The title-case `"Running"` is lowered to `"running"`.
 
 ### Step 4: Map Supplier C (All-Caps CSV-Derived)
 
@@ -375,7 +376,7 @@ const factory = new ValidationFactory();
 // These could come from a database query or API
 const submissions = [
   { source_format: 'flat_json_snake', product_name: 'Blaze Runner', category: 'running', base_cost: 89.99, msrp: 159.99, color_variant: 'Black/White', size_range: '7-13', subcategory: "men's", brand_line: 'performance' },
-  { source_format: 'nested_json_camel', productInfo: { name: 'Ember Court', categoryCode: 'Basketball', subcategoryCode: "women's" }, pricing: { cost: '72.50', retailPrice: 149.99 }, specs: { brandLine: 'premium', colorway: 'Navy and Gold', sizes: '5 to 11' } },
+  { source_format: 'nested_json_camel', productInfo: { name: 'Ember Court', category: 'Basketball', subcategory: "women's", brandLine: 'premium' }, pricing: { retail: 149.99, wholesale: 72.50 }, specs: { colorway: 'Navy and Gold', sizeRange: '5 to 11' } },
   { source_format: 'flat_json_caps', PRODUCT_NAME: 'SPARK STREET', CATEGORY: 'CASUAL', SUBCATEGORY: 'UNISEX', BRAND: 'LIFESTYLE LINE', BASE_COST: '$45.00', MSRP: '$99.99', COLOR: 'GRN/BLK', SIZES: '6-12' },
 ];
 

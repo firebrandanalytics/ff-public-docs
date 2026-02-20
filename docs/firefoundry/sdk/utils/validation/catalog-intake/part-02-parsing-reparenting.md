@@ -28,15 +28,17 @@ Here are three suppliers sending the exact same product:
 {
   "productInfo": {
     "name": "Nike Air Max 90",
-    "category": "Running"
+    "category": "Running",
+    "subcategory": "Road Running",
+    "brandLine": "Nike Air"
   },
   "pricing": {
-    "retail": "$89.99",
-    "wholesale": "$45.50"
+    "retail": 89.99,
+    "wholesale": 45.50
   },
-  "metadata": {
-    "sku": "NAM90-001",
-    "releaseDate": "03/15/2025"
+  "specs": {
+    "colorway": "White/Black",
+    "sizeRange": "7-13"
   }
 }
 ```
@@ -184,10 +186,17 @@ Recall Supplier B's nested structure:
 {
   "productInfo": {
     "name": "Nike Air Max 90",
-    "category": "Running"
+    "category": "Running",
+    "subcategory": "Road Running",
+    "brandLine": "Nike Air"
   },
   "pricing": {
-    "retail": "$89.99"
+    "retail": 89.99,
+    "wholesale": 45.50
+  },
+  "specs": {
+    "colorway": "White/Black",
+    "sizeRange": "7-13"
   }
 }
 ```
@@ -293,7 +302,7 @@ Some fields have a specific format that must be enforced. SKUs follow a pattern.
 import { ValidatePattern } from '@firebrandanalytics/shared-utils/validation';
 
 class DraftWithPatterns {
-  @DerivedFrom(['$.sku', '$.metadata.sku', '$.SKU'])
+  @DerivedFrom(['$.sku', '$.specs.sku', '$.SKU'])
   @CoerceTrim()
   @CoerceCase('upper')
   @ValidatePattern(
@@ -302,7 +311,7 @@ class DraftWithPatterns {
   )
   sku: string;
 
-  @DerivedFrom(['$.size_range', '$.metadata.sizeRange', '$.SIZE_RANGE'])
+  @DerivedFrom(['$.size_range', '$.specs.sizeRange', '$.SIZE_RANGE'])
   @CoerceTrim()
   @ValidatePattern(
     /^\d+(\.\d+)?-\d+(\.\d+)?$/,
@@ -379,7 +388,7 @@ class SupplierProductDraftV2 {
 
   @DerivedFrom([
     '$.sku',
-    '$.metadata.sku',
+    '$.specs.sku',
     '$.SKU'
   ])
   @CoerceTrim()
@@ -414,7 +423,7 @@ class SupplierProductDraftV2 {
 
   @DerivedFrom([
     '$.size_range',
-    '$.metadata.sizeRange',
+    '$.specs.sizeRange',
     '$.SIZE_RANGE'
   ])
   @CoerceTrim()
@@ -428,7 +437,7 @@ class SupplierProductDraftV2 {
 
   @DerivedFrom([
     '$.color',
-    '$.productInfo.color',
+    '$.specs.colorway',
     '$.COLOR'
   ])
   @CoerceTrim()
@@ -449,16 +458,16 @@ Let's run the V2 validator against Supplier B's nested payload:
     "name": "  Nike Air Max 90  ",
     "category": "RUNNING",
     "subcategory": "  Road Running  ",
-    "brandLine": "  Nike Air  ",
-    "color": "  WHITE/BLACK  "
+    "brandLine": "  Nike Air  "
   },
   "pricing": {
-    "wholesale": "$45.50",
-    "retail": "$89.99"
+    "wholesale": 45.50,
+    "retail": 89.99
   },
-  "metadata": {
-    "sku": "  nam90-001  ",
-    "sizeRange": "7-13"
+  "specs": {
+    "colorway": "  WHITE/BLACK  ",
+    "sizeRange": "7-13",
+    "sku": "  nam90-001  "
   }
 }
 ```
@@ -492,10 +501,10 @@ Let's trace the most interesting transformations:
 | Field | Source Path | Raw Value | Transformations | Final |
 |-------|------------|-----------|----------------|-------|
 | product_name | `$.productInfo.name` | `"  Nike Air Max 90  "` | DerivedFrom → Trim → Title Case | `"Nike Air Max 90"` |
-| sku | `$.metadata.sku` | `"  nam90-001  "` | DerivedFrom → Trim → Upper Case → Pattern ✓ | `"NAM90-001"` |
-| wholesale_price | `$.pricing.wholesale` | `"$45.50"` | DerivedFrom → Parse Currency → Range ✓ | `45.5` |
-| retail_price | `$.pricing.retail` | `"$89.99"` | DerivedFrom → Parse Currency → Range ✓ | `89.99` |
-| color | `$.productInfo.color` | `"  WHITE/BLACK  "` | DerivedFrom → Trim → Lower Case | `"white/black"` |
+| sku | `$.specs.sku` | `"  nam90-001  "` | DerivedFrom → Trim → Upper Case → Pattern ✓ | `"NAM90-001"` |
+| wholesale_price | `$.pricing.wholesale` | `45.50` | DerivedFrom → Parse Currency → Range ✓ | `45.5` |
+| retail_price | `$.pricing.retail` | `89.99` | DerivedFrom → Parse Currency → Range ✓ | `89.99` |
+| color | `$.specs.colorway` | `"  WHITE/BLACK  "` | DerivedFrom → Trim → Lower Case | `"white/black"` |
 
 The deeply nested input was flattened to a clean, consistent structure. The dollar signs were stripped. The casing was normalized. The SKU was upper-cased and validated against its pattern. All from declarative decorators — no imperative code.
 

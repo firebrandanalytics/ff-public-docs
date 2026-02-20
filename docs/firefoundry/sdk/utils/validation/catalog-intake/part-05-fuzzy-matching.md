@@ -185,7 +185,7 @@ class SupplierProductDraftV5 {
 
   @DerivedFrom([
     '$.color',
-    '$.productInfo.color',
+    '$.specs.colorway',
     '$.COLOR'
   ])
   @CoerceTrim()

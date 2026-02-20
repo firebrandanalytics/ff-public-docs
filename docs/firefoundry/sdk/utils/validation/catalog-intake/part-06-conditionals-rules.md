@@ -52,7 +52,7 @@ class SupplierProductDraftV6 {
   )
   category: string;
 
-  @DerivedFrom(['$.size_range', '$.metadata.sizeRange', '$.SIZE_RANGE'])
+  @DerivedFrom(['$.size_range', '$.specs.sizeRange', '$.SIZE_RANGE'])
   @CoerceTrim()
   @If('category', ['running', 'basketball', 'training'])
     @ValidatePattern(
@@ -333,7 +333,7 @@ class SupplierProductDraftV6 {
 
   // --- Size range with conditional pattern (NEW in V6) ---
 
-  @DerivedFrom(['$.size_range', '$.metadata.sizeRange', '$.SIZE_RANGE'])
+  @DerivedFrom(['$.size_range', '$.specs.sizeRange', '$.SIZE_RANGE'])
   @CoerceTrim()
   @If('category', ['running', 'basketball', 'training'])
     @ValidatePattern(
@@ -350,7 +350,7 @@ class SupplierProductDraftV6 {
 
   // --- Color (from Part 5) ---
 
-  @DerivedFrom(['$.color', '$.productInfo.color', '$.COLOR'])
+  @DerivedFrom(['$.color', '$.specs.colorway', '$.COLOR'])
   @CoerceTrim()
   @CoerceCase('lower')
   @CoerceFromSet<CatalogContext>(

@@ -32,7 +32,7 @@ import {
 } from '@firebrandanalytics/shared-utils/validation';
 
 class ResilientDraft {
-  @DerivedFrom(['$.color', '$.productInfo.color', '$.COLOR'])
+  @DerivedFrom(['$.color', '$.specs.colorway', '$.COLOR'])
   @CoerceTrim()
   @CoerceCase('lower')
   @CoerceFromSet<CatalogContext>(
@@ -152,7 +152,7 @@ class SupplierProductDraftV10 {
   // ... standard fields from previous parts ...
 
   // Size range: AI repairs common format issues
-  @DerivedFrom(['$.size_range', '$.metadata.sizeRange', '$.SIZE_RANGE'])
+  @DerivedFrom(['$.size_range', '$.specs.sizeRange', '$.SIZE_RANGE'])
   @CoerceTrim()
   @AICatchRepair((params) =>
     `Convert "${params.value}" to a size range in "min-max" format. ` +
@@ -186,7 +186,7 @@ The most common async validation in catalog intake: ensuring a supplier's SKU do
 import { ValidateAsync, CoerceTrim, CoerceCase } from '@firebrandanalytics/shared-utils/validation';
 
 class DraftWithAsyncValidation {
-  @DerivedFrom(['$.sku', '$.metadata.sku', '$.SKU'])
+  @DerivedFrom(['$.sku', '$.specs.sku', '$.SKU'])
   @CoerceTrim()
   @CoerceCase('upper')
   @ValidateAsync(async (sku, obj) => {
@@ -369,7 +369,7 @@ class SupplierProductDraftV10 {
 
   // --- SKU with async uniqueness check ---
 
-  @DerivedFrom(['$.sku', '$.metadata.sku', '$.SKU'])
+  @DerivedFrom(['$.sku', '$.specs.sku', '$.SKU'])
   @CoerceTrim()
   @CoerceCase('upper')
   @ValidatePattern(
@@ -415,7 +415,7 @@ class SupplierProductDraftV10 {
 
   // --- Size range with conditional validation + AI repair ---
 
-  @DerivedFrom(['$.size_range', '$.metadata.sizeRange', '$.SIZE_RANGE'])
+  @DerivedFrom(['$.size_range', '$.specs.sizeRange', '$.SIZE_RANGE'])
   @CoerceTrim()
   @AICatchRepair((params) =>
     `Convert "${params.value}" to "min-max" format. ` +
@@ -430,7 +430,7 @@ class SupplierProductDraftV10 {
 
   // --- Color with fuzzy match + recovery ---
 
-  @DerivedFrom(['$.color', '$.productInfo.color', '$.COLOR'])
+  @DerivedFrom(['$.color', '$.specs.colorway', '$.COLOR'])
   @CoerceTrim()
   @CoerceCase('lower')
   @CoerceFromSet<CatalogContext>(

@@ -41,7 +41,7 @@ class SupplierProductDraftV6 {
   })
   brand_line: string;
 
-  @DerivedFrom(['$.color', '$.productInfo.color', '$.COLOR'])
+  @DerivedFrom(['$.color', '$.specs.colorway', '$.COLOR'])
   @CoerceTrim()
   @CoerceCase('lower')
   @CoerceFromSet<CatalogContext>((ctx) => ctx.colors, {
@@ -145,7 +145,7 @@ class SupplierProductDraftV7 {
   })
   brand_line: string;
 
-  @DerivedFrom(['$.color', '$.productInfo.color', '$.COLOR'])
+  @DerivedFrom(['$.color', '$.specs.colorway', '$.COLOR'])
   @UseStyle(LookupKeyStyle)
   @CoerceFromSet<CatalogContext>((ctx) => ctx.colors, {
     strategy: 'fuzzy', fuzzyThreshold: 0.6
@@ -228,7 +228,7 @@ class SupplierProductDraftV7b {
   })
   brand_line: string;  // Gets LookupKeyStyle automatically
 
-  @DerivedFrom(['$.color', '$.productInfo.color', '$.COLOR'])
+  @DerivedFrom(['$.color', '$.specs.colorway', '$.COLOR'])
   @CoerceFromSet<CatalogContext>((ctx) => ctx.colors, {
     strategy: 'fuzzy', fuzzyThreshold: 0.6
   })
@@ -398,7 +398,7 @@ class SupplierProductDraftV7 {
   })
   brand_line: string;
 
-  @DerivedFrom(['$.color', '$.productInfo.color', '$.COLOR'])
+  @DerivedFrom(['$.color', '$.specs.colorway', '$.COLOR'])
   @CoerceFromSet<CatalogContext>((ctx) => ctx.colors, {
     strategy: 'fuzzy', fuzzyThreshold: 0.6
   })
@@ -408,8 +408,10 @@ class SupplierProductDraftV7 {
   wholesale_price: number;
 
   @DerivedFrom(['$.retail_price', '$.pricing.retail', '$.RETAIL_PRICE'])
-  @ObjectRule((obj) => obj.retail_price > obj.wholesale_price,
-    'Retail price must exceed wholesale price')
+  @CrossValidate(['wholesale_price'], function(this: SupplierProductDraftV7) {
+    return this.retail_price > this.wholesale_price
+      || `Retail price must exceed wholesale price`;
+  }, 'Retail > wholesale')
   retail_price: number;
 }
 ```

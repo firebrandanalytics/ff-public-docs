@@ -396,17 +396,17 @@ Let's trace the full flow for a Supplier B submission with variants, showing how
   "source_format": "nested_json_camel",
   "productInfo": {
     "name": "Ember Court",
-    "categoryCode": "Basketball",
-    "subcategoryCode": "women's"
+    "category": "Basketball",
+    "subcategory": "women's",
+    "brandLine": "premium"
   },
   "pricing": {
-    "cost": "72.50",
-    "retailPrice": 149.99
+    "retail": 149.99,
+    "wholesale": 72.50
   },
   "specs": {
-    "brandLine": "premium",
     "colorway": "Navy and Gold",
-    "sizes": "5 to 11",
+    "sizeRange": "5 to 11",
     "variants": [
       { "skuCode": "EMB-CRT-NG-05", "shoeSize": "5",  "colorway": "Navy and Gold", "qty": "80",  "costPerUnit": "72.50", "currencyCode": "USD" },
       { "skuCode": "EMB-CRT-NG-06", "shoeSize": "6",  "colorway": "Navy and Gold", "qty": "120", "costPerUnit": "72.50", "currencyCode": "USD" },

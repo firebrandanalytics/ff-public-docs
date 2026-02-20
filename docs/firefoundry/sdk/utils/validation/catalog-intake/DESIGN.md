@@ -9,7 +9,7 @@ This document describes the architecture, data model, and tutorial progression f
 FireKicks sources products from dozens of suppliers, each with their own data format. A single product — say a "Nike Air Max 90" — might arrive as:
 
 - **Supplier A (CSV):** `PRODUCT_NAME,CATEGORY,PRICE` → `"nike air max 90","RUNNING","89.99"`
-- **Supplier B (JSON):** `{ "productInfo": { "name": "Nike Air Max 90", "pricing": { "retail": "$89.99" } } }`
+- **Supplier B (JSON):** `{ "productInfo": { "name": "Nike Air Max 90", "category": "Running" }, "pricing": { "retail": 89.99 } }`
 - **Supplier C (spreadsheet):** `Product: Nke Air Max 90 | Cat: runing | Price: 89.99 USD`
 
 Before any of this data can enter the FireKicks product catalog, it must be:
@@ -21,6 +21,71 @@ Before any of this data can enter the FireKicks product catalog, it must be:
 5. **Reviewed** — surface ambiguities for human review before final approval
 
 This makes catalog intake an ideal showcase for the validation library: every feature — from basic `@CoerceTrim` to AI-powered `@AIExtract` — has a natural, motivated use case.
+
+---
+
+## 1b. Canonical Supplier Payloads
+
+The tutorial uses these canonical payload shapes for each supplier format. All parts reference these structures.
+
+**Supplier A** (`schema_a` / `flat_json_snake`):
+
+```json
+{
+  "product_name": "Nike Air Max 90",
+  "category": "running",
+  "subcategory": "road running",
+  "brand_line": "nike air",
+  "base_cost": 45.50,
+  "msrp": 89.99,
+  "color_variant": "white/black",
+  "size_range": "7-13"
+}
+```
+
+**Supplier B** (`schema_b` / `nested_json_camel`):
+
+```json
+{
+  "productInfo": {
+    "name": "Nike Air Max 90",
+    "category": "Running",
+    "subcategory": "Road Running",
+    "brandLine": "Nike Air"
+  },
+  "pricing": {
+    "retail": 89.99,
+    "wholesale": 45.50
+  },
+  "specs": {
+    "colorway": "White/Black",
+    "sizeRange": "7-13"
+  }
+}
+```
+
+**Supplier C** (`schema_c` / `flat_json_caps`):
+
+```json
+{
+  "PRODUCT_NAME": "NIKE AIR MAX 90",
+  "CATEGORY": "RUNNING",
+  "SUBCATEGORY": "ROAD RUNNING",
+  "BRAND": "NIKE AIR LINE",
+  "BASE_COST": "$45.50",
+  "MSRP": "$89.99",
+  "COLOR": "WHT/BLK",
+  "SIZES": "7-13"
+}
+```
+
+**Supplier D** (`schema_d` / `free_text`):
+
+```json
+{
+  "description": "Nike Air Max 90 in White/Black. Road running shoe from the Nike Air line. Wholesale $45.50, retail $89.99. Sizes 7-13."
+}
+```
 
 ---
 

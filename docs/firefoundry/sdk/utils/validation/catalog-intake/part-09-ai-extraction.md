@@ -440,8 +440,6 @@ class SmartExtractor {
   @DerivedFrom('description')
   @If((val: string) => val.length > 500)
     @AISummarize('short')
-  @Else()
-    @Copy()  // Short descriptions don't need summarization
   @EndIf()
   short_description: string;
 
