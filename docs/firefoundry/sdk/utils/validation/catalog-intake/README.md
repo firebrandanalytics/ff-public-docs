@@ -8,6 +8,7 @@ Starting from basic string cleanup and building to AI-powered data extraction, t
 
 ## Prerequisites
 
+- [Architecture & Design Document](./DESIGN.md) — schema, data flow, and tutorial progression map
 - FireKicks dataset loaded (firekicks connection in DAS)
 - FireFoundry local dev environment running
 - Basic TypeScript familiarity

@@ -68,6 +68,7 @@ First, define a validated class for a single variant. This class normalizes all 
 ```typescript
 import {
   ValidateRequired,
+  ValidateRange,
   CoerceTrim,
   CoerceCase,
   CoerceType,
@@ -558,6 +559,6 @@ In Part 5, we'll tackle the next challenge: fuzzy matching category names, brand
 
 ---
 
-**Next:** Part 5: Fuzzy Matching with Runtime Context (coming soon)
+**Next:** [Part 5: Fuzzy Matching + Runtime Context](./part-05-fuzzy-matching.md)
 
 **Previous:** [Part 3: Discriminated Unions](./part-03-discriminated-unions.md)

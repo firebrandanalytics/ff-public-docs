@@ -12,17 +12,17 @@ In Parts 1-7, the validation engine has silently handled the execution order for
 class SupplierProductDraftV8 {
   // ... all the fields from V7 ...
 
-  @DerivedFrom(['$.wholesale_price', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
+  @DerivedFrom(['$.base_cost', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
   @UseStyle(CurrencyStyle)
-  wholesale_price: number;
+  base_cost: number;
 
-  @DerivedFrom(['$.retail_price', '$.pricing.retail', '$.RETAIL_PRICE'])
+  @DerivedFrom(['$.msrp', '$.pricing.retail', '$.RETAIL_PRICE'])
   @UseStyle(CurrencyStyle)
-  retail_price: number;
+  msrp: number;
 
   // NEW: Computed margin
   @DerivedFrom(
-    ['wholesale_price', 'retail_price'],
+    ['base_cost', 'msrp'],
     ([wholesale, retail]) => ((retail - wholesale) / retail) * 100
   )
   margin_percent: number;
@@ -37,12 +37,12 @@ class SupplierProductDraftV8 {
 }
 ```
 
-The `margin_percent` field derives from `wholesale_price` and `retail_price`. The `margin_tier` field derives from `margin_percent`. This creates a dependency chain:
+The `margin_percent` field derives from `base_cost` and `msrp`. The `margin_tier` field derives from `margin_percent`. This creates a dependency chain:
 
 ```
-wholesale_price ─┐
+base_cost ─┐
                   ├──→ margin_percent ──→ margin_tier
-retail_price ────┘
+msrp ────┘
 ```
 
 If the engine processed `margin_percent` before the prices were resolved, it would compute a margin from `undefined` values. If it processed `margin_tier` before `margin_percent`, it would classify a non-existent margin. The engine needs to understand these dependencies and process fields in the right order.
@@ -69,14 +69,14 @@ This is powerful because it doesn't need to know the dependency order in advance
 
 ```
 Pass 1:
-  wholesale_price = 95          (from raw input, currency-parsed)
-  retail_price    = 170         (from raw input, currency-parsed)
+  base_cost = 95          (from raw input, currency-parsed)
+  msrp    = 170         (from raw input, currency-parsed)
   margin_percent  = 44.12       (computed from 95, 170)
   margin_tier     = "standard"  (computed from 44.12)
 
 Pass 2:
-  wholesale_price = 95          (unchanged)
-  retail_price    = 170         (unchanged)
+  base_cost = 95          (unchanged)
+  msrp    = 170         (unchanged)
   margin_percent  = 44.12       (unchanged)
   margin_tier     = "standard"  (unchanged)
 
@@ -101,9 +101,9 @@ class SupplierProductDraftV8 {
 The engine sees the `@DerivedFrom` declarations, builds the dependency graph, and processes fields in order:
 
 ```
-1. wholesale_price  (no dependencies within the class)
-2. retail_price     (no dependencies within the class)
-3. margin_percent   (depends on wholesale_price, retail_price)
+1. base_cost  (no dependencies within the class)
+2. msrp     (no dependencies within the class)
+3. margin_percent   (depends on base_cost, msrp)
 4. margin_tier      (depends on margin_percent)
 ```
 
@@ -137,7 +137,7 @@ The convergent engine is needed when properties derive from each other in a cycl
 
 ## @DependsOn — Declaring Hidden Dependencies
 
-Most decorators automatically declare their dependencies. `@DerivedFrom('wholesale_price', ...)` tells the engine that the decorated property depends on `wholesale_price`. `@If('category', ...)` tells the engine the conditional depends on `category`. But sometimes the dependency is hidden inside a lambda or AI prompt:
+Most decorators automatically declare their dependencies. `@DerivedFrom('base_cost', ...)` tells the engine that the decorated property depends on `base_cost`. `@If('category', ...)` tells the engine the conditional depends on `category`. But sometimes the dependency is hidden inside a lambda or AI prompt:
 
 ```typescript
 class SupplierProductDraftV8 {
@@ -298,13 +298,13 @@ This trace shows the exact sequence of transformations. You can see that `Coerce
 // validations_passed
 [
   { "property": "product_name", "rule": "ValidateRequired" },
-  { "property": "wholesale_price", "rule": "ValidateRange", "min": 0.01 },
-  { "property": "retail_price", "rule": "ValidateRange", "min": 0.01 }
+  { "property": "base_cost", "rule": "ValidateRange", "min": 0.01 },
+  { "property": "msrp", "rule": "ValidateRange", "min": 0.01 }
 ]
 
 // validations_failed
 [
-  { "property": "retail_price", "rule": "ObjectRule",
+  { "property": "msrp", "rule": "ObjectRule",
     "message": "Retail price must exceed wholesale price",
     "context": { "retail": 85, "wholesale": 95 } }
 ]
@@ -356,9 +356,9 @@ Here's the same supplier record processed by both engines, with the validation r
   "product_name": "  Air Jordan 1 Retro High  ",
   "category": "baskeball",
   "brand_line": "jordon",
-  "color": "blk/wht",
-  "wholesale_price": "$95.00",
-  "retail_price": "$170.00"
+  "color_variant": "blk/wht",
+  "base_cost": "$95.00",
+  "msrp": "$170.00"
 }
 ```
 
@@ -386,26 +386,25 @@ class DraftSinglePass {
   })
   brand_line: string;
 
-  @DerivedFrom(['$.color'])
+  @DerivedFrom(['$.color_variant'])
   @CoerceFromSet<CatalogContext>((ctx) => ctx.colors, {
     strategy: 'fuzzy', fuzzyThreshold: 0.6,
     synonyms: { 'black/white': ['blk/wht', 'bk/wh'] }
   })
-  color: string;
+  color_variant: string;
 
-  @DerivedFrom(['$.wholesale_price'])
-  wholesale_price: number;
+  @DerivedFrom(['$.base_cost'])
+  base_cost: number;
 
-  @DerivedFrom(['$.retail_price'])
-  retail_price: number;
+  @DerivedFrom(['$.msrp'])
+  msrp: number;
 
   @DerivedFrom(
-    ['wholesale_price', 'retail_price'],
+    ['base_cost', 'msrp'],
     ([w, r]) => ((r - w) / r) * 100
   )
   margin_percent: number;
 
-  @DependsOn('category', 'brand_line')
   @DerivedFrom('margin_percent', (margin) =>
     margin >= 50 ? 'premium' : margin >= 30 ? 'standard' : 'clearance'
   )
@@ -421,8 +420,8 @@ class DraftSinglePass {
 | 2 | category | Trim + lower + fuzzy match | `"basketball"` (0.89) |
 | 3 | brand_line | Trim + lower + fuzzy match | `"jordan"` (0.83) |
 | 4 | color | Trim + lower + synonym match | `"black/white"` |
-| 5 | wholesale_price | Currency parse + range | `95` |
-| 6 | retail_price | Currency parse + range | `170` |
+| 5 | base_cost | Currency parse + range | `95` |
+| 6 | msrp | Currency parse + range | `170` |
 | 7 | margin_percent | Derived from prices | `44.12` |
 | 8 | margin_tier | Derived from margin | `"standard"` |
 
@@ -439,7 +438,7 @@ For the FireKicks intake pipeline:
 | Supplier-specific formats (Part 3) | Single-pass | No inter-property dependencies — just reparenting and coercion |
 | Main SupplierProductDraft (Parts 1-7) | Single-pass | Acyclic: prices feed into margins, categories feed into conditionals |
 | Variant validators (Part 4) | Single-pass | Each variant is independent; parent references use `^.` which the convergent engine handles at the parent level |
-| AI-enhanced validators (Part 9) | Convergent | AI transforms may produce values that trigger re-evaluation of dependent fields |
+| AI-enhanced validators (Part 9) | Single-pass (preferred) or Convergent | AI decorators can run single-pass if all dependencies are declared via `@DependsOn`. Use convergent only when there are implicit or cyclic dependencies |
 
 The general rule: **start with single-pass, switch to convergent only when you need cycles.** Single-pass is faster, more predictable, and produces clearer error messages when something goes wrong.
 

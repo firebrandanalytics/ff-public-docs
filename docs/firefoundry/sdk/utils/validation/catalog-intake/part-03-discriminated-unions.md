@@ -10,6 +10,7 @@ Here are three real supplier payloads for the same shoe:
 
 ```json
 {
+  "source_format": "flat_json_snake",
   "product_name": "Blaze Runner",
   "category": "running",
   "subcategory": "men's",
@@ -25,6 +26,7 @@ Here are three real supplier payloads for the same shoe:
 
 ```json
 {
+  "source_format": "nested_json_camel",
   "productInfo": {
     "name": "Blaze Runner",
     "category": "Running",
@@ -46,6 +48,7 @@ Here are three real supplier payloads for the same shoe:
 
 ```json
 {
+  "source_format": "flat_json_caps",
   "PRODUCT_NAME": "BLAZE RUNNER",
   "CATEGORY": "RUNNING",
   "SUBCATEGORY": "MENS",
@@ -459,4 +462,4 @@ In the next part, we'll tackle the variants problem: when a single submission co
 
 **Next:** [Part 4: Nested Variants](./part-04-nested-variants.md) -- Validating arrays of nested objects with `@ValidatedClassArray`
 
-**Previous:** Part 2: Core Field Validation (coming soon)
+**Previous:** [Part 2: Parsing + Reparenting](./part-02-parsing-reparenting.md)

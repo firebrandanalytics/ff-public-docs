@@ -139,23 +139,23 @@ Some business rules span multiple properties. "Retail price must be greater than
 import { ObjectRule } from '@firebrandanalytics/shared-utils/validation';
 
 @ObjectRule(function(this: SupplierProductDraftV6) {
-  if (this.retail_price <= this.wholesale_price) {
-    return `Retail price ($${this.retail_price}) must be greater than wholesale price ($${this.wholesale_price})`;
+  if (this.msrp <= this.base_cost) {
+    return `Retail price ($${this.msrp}) must be greater than wholesale price ($${this.base_cost})`;
   }
   return true;
 }, 'Retail > wholesale price check')
 class SupplierProductDraftV6 {
   // ... all property decorators ...
 
-  @DerivedFrom(['$.wholesale_price', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
+  @DerivedFrom(['$.base_cost', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
-  wholesale_price: number;
+  base_cost: number;
 
-  @DerivedFrom(['$.retail_price', '$.pricing.retail', '$.RETAIL_PRICE'])
+  @DerivedFrom(['$.msrp', '$.pricing.retail', '$.RETAIL_PRICE'])
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
-  retail_price: number;
+  msrp: number;
 
   // ... other fields ...
 }
@@ -171,13 +171,13 @@ You can stack multiple `@ObjectRule` decorators on a class. They run in order af
 
 ```typescript
 @ObjectRule(function(this: SupplierProductDraftV6) {
-  if (this.retail_price <= this.wholesale_price) {
-    return `Retail ($${this.retail_price}) must exceed wholesale ($${this.wholesale_price})`;
+  if (this.msrp <= this.base_cost) {
+    return `Retail ($${this.msrp}) must exceed wholesale ($${this.base_cost})`;
   }
   return true;
 }, 'Price relationship check')
 @ObjectRule(function(this: SupplierProductDraftV6) {
-  const margin = (this.retail_price - this.wholesale_price) / this.retail_price;
+  const margin = (this.msrp - this.base_cost) / this.msrp;
   if (margin < 0.2) {
     return `Margin ${(margin * 100).toFixed(1)}% is below minimum 20% threshold`;
   }
@@ -204,17 +204,17 @@ class SupplierProductDraftV6 {
   )
   brand_line: string;
 
-  @DerivedFrom(['$.retail_price', '$.pricing.retail', '$.RETAIL_PRICE'])
+  @DerivedFrom(['$.msrp', '$.pricing.retail', '$.RETAIL_PRICE'])
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
   @CrossValidate(['brand_line'], function(this: SupplierProductDraftV6) {
     const premiumBrands = ['jordan', 'premium', 'signature'];
-    if (premiumBrands.includes(this.brand_line) && this.retail_price < 100) {
-      return `Premium brand "${this.brand_line}" products must have retail price >= $100 (got $${this.retail_price})`;
+    if (premiumBrands.includes(this.brand_line) && this.msrp < 100) {
+      return `Premium brand "${this.brand_line}" products must have retail price >= $100 (got $${this.msrp})`;
     }
     return true;
   }, 'Premium brand minimum price')
-  retail_price: number;
+  msrp: number;
 }
 ```
 
@@ -255,13 +255,13 @@ interface CatalogContext {
 }
 
 @ObjectRule(function(this: SupplierProductDraftV6) {
-  if (this.retail_price <= this.wholesale_price) {
-    return `Retail price ($${this.retail_price}) must exceed wholesale ($${this.wholesale_price})`;
+  if (this.msrp <= this.base_cost) {
+    return `Retail price ($${this.msrp}) must exceed wholesale ($${this.base_cost})`;
   }
   return true;
 }, 'Retail > wholesale')
 @ObjectRule(function(this: SupplierProductDraftV6) {
-  const margin = (this.retail_price - this.wholesale_price) / this.retail_price;
+  const margin = (this.msrp - this.base_cost) / this.msrp;
   if (margin < 0.2) {
     return `Margin ${(margin * 100).toFixed(1)}% is below 20% minimum`;
   }
@@ -314,22 +314,22 @@ class SupplierProductDraftV6 {
 
   // --- Prices with cross-validation ---
 
-  @DerivedFrom(['$.wholesale_price', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
+  @DerivedFrom(['$.base_cost', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
-  wholesale_price: number;
+  base_cost: number;
 
-  @DerivedFrom(['$.retail_price', '$.pricing.retail', '$.RETAIL_PRICE'])
+  @DerivedFrom(['$.msrp', '$.pricing.retail', '$.RETAIL_PRICE'])
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
   @CrossValidate(['brand_line'], function(this: SupplierProductDraftV6) {
     const premiumBrands = ['jordan', 'premium', 'signature'];
-    if (premiumBrands.includes(this.brand_line) && this.retail_price < 100) {
-      return `Premium brand "${this.brand_line}" requires retail >= $100 (got $${this.retail_price})`;
+    if (premiumBrands.includes(this.brand_line) && this.msrp < 100) {
+      return `Premium brand "${this.brand_line}" requires retail >= $100 (got $${this.msrp})`;
     }
     return true;
   }, 'Premium brand minimum price')
-  retail_price: number;
+  msrp: number;
 
   // --- Size range with conditional pattern (NEW in V6) ---
 
@@ -350,7 +350,7 @@ class SupplierProductDraftV6 {
 
   // --- Color (from Part 5) ---
 
-  @DerivedFrom(['$.color', '$.specs.colorway', '$.COLOR'])
+  @DerivedFrom(['$.color_variant', '$.specs.colorway', '$.COLOR'])
   @CoerceTrim()
   @CoerceCase('lower')
   @CoerceFromSet<CatalogContext>(
@@ -364,7 +364,7 @@ class SupplierProductDraftV6 {
       }
     }
   )
-  color: string;
+  color_variant: string;
 
   // --- Description: required for new products, optional for restocks ---
 
@@ -389,10 +389,10 @@ class SupplierProductDraftV6 {
   "category": "runing",
   "subcategory": "mens",
   "brand_line": "performnce",
-  "wholesale_price": "$65.00",
-  "retail_price": "$130.00",
+  "base_cost": "$65.00",
+  "msrp": "$130.00",
   "size_range": "7-14",
-  "color": "blk/wht",
+  "color_variant": "blk/wht",
   "description": "Latest generation daily trainer"
 }
 ```
@@ -405,10 +405,10 @@ class SupplierProductDraftV6 {
   "category": "running",
   "subcategory": "men's",
   "brand_line": "performance",
-  "wholesale_price": 65,
-  "retail_price": 130,
+  "base_cost": 65,
+  "msrp": 130,
   "size_range": "7-14",
-  "color": "black/white",
+  "color_variant": "black/white",
   "description": "Latest generation daily trainer"
 }
 ```
@@ -423,10 +423,10 @@ The size range `"7-14"` passes the numeric pattern because the fuzzy-matched cat
   "category": "lifestyle",
   "subcategory": "unisex",
   "brand_line": "performance",
-  "wholesale_price": "$25.00",
-  "retail_price": "$55.00",
+  "base_cost": "$25.00",
+  "msrp": "$55.00",
   "size_range": "S-XXL",
-  "color": "grey/black",
+  "color_variant": "grey/black",
   "description": "Relaxed fit pullover hoodie"
 }
 ```
@@ -439,10 +439,10 @@ The size range `"7-14"` passes the numeric pattern because the fuzzy-matched cat
   "category": "casual",
   "subcategory": "unisex",
   "brand_line": "performance",
-  "wholesale_price": 25,
-  "retail_price": 55,
+  "base_cost": 25,
+  "msrp": 55,
   "size_range": "S-XXL",
-  "color": "grey/black",
+  "color_variant": "grey/black",
   "description": "Relaxed fit pullover hoodie"
 }
 ```
@@ -455,10 +455,10 @@ Notice that `"lifestyle"` was synonym-matched to `"casual"`, and `"S-XXL"` passe
 {
   "product_name": "Discount Runner",
   "category": "running",
-  "wholesale_price": "$80.00",
-  "retail_price": "$60.00",
+  "base_cost": "$80.00",
+  "msrp": "$60.00",
   "size_range": "8-12",
-  "color": "black/white"
+  "color_variant": "black/white"
 }
 ```
 
@@ -477,10 +477,10 @@ The `@ObjectRule` catches this after both prices are parsed and validated indivi
   "product_name": "Jordan Low",
   "category": "basketball",
   "brand_line": "jordan",
-  "wholesale_price": "$35.00",
-  "retail_price": "$70.00",
+  "base_cost": "$35.00",
+  "msrp": "$70.00",
   "size_range": "7-13",
-  "color": "black/white"
+  "color_variant": "black/white"
 }
 ```
 
@@ -490,7 +490,7 @@ The `@ObjectRule` catches this after both prices are parsed and validated indivi
 Premium brand "jordan" requires retail >= $100 (got $70)
 ```
 
-The `@CrossValidate` on `retail_price` detects that the `"jordan"` brand line demands a higher retail price.
+The `@CrossValidate` on `msrp` detects that the `"jordan"` brand line demands a higher retail price.
 
 ## When to Use Each Tool
 

@@ -91,7 +91,7 @@ The tutorial uses these canonical payload shapes for each supplier format. All p
 
 ## 2. Schema Diagram
 
-Four new tables extend the existing FireKicks schema. All foreign keys reference existing FireKicks tables (`products`, `brands`, `categories`).
+Five new tables extend the existing FireKicks schema. All foreign keys reference existing FireKicks tables (`products`, `brands`, `categories`).
 
 ```
 ┌─────────────────────────┐
@@ -101,7 +101,7 @@ Four new tables extend the existing FireKicks schema. All foreign keys reference
 │ supplier_name           │
 │ supplier_code           │
 │ contact_email           │
-│ schema_format           │  ── 'flat_csv' | 'nested_json' | 'legacy_xml'
+│ schema_format           │  ── 'schema_a' (flat_json_snake) | 'schema_b' (nested_json_camel) | 'schema_c' (flat_json_caps) | 'schema_d' (free_text)
 │ is_active               │
 │ created_at              │
 │ updated_at              │
@@ -133,10 +133,10 @@ Four new tables extend the existing FireKicks schema. All foreign keys reference
 │ subcategory             │       │ completed_at                 │
 │ brand_line              │       │ engine                       │ ── 'single-pass' | 'convergent'
 │ sku                     │       │ status                       │ ── 'success' | 'partial' | 'failed'
-│ wholesale_price         │       │ coercions_applied     (JSON) │
-│ retail_price            │       │ validations_passed    (JSON) │
+│ base_cost               │       │ coercions_applied     (JSON) │
+│ msrp                    │       │ validations_passed    (JSON) │
 │ size_range              │       │ validations_failed    (JSON) │
-│ color                   │       │ ai_transforms_used    (JSON) │
+│ color_variant           │       │ ai_transforms_used    (JSON) │
 │ material                │       │ error_details         (JSON) │
 │ description             │       └──────────────────────────────┘
 │ review_status           │  ── 'draft' | 'review' | 'approved' | 'rejected'
@@ -228,16 +228,16 @@ Each tutorial part adds new decorator capabilities to the `SupplierProductDraft`
 
 | Part | Validator Version | New Decorators | Fields Affected | What Changes |
 |------|-------------------|----------------|-----------------|--------------|
-| 1 | `SupplierProductDraftV1` | `@ValidateRequired`, `@CoerceTrim`, `@CoerceCase`, `@CoerceType`, `@ValidateRange` | product_name, category, subcategory, brand_line, wholesale_price, retail_price | Basic cleanup: trim, case-normalize, type-coerce prices |
-| 2 | `SupplierProductDraftV2` | `@CoerceParse`, `@Copy`, `@Staging`, `@DerivedFrom`, `@ValidatePattern` | sku, size_range, color, all price fields, date fields | Parse currency strings, extract from nested supplier payloads via JSONPath |
+| 1 | `SupplierProductDraftV1` | `@ValidateRequired`, `@CoerceTrim`, `@CoerceCase`, `@CoerceType`, `@ValidateRange` | product_name, category, subcategory, brand_line, base_cost, msrp | Basic cleanup: trim, case-normalize, type-coerce prices |
+| 2 | `SupplierProductDraftV2` | `@CoerceParse`, `@Copy`, `@Staging`, `@DerivedFrom`, `@ValidatePattern` | sku, size_range, color_variant, all price fields | Parse currency strings, extract from nested supplier payloads via JSONPath |
 | 3 | `SupplierProductDraftV3` | `@DiscriminatedUnion`, `@Discriminator` | (class-level) | Route different supplier schemas to format-specific validator classes |
 | 4 | `SupplierProductDraftV4` | `@ValidatedClass`, `@ValidatedClassArray`, `@CollectProperties` | variants (nested), material, description | Validate nested variant arrays, collect unmapped metadata |
-| 5 | `SupplierProductDraftV5` | `@CoerceFromSet` (fuzzy + context) | category, subcategory, brand_line, color | Fuzzy-match supplier values against the FireKicks catalog |
-| 6 | `SupplierProductDraftV6` | `@If`/`@ElseIf`/`@Else`/`@EndIf`, `@ObjectRule`, `@CrossValidate` | wholesale_price vs retail_price, size_range by category | Conditional validation: prices must be consistent, size formats depend on category |
+| 5 | `SupplierProductDraftV5` | `@CoerceFromSet` (fuzzy + context) | category, subcategory, brand_line, color_variant | Fuzzy-match supplier values against the FireKicks catalog |
+| 6 | `SupplierProductDraftV6` | `@If`/`@ElseIf`/`@Else`/`@EndIf`, `@ObjectRule`, `@CrossValidate` | base_cost vs msrp, size_range by category | Conditional validation: prices must be consistent, size formats depend on category |
 | 7 | `SupplierProductDraftV7` | `@UseStyle`, `@DefaultTransforms`, `@ManageAll` | All string fields, all price fields | Extract repeated patterns into reusable styles, apply class-level defaults |
 | 8 | `SupplierProductDraftV8` | `@UseSinglePassValidation`, `@UseConvergentValidation`, `@DependsOn` | (engine-level) | Explore engine tradeoffs, explicit dependency declaration |
 | 9 | `SupplierProductDraftV9` | `@AIExtract`, `@AIClassify`, `@AIJSONRepair` | description, category (from free-text), malformed JSON payloads | AI-powered extraction from unstructured supplier notes |
-| 10 | `SupplierProductDraftV10` | `@Catch`, `@AICatchRepair`, `@ValidateAsync` | All fields (error recovery), stock_quantity (async DB lookup) | Graceful degradation, async validation against live inventory |
+| 10 | `SupplierProductDraftV10` | `@Catch`, `@AICatchRepair`, `@ValidateAsync` | All fields (error recovery), sku (async uniqueness check) | Graceful degradation, async validation against live services |
 
 ---
 

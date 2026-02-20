@@ -89,9 +89,9 @@ class SupplierDExtractor {
     'product_name',
     'category',
     'subcategory',
-    'color',
-    'wholesale_price',
-    'retail_price',
+    'color_variant',
+    'base_cost',
+    'msrp',
     'size_range',
     'sku'
   ])
@@ -115,20 +115,20 @@ class SupplierDExtractor {
   )
   category: string;
 
-  @DerivedFrom('_extracted', (e) => e.color)
+  @DerivedFrom('_extracted', (e) => e.color_variant)
   @CoerceTrim()
   @CoerceCase('lower')
-  color: string;
+  color_variant: string;
 
-  @DerivedFrom('_extracted', (e) => e.wholesale_price)
+  @DerivedFrom('_extracted', (e) => e.base_cost)
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
-  wholesale_price: number;
+  base_cost: number;
 
-  @DerivedFrom('_extracted', (e) => e.retail_price)
+  @DerivedFrom('_extracted', (e) => e.msrp)
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
-  retail_price: number;
+  msrp: number;
 
   @DerivedFrom('_extracted', (e) => e.size_range)
   @CoerceTrim()
@@ -172,9 +172,9 @@ console.log(JSON.stringify(result, null, 2));
 {
   "product_name": "Nike Air Force 1 '07",
   "category": "basketball",
-  "color": "white/black",
-  "wholesale_price": 52,
-  "retail_price": 110,
+  "color_variant": "white/black",
+  "base_cost": 52,
+  "msrp": 110,
   "size_range": "7-13",
   "sku": "NAF1-WHT-07"
 }
@@ -190,8 +190,8 @@ For more control over what the AI extracts, pass an object schema instead of a s
 @AIExtract({
   product_name: 'The full product name including brand',
   category: 'The product category (e.g., running, basketball, casual)',
-  wholesale_price: 'The wholesale/cost price as a number',
-  retail_price: 'The retail/MSRP price as a number',
+  base_cost: 'The wholesale/cost price as a number',
+  msrp: 'The retail/MSRP price as a number',
 })
 @Staging()
 _extracted: Record<string, any>;
@@ -291,7 +291,7 @@ class SupplierEProcessor {
   @DerivedFrom('_repaired', (obj) => obj.price)
   @CoerceType('number')
   @ValidateRange(0.01)
-  retail_price: number;
+  msrp: number;
 }
 ```
 
@@ -323,7 +323,7 @@ Then `@CoerceParse('json')` produces `{ name: "Adidas Ultraboost 22", category: 
 {
   "product_name": "Adidas Ultraboost 22",
   "category": "running",
-  "retail_price": 180
+  "msrp": 180
 }
 ```
 
@@ -368,19 +368,21 @@ The `params` object includes the partial instance, so you can reference other al
 ```typescript
 @AITransform((params) => {
   const inst = params.instance;
-  return `Given a ${inst.category} shoe called "${inst.product_name}" priced at $${inst.retail_price}, write a one-sentence marketing tagline. Return only the tagline.`;
+  return `Given a ${inst.category} shoe called "${inst.product_name}" priced at $${inst.msrp}, write a one-sentence marketing tagline. Return only the tagline.`;
 })
-@DependsOn('product_name', 'category', 'retail_price')
+@DependsOn('product_name', 'category', 'msrp')
 marketing_tagline: string;
 ```
 
-Notice the `@DependsOn` decorator — it explicitly declares that this AI transform needs `product_name`, `category`, and `retail_price` to be resolved first. The AI prompt references them via `params.instance`, but the engine can't infer that from the decorator alone, so the manual dependency declaration is needed.
+Notice the `@DependsOn` decorator — it explicitly declares that this AI transform needs `product_name`, `category`, and `msrp` to be resolved first. The AI prompt references them via `params.instance`, but the engine can't infer that from the decorator alone, so the manual dependency declaration is needed.
 
 ## Integrating AI Into the Discriminated Union
 
 Bringing it back to the catalog intake architecture from Part 3: Supplier D's free-text format plugs into the discriminated union alongside the structured suppliers.
 
 ```typescript
+// imports omitted for brevity — see full validator
+
 @DiscriminatedUnion({
   discriminator: 'source_format',
   map: {
@@ -401,8 +403,8 @@ class SupplierDMapping extends SupplierSubmissionMapping {
   source_format: string;
 
   @DerivedFrom('$.description')
-  @AIExtract(['product_name', 'category', 'subcategory', 'color',
-              'wholesale_price', 'retail_price', 'size_range', 'sku'])
+  @AIExtract(['product_name', 'category', 'subcategory', 'color_variant',
+              'base_cost', 'msrp', 'size_range', 'sku'])
   @Staging()
   _extracted: Record<string, string>;
 
@@ -432,6 +434,8 @@ The dispatch pipeline doesn't care whether a supplier's data is structured or un
 AI calls are expensive. Use conditionals from Part 6 to apply them only when needed:
 
 ```typescript
+// imports omitted for brevity — see full validator
+
 class SmartExtractor {
   @Copy()
   description: string;

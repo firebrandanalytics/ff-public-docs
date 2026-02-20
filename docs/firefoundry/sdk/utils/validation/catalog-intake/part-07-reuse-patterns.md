@@ -41,23 +41,23 @@ class SupplierProductDraftV6 {
   })
   brand_line: string;
 
-  @DerivedFrom(['$.color', '$.specs.colorway', '$.COLOR'])
+  @DerivedFrom(['$.color_variant', '$.specs.colorway', '$.COLOR'])
   @CoerceTrim()
   @CoerceCase('lower')
   @CoerceFromSet<CatalogContext>((ctx) => ctx.colors, {
     strategy: 'fuzzy', fuzzyThreshold: 0.6
   })
-  color: string;
+  color_variant: string;
 
-  @DerivedFrom(['$.wholesale_price', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
+  @DerivedFrom(['$.base_cost', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
-  wholesale_price: number;
+  base_cost: number;
 
-  @DerivedFrom(['$.retail_price', '$.pricing.retail', '$.RETAIL_PRICE'])
+  @DerivedFrom(['$.msrp', '$.pricing.retail', '$.RETAIL_PRICE'])
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
-  retail_price: number;
+  msrp: number;
 }
 ```
 
@@ -145,20 +145,20 @@ class SupplierProductDraftV7 {
   })
   brand_line: string;
 
-  @DerivedFrom(['$.color', '$.specs.colorway', '$.COLOR'])
+  @DerivedFrom(['$.color_variant', '$.specs.colorway', '$.COLOR'])
   @UseStyle(LookupKeyStyle)
   @CoerceFromSet<CatalogContext>((ctx) => ctx.colors, {
     strategy: 'fuzzy', fuzzyThreshold: 0.6
   })
-  color: string;
+  color_variant: string;
 
-  @DerivedFrom(['$.wholesale_price', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
+  @DerivedFrom(['$.base_cost', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
   @UseStyle(CurrencyStyle)
-  wholesale_price: number;
+  base_cost: number;
 
-  @DerivedFrom(['$.retail_price', '$.pricing.retail', '$.RETAIL_PRICE'])
+  @DerivedFrom(['$.msrp', '$.pricing.retail', '$.RETAIL_PRICE'])
   @UseStyle(CurrencyStyle)
-  retail_price: number;
+  msrp: number;
 }
 ```
 
@@ -228,17 +228,17 @@ class SupplierProductDraftV7b {
   })
   brand_line: string;  // Gets LookupKeyStyle automatically
 
-  @DerivedFrom(['$.color', '$.specs.colorway', '$.COLOR'])
+  @DerivedFrom(['$.color_variant', '$.specs.colorway', '$.COLOR'])
   @CoerceFromSet<CatalogContext>((ctx) => ctx.colors, {
     strategy: 'fuzzy', fuzzyThreshold: 0.6
   })
-  color: string;  // Gets LookupKeyStyle automatically
+  color_variant: string;  // Gets LookupKeyStyle automatically
 
-  @DerivedFrom(['$.wholesale_price', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
-  wholesale_price: number;  // Gets CurrencyStyle automatically
+  @DerivedFrom(['$.base_cost', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
+  base_cost: number;  // Gets CurrencyStyle automatically
 
-  @DerivedFrom(['$.retail_price', '$.pricing.retail', '$.RETAIL_PRICE'])
-  retail_price: number;  // Gets CurrencyStyle automatically
+  @DerivedFrom(['$.msrp', '$.pricing.retail', '$.RETAIL_PRICE'])
+  msrp: number;  // Gets CurrencyStyle automatically
 }
 ```
 
@@ -303,13 +303,13 @@ For classes where every property needs to be managed, writing `@Copy()` on each 
 ```typescript
 import { ManageAll, DefaultTransforms } from '@firebrandanalytics/shared-utils/validation';
 
-@ManageAll({ include: ['category', 'subcategory', 'brand_line', 'color'] })
+@ManageAll({ include: ['category', 'subcategory', 'brand_line', 'color_variant'] })
 @DefaultTransforms({ string: LookupKeyStyle })
 class SimpleLookupFields {
   category: string;      // Managed + gets LookupKeyStyle
   subcategory: string;   // Managed + gets LookupKeyStyle
   brand_line: string;    // Managed + gets LookupKeyStyle
-  color: string;         // Managed + gets LookupKeyStyle
+  color_variant: string;         // Managed + gets LookupKeyStyle
   internal_notes: string; // NOT managed — not in the include list
 }
 ```
@@ -398,21 +398,21 @@ class SupplierProductDraftV7 {
   })
   brand_line: string;
 
-  @DerivedFrom(['$.color', '$.specs.colorway', '$.COLOR'])
+  @DerivedFrom(['$.color_variant', '$.specs.colorway', '$.COLOR'])
   @CoerceFromSet<CatalogContext>((ctx) => ctx.colors, {
     strategy: 'fuzzy', fuzzyThreshold: 0.6
   })
-  color: string;
+  color_variant: string;
 
-  @DerivedFrom(['$.wholesale_price', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
-  wholesale_price: number;
+  @DerivedFrom(['$.base_cost', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
+  base_cost: number;
 
-  @DerivedFrom(['$.retail_price', '$.pricing.retail', '$.RETAIL_PRICE'])
-  @CrossValidate(['wholesale_price'], function(this: SupplierProductDraftV7) {
-    return this.retail_price > this.wholesale_price
+  @DerivedFrom(['$.msrp', '$.pricing.retail', '$.RETAIL_PRICE'])
+  @CrossValidate(['base_cost'], function(this: SupplierProductDraftV7) {
+    return this.msrp > this.base_cost
       || `Retail price must exceed wholesale price`;
   }, 'Retail > wholesale')
-  retail_price: number;
+  msrp: number;
 }
 ```
 
@@ -449,17 +449,17 @@ class SupplierAFormat {
   @Copy()
   @CoerceTrim()
   @CoerceCase('lower')
-  color: string;
+  color_variant: string;
 
   @Copy()
   @CoerceType('number')
   @ValidateRange(0.01)
-  wholesale_price: number;
+  base_cost: number;
 
   @Copy()
   @CoerceType('number')
   @ValidateRange(0.01)
-  retail_price: number;
+  msrp: number;
 }
 ```
 
@@ -468,7 +468,7 @@ class SupplierAFormat {
 ```typescript
 @ManageAll({ include: [
   'product_name', 'category', 'subcategory',
-  'brand_line', 'color', 'wholesale_price', 'retail_price'
+  'brand_line', 'color_variant', 'base_cost', 'msrp'
 ]})
 @DefaultTransforms({
   string: LookupKeyStyle,
@@ -481,9 +481,9 @@ class SupplierAFormat {
   category: string;
   subcategory: string;
   brand_line: string;
-  color: string;
-  wholesale_price: number;
-  retail_price: number;
+  color_variant: string;
+  base_cost: number;
+  msrp: number;
 }
 ```
 

@@ -17,7 +17,7 @@ Here are three suppliers sending the exact same product:
   "product_name": "Nike Air Max 90",
   "category": "running",
   "sku": "NAM90-001",
-  "retail_price": "89.99",
+  "msrp": "89.99",
   "release_date": "2025-03-15"
 }
 ```
@@ -73,7 +73,7 @@ import {
 class PriceExample {
   @CoerceParse('currency', { locale: 'en-US' })
   @ValidateRange(0.01)
-  retail_price: number;
+  msrp: number;
 }
 ```
 
@@ -90,7 +90,7 @@ If the input might already be a number (some suppliers send clean data), add `al
 
 ```typescript
 @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
-retail_price: number;
+msrp: number;
 ```
 
 Now `89.99` passes through unchanged, and `"$89.99"` gets parsed. This flexibility lets one validator handle both clean and messy suppliers.
@@ -164,11 +164,11 @@ class Example {
 
   @DerivedFrom('raw_pricing', (raw) => parseFloat(raw.replace('$', '')))
   @ValidateRange(0.01)
-  retail_price: number;   // Derived from staging field — will appear in output
+  msrp: number;   // Derived from staging field — will appear in output
 }
 
 // Input:  { raw_pricing: "$89.99" }
-// Output: { retail_price: 89.99 }
+// Output: { msrp: 89.99 }
 //          (raw_pricing is gone)
 ```
 
@@ -220,7 +220,7 @@ class SupplierBDraft {
   @DerivedFrom('$.pricing.retail')
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
-  retail_price: number;
+  msrp: number;
 }
 ```
 
@@ -251,13 +251,13 @@ class MultiSupplierDraft {
   category: string;
 
   @DerivedFrom([
-    '$.retail_price',           // Supplier A: "89.99"
+    '$.msrp',           // Supplier A: "89.99"
     '$.pricing.retail',         // Supplier B: "$89.99"
     '$.RETAIL_PRICE'            // Supplier C: "$89.99 USD"
   ])
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
-  retail_price: number;
+  msrp: number;
 }
 ```
 
@@ -274,7 +274,7 @@ class DraftWithDerived {
   @DerivedFrom('$.pricing', (pricing) => pricing.retail || pricing.msrp || 0)
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
-  retail_price: number;
+  msrp: number;
 }
 ```
 
@@ -291,7 +291,7 @@ The derivation function receives the resolved value and a context object `{ raw,
   }
   return wholesale;
 })
-wholesale_price: number;
+base_cost: number;
 ```
 
 ## @ValidatePattern — Enforcing Field Formats
@@ -402,22 +402,22 @@ class SupplierProductDraftV2 {
   // --- Prices with currency parsing ---
 
   @DerivedFrom([
-    '$.wholesale_price',
+    '$.base_cost',
     '$.pricing.wholesale',
     '$.WHOLESALE_PRICE'
   ])
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
-  wholesale_price: number;
+  base_cost: number;
 
   @DerivedFrom([
-    '$.retail_price',
+    '$.msrp',
     '$.pricing.retail',
     '$.RETAIL_PRICE'
   ])
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
-  retail_price: number;
+  msrp: number;
 
   // --- Size range with pattern validation ---
 
@@ -436,13 +436,13 @@ class SupplierProductDraftV2 {
   // --- Color ---
 
   @DerivedFrom([
-    '$.color',
+    '$.color_variant',
     '$.specs.colorway',
     '$.COLOR'
   ])
   @CoerceTrim()
   @CoerceCase('lower')
-  color: string;
+  color_variant: string;
 }
 ```
 
@@ -489,10 +489,10 @@ console.log(JSON.stringify(draft, null, 2));
   "subcategory": "road running",
   "brand_line": "nike air",
   "sku": "NAM90-001",
-  "wholesale_price": 45.5,
-  "retail_price": 89.99,
+  "base_cost": 45.5,
+  "msrp": 89.99,
   "size_range": "7-13",
-  "color": "white/black"
+  "color_variant": "white/black"
 }
 ```
 
@@ -502,9 +502,9 @@ Let's trace the most interesting transformations:
 |-------|------------|-----------|----------------|-------|
 | product_name | `$.productInfo.name` | `"  Nike Air Max 90  "` | DerivedFrom → Trim → Title Case | `"Nike Air Max 90"` |
 | sku | `$.specs.sku` | `"  nam90-001  "` | DerivedFrom → Trim → Upper Case → Pattern ✓ | `"NAM90-001"` |
-| wholesale_price | `$.pricing.wholesale` | `45.50` | DerivedFrom → Parse Currency → Range ✓ | `45.5` |
-| retail_price | `$.pricing.retail` | `89.99` | DerivedFrom → Parse Currency → Range ✓ | `89.99` |
-| color | `$.specs.colorway` | `"  WHITE/BLACK  "` | DerivedFrom → Trim → Lower Case | `"white/black"` |
+| base_cost | `$.pricing.wholesale` | `45.50` | DerivedFrom → Parse Currency → Range ✓ | `45.5` |
+| msrp | `$.pricing.retail` | `89.99` | DerivedFrom → Parse Currency → Range ✓ | `89.99` |
+| color_variant | `$.specs.colorway` | `"  WHITE/BLACK  "` | DerivedFrom → Trim → Lower Case | `"white/black"` |
 
 The deeply nested input was flattened to a clean, consistent structure. The dollar signs were stripped. The casing was normalized. The SKU was upper-cased and validated against its pattern. All from declarative decorators — no imperative code.
 

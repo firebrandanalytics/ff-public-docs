@@ -32,7 +32,7 @@ import {
 } from '@firebrandanalytics/shared-utils/validation';
 
 class ResilientDraft {
-  @DerivedFrom(['$.color', '$.specs.colorway', '$.COLOR'])
+  @DerivedFrom(['$.color_variant', '$.specs.colorway', '$.COLOR'])
   @CoerceTrim()
   @CoerceCase('lower')
   @CoerceFromSet<CatalogContext>(
@@ -43,7 +43,7 @@ class ResilientDraft {
     // Fuzzy match failed — return the raw value and flag for review
     return value;
   })
-  color: string;
+  color_variant: string;
 }
 ```
 
@@ -62,7 +62,7 @@ The `@Catch` callback receives three arguments:
   // Log the failure for the validation run record
   ctx.instance._recoveries = ctx.instance._recoveries || [];
   ctx.instance._recoveries.push({
-    field: 'color',
+    field: 'color_variant',
     originalValue: value,
     error: err.message,
     resolution: 'kept_raw_value'
@@ -307,13 +307,13 @@ interface CatalogContext {
 }
 
 @ObjectRule(function(this: SupplierProductDraftV10) {
-  if (this.retail_price <= this.wholesale_price) {
-    return `Retail ($${this.retail_price}) must exceed wholesale ($${this.wholesale_price})`;
+  if (this.msrp <= this.base_cost) {
+    return `Retail ($${this.msrp}) must exceed wholesale ($${this.base_cost})`;
   }
   return true;
 }, 'Price relationship')
 @ObjectRule(function(this: SupplierProductDraftV10) {
-  const margin = (this.retail_price - this.wholesale_price) / this.retail_price;
+  const margin = (this.msrp - this.base_cost) / this.msrp;
   if (margin < 0.2) {
     return `Margin ${(margin * 100).toFixed(1)}% is below 20% minimum`;
   }
@@ -396,22 +396,22 @@ class SupplierProductDraftV10 {
 
   // --- Prices with currency parsing ---
 
-  @DerivedFrom(['$.wholesale_price', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
+  @DerivedFrom(['$.base_cost', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
-  wholesale_price: number;
+  base_cost: number;
 
-  @DerivedFrom(['$.retail_price', '$.pricing.retail', '$.RETAIL_PRICE'])
+  @DerivedFrom(['$.msrp', '$.pricing.retail', '$.RETAIL_PRICE'])
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
   @CrossValidate(['brand_line'], function(this: SupplierProductDraftV10) {
     const premiumBrands = ['jordan', 'premium', 'signature'];
-    if (premiumBrands.includes(this.brand_line) && this.retail_price < 100) {
+    if (premiumBrands.includes(this.brand_line) && this.msrp < 100) {
       return `Premium brand "${this.brand_line}" requires retail >= $100`;
     }
     return true;
   }, 'Premium brand minimum price')
-  retail_price: number;
+  msrp: number;
 
   // --- Size range with conditional validation + AI repair ---
 
@@ -430,7 +430,7 @@ class SupplierProductDraftV10 {
 
   // --- Color with fuzzy match + recovery ---
 
-  @DerivedFrom(['$.color', '$.specs.colorway', '$.COLOR'])
+  @DerivedFrom(['$.color_variant', '$.specs.colorway', '$.COLOR'])
   @CoerceTrim()
   @CoerceCase('lower')
   @CoerceFromSet<CatalogContext>(
@@ -445,7 +445,7 @@ class SupplierProductDraftV10 {
     }
   )
   @Catch((err, value) => value)  // Keep raw color if no match — reviewer will fix
-  color: string;
+  color_variant: string;
 
   // --- Description with AI repair ---
 

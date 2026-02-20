@@ -184,7 +184,7 @@ class SupplierProductDraftV5 {
   brand_line: string;
 
   @DerivedFrom([
-    '$.color',
+    '$.color_variant',
     '$.specs.colorway',
     '$.COLOR'
   ])
@@ -201,19 +201,19 @@ class SupplierProductDraftV5 {
       }
     }
   )
-  color: string;
+  color_variant: string;
 
   // --- Price fields (unchanged from Part 2) ---
 
-  @DerivedFrom(['$.wholesale_price', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
+  @DerivedFrom(['$.base_cost', '$.pricing.wholesale', '$.WHOLESALE_PRICE'])
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
-  wholesale_price: number;
+  base_cost: number;
 
-  @DerivedFrom(['$.retail_price', '$.pricing.retail', '$.RETAIL_PRICE'])
+  @DerivedFrom(['$.msrp', '$.pricing.retail', '$.RETAIL_PRICE'])
   @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
-  retail_price: number;
+  msrp: number;
 }
 ```
 
@@ -226,10 +226,10 @@ import { ValidationFactory } from '@firebrandanalytics/shared-utils/validation';
 
 // Load canonical values from the database
 const catalogContext: CatalogContext = {
-  categories: await das.query('SELECT DISTINCT name FROM categories'),
-  subcategories: await das.query('SELECT DISTINCT name FROM subcategories'),
-  brandLines: await das.query('SELECT DISTINCT name FROM brand_lines'),
-  colors: await das.query('SELECT DISTINCT name FROM colors'),
+  categories: (await das.query('SELECT DISTINCT name FROM categories')).map(r => r.name),
+  subcategories: (await das.query('SELECT DISTINCT name FROM subcategories')).map(r => r.name),
+  brandLines: (await das.query('SELECT DISTINCT name FROM brand_lines')).map(r => r.name),
+  colors: (await das.query('SELECT DISTINCT name FROM colors')).map(r => r.name),
   categorySynonyms: await das.query('SELECT canonical, synonyms FROM category_synonyms'),
 };
 
@@ -340,9 +340,9 @@ Here's a complete example that exercises all the matching features:
   "category": "baskeball",
   "subcategory": "mens",
   "brand_line": "jordon",
-  "color": "blk/wht",
-  "wholesale_price": "$95.00",
-  "retail_price": "$170.00"
+  "color_variant": "blk/wht",
+  "base_cost": "$95.00",
+  "msrp": "$170.00"
 }
 ```
 
@@ -366,9 +366,9 @@ const catalogContext: CatalogContext = {
   "category": "basketball",
   "subcategory": "men's",
   "brand_line": "jordan",
-  "color": "black/white",
-  "wholesale_price": 95,
-  "retail_price": 170
+  "color_variant": "black/white",
+  "base_cost": 95,
+  "msrp": 170
 }
 ```
 
@@ -379,7 +379,7 @@ Let's trace the fuzzy matches:
 | category | `"baskeball"` | `"basketball"` | Fuzzy match (score ~0.89 — one transposed letter) |
 | subcategory | `"mens"` | `"men's"` | Fuzzy match (score ~0.80 — missing apostrophe) |
 | brand_line | `"jordon"` | `"jordan"` | Fuzzy match (score ~0.83 — swapped vowel) |
-| color | `"blk/wht"` | `"black/white"` | Synonym match (defined in synonyms map) |
+| color_variant | `"blk/wht"` | `"black/white"` | Synonym match (defined in synonyms map) |
 
 Four fields corrected. No manual if/else. No string processing code. The validation library handled the typos, the missing apostrophe, the abbreviation, and the case normalization — all declaratively.
 
@@ -388,7 +388,7 @@ Four fields corrected. No manual if/else. No string processing code. The validat
 The V5 validator matches supplier values against the catalog, but it treats every field the same way regardless of context. In reality, validation rules need to adapt:
 
 - If the category is `"running"`, size ranges should be numeric (`"7-13"`). If the category is `"casual"`, sizes might be letters (`"S-XL"`).
-- The retail price should always be greater than the wholesale price.
+- The MSRP should always be greater than the base cost.
 - Some fields are only required for certain product types.
 
 In [Part 6: Conditionals + Object Rules](./part-06-conditionals-rules.md), you'll learn how to apply validation rules conditionally with `@If`/`@ElseIf`/`@Else`/`@EndIf`, enforce cross-field relationships with `@ObjectRule`, and validate property interdependencies with `@CrossValidate`.
