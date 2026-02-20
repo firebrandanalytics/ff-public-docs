@@ -1,15 +1,15 @@
 # Part 2: The Domain Prompt
 
-In this part, you'll learn how `GeneralCoderBot` handles prompt construction and how to write a **domain prompt** for your specific use case.
+In this part, you'll learn how `GeneralCoderBot` handles prompt construction and how to write a **domain prompt** using the prompt framework.
 
 ## What GeneralCoderBot Handles for You
 
-Unlike lower-level bot types where you build the entire prompt tree, `GeneralCoderBot` owns two key prompt responsibilities:
+`GeneralCoderBot` owns two key prompt responsibilities:
 
 1. **Output format instructions** -- the two-block format (JSON metadata + code block) that CoderBot's postprocessor expects
 2. **The `run()` function contract** -- telling the LLM how to structure its entry point
 
-These are **intrinsic** to CoderBot and built automatically from the profile metadata at initialization. You never need to write these yourself.
+These are **intrinsic** to CoderBot and built automatically from the profile metadata at initialization.
 
 ### The Two-Block Output Format
 
@@ -42,120 +42,166 @@ export async function run() {
 ```
 ````
 
-CoderBot's `postprocess_generator` parses both blocks:
-- The JSON metadata is stored alongside the code in working memory
-- The code is validated, stored in working memory, and executed in the Code Sandbox
-
-### The `run()` Function Contract
-
-The generated code must define a `run()` function as the entry point. For TypeScript, this is an async function that returns an object with `description` and `result`. For Python, it's a plain function returning a dict.
-
-GeneralCoderBot tells the LLM about this contract automatically -- you don't need to include output format or `run()` contract instructions in your domain prompt.
+CoderBot's `postprocess_generator` parses both blocks, stores them in working memory, and executes the code in the Code Sandbox.
 
 ## What You Provide: The Domain Prompt
 
-Your job is to write a **domain prompt** -- a plain string that describes:
+Your job is to write a **domain prompt** that describes:
 
-- What domain the bot operates in (e.g., "data science assistant for FireKicks")
+- What domain the bot operates in
 - What data sources are available and how to access them
 - Database schemas, table definitions, column types
 - Business rules, conventions, and constraints
-- Guidance on which packages to use for common tasks
 - Any domain-specific patterns the LLM should follow
 
 The domain prompt is appended after the intrinsic prompt sections, giving the LLM both the structural rules (from CoderBot) and the domain context (from you).
 
-## When You Don't Need a Domain Prompt
+For general-purpose computation (math, string processing, algorithms), no domain prompt is needed at all. This is the case for our TypeScript bot -- `DemoCoderBot` has no domain prompt.
 
-For general-purpose computation (math, string processing, algorithms), no domain prompt is needed at all. The bot's profile provides the language and runtime, and the intrinsic prompt handles the rest.
+## Building the FireKicks Domain Prompt
 
-This is the case for our TypeScript bot -- `DemoCoderBot` has no domain prompt. The user's natural language request is sufficient context for the LLM to generate code.
+For the data science bot, we need a domain prompt that teaches the LLM about the FireKicks database and how to query it via DAS. We build this using the **prompt framework** -- `PromptTemplateSectionNode` and `PromptTemplateListNode` -- which provides structured, composable prompts with semantic types.
 
-## Writing the FireKicks Domain Prompt
-
-For the data science bot, we need a domain prompt that teaches the LLM about the FireKicks database, how to query it via DAS, and data handling best practices.
-
-This prompt will be passed as a string to `GeneralCoderBot`'s constructor. Here's what we'll use:
+Create the file `apps/coder-bundle/src/prompts/FireKicksDomainPrompt.ts`:
 
 ```typescript
-const FIREKICKS_DOMAIN_PROMPT = `You are a data science assistant for FireKicks, an athletic footwear company.
-You receive natural language questions about the FireKicks business and produce Python code that queries the database and performs analysis.
+import {
+  PromptTemplateSectionNode,
+  PromptTemplateListNode,
+} from "@firebrandanalytics/ff-agent-sdk";
+import type { CODER_PTH } from "@firebrandanalytics/ff-agent-sdk";
 
-## Querying Data
+/**
+ * Build the domain prompt sections for the FireKicks data science bot.
+ *
+ * Each section is a PromptTemplateSectionNode with a semantic_type
+ * that helps the rendering engine understand its purpose:
+ *   - "context" — background information the LLM needs
+ *   - "rule" — instructions the LLM must follow
+ */
+export function buildFireKicksDomainSections(): PromptTemplateSectionNode<CODER_PTH>[] {
+  return [
+    // Role and purpose
+    new PromptTemplateSectionNode<CODER_PTH>({
+      semantic_type: "context",
+      content: "Role:",
+      children: [
+        "You are a data science assistant for FireKicks, an athletic footwear company.",
+        "You receive natural language questions about the FireKicks business and produce Python code that queries the database and performs analysis.",
+      ],
+    }),
 
-Use the DAS (Data Access Service) client for all database queries:
-- \`das['firekicks'].query_df('SELECT ...')\` returns a pandas DataFrame
-- \`das['firekicks'].query_rows('SELECT ...')\` returns a list of dicts
-- Do NOT use \`dbs[]\` or any direct database connection — always use \`das[]\`
+    // How to query data via DAS
+    new PromptTemplateSectionNode<CODER_PTH>({
+      semantic_type: "context",
+      content: "Querying Data:",
+      children: [
+        "Use the DAS (Data Access Service) client for all database queries:",
+        "`das['firekicks'].query_df('SELECT ...')` returns a pandas DataFrame.",
+        "`das['firekicks'].query_rows('SELECT ...')` returns a list of dicts.",
+        "Do NOT use `dbs[]` or any direct database connection — always use `das[]`.",
+        "Import packages you need at the top of your code (e.g., `import pandas as pd`).",
+      ],
+    }),
 
-Import packages you need at the top of your code (e.g., \`import pandas as pd\`).
+    // Database schema
+    new PromptTemplateSectionNode<CODER_PTH>({
+      semantic_type: "context",
+      content: "Database Schema (FireKicks - PostgreSQL):",
+      children: [
+        "customers (customer_id PK, first_name, last_name, email, customer_segment [premium|athlete|bargain-hunter|regular], lifetime_value, city, state)",
+        "orders (order_id PK, customer_id FK→customers, order_date, total_amount, order_status)",
+        "order_items (order_item_id PK, order_id FK→orders, product_id FK→products, quantity, unit_price, line_total)",
+        "products (product_id PK, product_name, category, subcategory, base_cost, msrp)",
+        "product_reviews (review_id PK, product_id FK→products, customer_id FK→customers, rating [1-5], review_text)",
+        "returns (return_id PK, order_id FK→orders, product_id FK→products, return_date, reason, refund_amount)",
+        "",
+        "~10,000 customers, ~131,000 orders, ~200 products, ~50,000 reviews, ~10,000 returns.",
+      ],
+    }),
 
-## Database Schema (FireKicks - PostgreSQL)
-
-customers (customer_id PK, first_name, last_name, email, phone, date_of_birth, gender, registration_date, customer_segment [premium|athlete|bargain-hunter|regular], lifetime_value, preferred_channel, city, state, zip_code)
-orders (order_id PK, customer_id FK→customers, order_date, order_channel, retail_partner_id FK→retail_partners NULL, subtotal, tax_amount, shipping_cost, discount_amount, total_amount, order_status)
-order_items (order_item_id PK, order_id FK→orders, product_id FK→products, quantity, unit_price, discount_applied, line_total)
-products (product_id PK, product_name, category, subcategory, brand_line, base_cost, msrp, release_date, discontinued_date, color_variant, size_range, supplier_id FK→product_suppliers)
-product_reviews (review_id PK, product_id FK→products, customer_id FK→customers, rating [1-5], review_date, review_text, verified_purchase)
-returns (return_id PK, order_id FK→orders, product_id FK→products, return_date, reason, refund_amount)
-inventory (inventory_id PK, product_id FK→products, warehouse_location, quantity_on_hand, reorder_point, last_restocked_date)
-campaigns (campaign_id PK, campaign_name, campaign_type, start_date, end_date, budget, target_segment, channel)
-campaign_performance (performance_id PK, campaign_id FK→campaigns, date, impressions, clicks, conversions, spend, revenue_attributed)
-email_events (event_id PK, campaign_id FK→campaigns, customer_id FK→customers, event_type, event_timestamp)
-customer_preferences (preference_id PK, customer_id FK→customers, preferred_category, shoe_size, price_sensitivity, brand_loyalty_score)
-customer_segments_history (segment_history_id PK, customer_id FK→customers, segment, segment_start_date, segment_end_date, reason_for_change)
-customer_acquisition (acquisition_id PK, date, channel, new_customers, acquisition_cost, first_purchase_revenue)
-customer_addresses (address_id PK, customer_id FK→customers, street_address, city, state, zip_code, country, is_primary)
-daily_sales_summary (summary_date PK, channel, total_orders, total_revenue, total_cost, total_profit, avg_order_value)
-monthly_financials (month_date PK, revenue, cogs, marketing_expense, operations_expense, shipping_expense, net_profit, profit_margin)
-shipping_performance (shipment_id PK, order_id FK→orders, ship_date, delivery_date, carrier, shipping_method, on_time)
-retail_partners (retail_partner_id PK, partner_name, partner_type, city, state, commission_rate, partnership_start_date)
-product_suppliers (supplier_id PK, supplier_name, country, lead_time_days, quality_rating, primary_material)
-website_traffic (traffic_id PK, date, sessions, unique_visitors, page_views, bounce_rate, avg_session_duration, conversion_rate)
-
-Views: product_performance (pre-aggregated product stats), campaign_roi_summary (campaign ROI), customer_nearest_store (spatial join).
-
-~10,000 customers, ~131,000 orders, ~200 products, ~50,000 reviews, ~10,000 returns.
-
-## Data Handling Rules
-
-- Return JSON-serializable results. Use \`.to_dict('records')\` for DataFrames.
-- Cast Decimal/numeric columns with \`.astype(float)\` before calculations.
-- For statistical analysis, use scipy.stats (e.g., \`scipy.stats.pearsonr\`, \`scipy.stats.linregress\`).
-- Round numeric results to 4 decimal places.
-- Do not produce visualizations or plots — return numeric/tabular results only.
-- Handle edge cases (empty results, division by zero) gracefully.`;
+    // Data handling rules
+    new PromptTemplateSectionNode<CODER_PTH>({
+      semantic_type: "rule",
+      content: "Data Handling Rules:",
+      children: [
+        new PromptTemplateListNode<CODER_PTH>({
+          semantic_type: "rule",
+          children: [
+            "Return JSON-serializable results. Use `.to_dict('records')` for DataFrames.",
+            "Cast Decimal/numeric columns with `.astype(float)` before calculations.",
+            "For statistical analysis, use scipy.stats (e.g., `scipy.stats.pearsonr`).",
+            "Round numeric results to 4 decimal places.",
+            "Do not produce visualizations or plots — return numeric/tabular results only.",
+            "Handle edge cases (empty results, division by zero) gracefully.",
+          ],
+          list_label_function: (_req: any, _child: any, idx: number) =>
+            `${idx + 1}. `,
+        }),
+      ],
+    }),
+  ];
+}
 ```
 
-### What's in the Domain Prompt
+### Understanding the Prompt Components
 
-**Context** -- tells the LLM its role and the domain it operates in.
+**`PromptTemplateSectionNode`** creates a section with a heading and child content. The `semantic_type` field categorizes the section:
+- `"context"` -- background information (role, schema, data access patterns)
+- `"rule"` -- instructions the LLM must follow (data handling, output format)
 
-**Data access instructions** -- how to query the database using DAS. The `das['firekicks']` client is injected by the sandbox run script at execution time. The prompt tells the LLM to use it because DAS requires harness-level setup and isn't a standard importable package.
+**`PromptTemplateListNode`** renders its children as a numbered list. The `list_label_function` controls the prefix format.
 
-**Database schema** -- table definitions with column names, types, primary keys, and foreign key relationships. This is critical -- without schema context, the LLM would guess table and column names.
+**`CODER_PTH`** is the prompt type helper for CoderBot. It defines the type signature for the prompt rendering pipeline.
 
-**Data handling rules** -- conventions for serialization, numeric precision, and output format. These are domain-specific rules that apply to FireKicks analysis.
+### How Sections Render
 
-### What's NOT in the Domain Prompt
+When the prompt is rendered for the LLM, the tree of nodes becomes structured text:
 
-Notice what we did **not** include:
+```
+Role:
+You are a data science assistant for FireKicks, an athletic footwear company.
+You receive natural language questions about the FireKicks business...
 
-- **Output format** (two-block JSON + code) -- intrinsic to CoderBot
-- **`run()` function contract** -- intrinsic to CoderBot
-- **Language specification** (Python vs TypeScript) -- comes from the profile
-- **Package pre-import instructions** -- packages are installed in the runtime but user code handles its own imports with standard `import` statements
+Querying Data:
+Use the DAS (Data Access Service) client for all database queries:
+...
+
+Database Schema (FireKicks - PostgreSQL):
+customers (customer_id PK, ...)
+...
+
+Data Handling Rules:
+1. Return JSON-serializable results. Use `.to_dict('records')` for DataFrames.
+2. Cast Decimal/numeric columns with `.astype(float)` before calculations.
+...
+```
+
+### Why Use the Prompt Framework?
+
+The prompt framework provides advantages over plain text strings:
+
+- **Semantic types** -- the rendering engine can filter, reorder, or transform sections based on their type
+- **Composability** -- sections can be reused, conditionally included, or data-driven
+- **Dynamic content** -- sections can use content functions that resolve at render time based on the request
+- **Consistency** -- all FireFoundry prompts follow the same structured pattern
+
+## Build and Verify
+
+```bash
+pnpm run build
+```
+
+The prompt file compiles as a standalone module. It doesn't connect to anything yet -- we'll wire it into the bot in Part 3.
 
 ## Key Points
 
 > **CoderBot owns the format, you own the domain** -- GeneralCoderBot handles output format and `run()` contract automatically. Your domain prompt describes the problem space: schemas, business rules, data access patterns.
 
-> **Domain prompts are plain strings** -- No `Prompt` classes, no `PromptTemplateSectionNode` trees. Just a string passed to the constructor. Keep it simple.
+> **Use the prompt framework** -- Build domain prompts with `PromptTemplateSectionNode` and `PromptTemplateListNode` for structured, composable prompts. This is a core pattern in FireFoundry.
 
-> **Not every bot needs a domain prompt** -- For general-purpose computation, the profile and intrinsic prompt are sufficient. Only add a domain prompt when the LLM needs specific domain context.
-
-> **DAS access is documented in the domain prompt** -- Because `das['firekicks']` is injected by the run script (not a standard import), the domain prompt tells the LLM how to use it. Standard packages like `pandas` are imported normally by the generated code.
+> **Not every bot needs a domain prompt** -- For general-purpose computation, the profile and intrinsic prompt are sufficient.
 
 ---
 
-**Next:** [Part 3: The Bot](./part-03-bot.md) -- Create DemoCoderBot and DemoDataScienceBot using the simplified GeneralCoderBot constructor.
+**Next:** [Part 3: The Bot](./part-03-bot.md) -- Create DemoCoderBot and DemoDataScienceBot using the profile-driven GeneralCoderBot constructor.

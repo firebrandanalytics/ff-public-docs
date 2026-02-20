@@ -17,16 +17,12 @@ code-sandbox/
   apps/                    # Agent bundle applications
   packages/                # Shared packages
     shared-types/          # Shared TypeScript types
-  helm/                    # Kubernetes deployment configuration
-    values.local.yaml      # Local environment settings
-    secrets.yaml.template  # Secret values template
   scripts/                 # Build and development scripts
   package.json             # Root workspace configuration
   pnpm-workspace.yaml      # pnpm workspace definition
   turbo.json               # Turborepo build pipeline
   tsconfig.json            # Root TypeScript configuration
   firefoundry.json         # FireFoundry application metadata
-  docker-compose.yml       # Local development services
   Dockerfile               # Container build definition
   .npmrc                   # npm registry configuration
 ```

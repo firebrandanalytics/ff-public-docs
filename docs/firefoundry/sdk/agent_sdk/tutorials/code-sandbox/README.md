@@ -2,39 +2,50 @@
 
 Imagine asking a question in plain English -- *"What is the average order value by customer segment?"* -- and getting back a precise, data-driven answer seconds later. Behind the scenes, an LLM writes Python code, executes it against a real database, and returns the result. No notebooks, no manual queries, no context-switching.
 
-That's what you'll build in this tutorial: an AI-powered agent that turns natural language into executable code, runs it in a secure sandbox, and hands back structured results. You'll actually build two agents -- a **TypeScript bot** for general computation and a **Python data science bot** that queries a live database using pandas, numpy, and the Data Access Service (DAS).
+That's what you'll build in this tutorial: an AI-powered agent that turns natural language into executable code, runs it in a secure sandbox, and hands back structured results. You'll build two agents -- a **TypeScript bot** for general computation and a **Python data science bot** that queries a live database -- plus a **web GUI** for interacting with them.
 
-By the end, you'll have a working REST API where you can POST a question like *"Which customer segment has the highest return rate?"* and get back a JSON response with the answer.
+## What is the Code Sandbox?
+
+The **Code Sandbox Service** is a FireFoundry platform service that provides secure, isolated code execution for AI agents. When an LLM generates code, the sandbox compiles it, runs it in an isolated environment, and returns structured results -- all without exposing raw credentials or allowing untrusted code to affect other services.
+
+Key capabilities:
+- **Isolated execution** -- each code run gets its own sandboxed environment
+- **Profile-based configuration** -- named profiles bundle runtime, harness, and data connections
+- **Data Access Service (DAS) integration** -- generated code can query databases through the DAS proxy without handling credentials directly
+- **TypeScript and Python runtimes** -- profiles specify the target language and execution harness
+
+For a deeper look at the architecture, security model, and configuration options, see the [Code Sandbox Service documentation](../../platform/services/code-sandbox.md).
 
 ## What You'll Learn
 
 - Turning natural language prompts into executable code with `GeneralCoderBot`
-- Writing domain prompts that provide schema context and data access instructions
+- Writing structured domain prompts using the prompt framework (`PromptTemplateSectionNode`, `PromptTemplateListNode`)
 - Using **profiles** as the single source of truth for language, runtime, harness, and DAS connections
 - Wiring entities to bots with `BotRunnableEntityMixin` and `@RegisterBot`
-- Executing generated code safely in the Code Sandbox Service
 - Building custom API endpoints with `@ApiEndpoint`
+- Building a Next.js web GUI that communicates with the agent bundle
 
 ## What You'll Build
 
-An agent bundle with two endpoints:
+An agent bundle with two endpoints and a web interface:
 
 - **`POST /api/execute`** -- accepts a natural language prompt, generates TypeScript code, executes it, and returns the result
 - **`POST /api/analyze`** -- accepts a data science question, generates Python+pandas code that queries a database via DAS, and returns the analysis
+- **Web GUI** -- a browser-based interface for entering prompts, switching between modes, and viewing results
 
 Under the hood:
 
 | Component | Purpose |
 |-----------|---------|
 | **DemoCoderBot** | Generates and executes TypeScript via the `finance-typescript` profile |
-| **DemoDataScienceBot** | Generates and executes Python via the `firekicks-datascience` profile, with a domain prompt providing schema and DAS context |
+| **DemoDataScienceBot** | Generates and executes Python via the `firekicks-datascience` profile, with a structured domain prompt |
 | **CodeTaskEntity** | Orchestrates TypeScript code generation + execution |
 | **DataScienceTaskEntity** | Orchestrates Python data science analysis |
 
 ## Prerequisites
 
 - `ff-cli` installed and configured
-- Access to a FireFoundry cluster (or local dev environment with Code Sandbox Service)
+- Access to a FireFoundry cluster with Code Sandbox Service deployed
 - Node.js 20+
 - `pnpm` package manager
 
@@ -42,11 +53,12 @@ Under the hood:
 
 | Part | Title | Topics |
 |------|-------|--------|
-| [Part 1](./part-01-setup.md) | Project Setup | Scaffolding with ff-cli, SDK dependency wiring, project structure |
-| [Part 2](./part-02-prompt.md) | The Domain Prompt | CoderBot intrinsic prompts, domain prompt design, schema context, DAS instructions |
+| [Part 1](./part-01-setup.md) | Project Setup | Scaffolding with ff-cli, project structure, first deploy |
+| [Part 2](./part-02-prompt.md) | The Domain Prompt | Prompt framework, PromptTemplateSectionNode, domain prompt design |
 | [Part 3](./part-03-bot.md) | The Bot | GeneralCoderBot, profile-driven constructor, @RegisterBot |
-| [Part 4](./part-04-entity-and-bundle.md) | Entity & Bundle | CodeTaskEntity, DataScienceTaskEntity, BotRunnableEntityMixin, agent bundle wiring, API endpoints |
-| [Part 5](./part-05-deploy-and-test.md) | Deploy & Test | Local cluster setup, deployment with ff-cli, testing with curl |
+| [Part 4](./part-04-entity-and-bundle.md) | Entity & Bundle | BotRunnableEntityMixin, API endpoints, entity-bot wiring |
+| [Part 5](./part-05-deploy-and-test.md) | Deploy & Test | Final deployment, testing both endpoints, troubleshooting |
+| [Part 6](./part-06-gui.md) | Web GUI | Next.js interface, API route proxying, result display |
 
 ## Architecture Overview
 
@@ -54,13 +66,10 @@ Under the hood:
 User sends prompt (natural language)
        |
        v
+  Web GUI  or  ff-sdk-cli
+       |
+       v
   POST /api/execute  or  POST /api/analyze
-       |                       |
-       v                       v
-CoderBundleAgentBundle    CoderBundleAgentBundle
-       |                       |
-       v                       v
-CodeTaskEntity.run()     DataScienceTaskEntity.run()
        |                       |
        v                       v
 DemoCoderBot             DemoDataScienceBot
@@ -73,8 +82,6 @@ DemoCoderBot             DemoDataScienceBot
        |                       |-- LLM call
        v                       v
 Code Sandbox Service     Code Sandbox Service
-  profile:                 profile:
-  "finance-typescript"     "firekicks-datascience"
        |                       |
        v                       v
   TypeScript harness       Python harness
@@ -93,8 +100,8 @@ The complete source code is available in the [ff-demo-apps](https://github.com/f
 
 ## Related
 
+- [Code Sandbox Service](../../platform/services/code-sandbox.md) -- platform service documentation
 - [News Analysis Tutorial](../news-analysis/README.md) -- beginner tutorial covering StructuredOutputBotMixin and entity relationships
-- [Illustrated Story Tutorial](../illustrated-story/README.md) -- tutorial covering multi-step workflows and image generation
 - [Bot Tutorial](../../core/bot_tutorial.md) -- comprehensive bot development guide
 
 ---
