@@ -126,7 +126,7 @@ FireFoundry provides a collection of specialized microservices that work togethe
 
 **Tier 1 - Core Runtime (GA - Production Ready)**
 * **[Broker Service](./platform/services/ff-broker.md)** (v5.2.7): Intelligent AI model routing with multi-provider support, cost-based selection, and automatic failover.
-* **[Context Service](./platform/services/context-service.md)** (v2.0.0): Working memory and blob storage with multi-cloud support (Azure, Google Cloud) and MCP integration.
+* **[Context Service](./platform/services/context-service/README.md)** (v2.0.0): Working memory and blob storage with multi-cloud support (Azure, Google Cloud) and MCP integration.
 * **[Code Sandbox](./platform/services/code-sandbox.md)** (v2.0.0): Secure code execution environment with ODBC connectivity, Chart.js visualization, and DataFrame processing.
 
 **Tier 2 - Extended Services (Beta)**

@@ -259,4 +259,4 @@ const result = await client.invoke_entity_method_with_blobs(
 - [File Upload Patterns](../feature_guides/file-upload-patterns.md) -- comprehensive patterns including retrieval, pipelines, error handling, and client examples
 - [File Upload Tutorial](../tutorials/file-upload/README.md) -- step-by-step tutorial building a file upload agent bundle with web UI
 - [Report Generator Part 4](../tutorials/report-generator/part-04-working-memory.md) -- Working Memory in the context of a multi-stage pipeline
-- [Context Service](../../../platform/services/context-service.md) -- platform service documentation
+- [Context Service](../../../platform/services/context-service/README.md) -- platform service documentation
