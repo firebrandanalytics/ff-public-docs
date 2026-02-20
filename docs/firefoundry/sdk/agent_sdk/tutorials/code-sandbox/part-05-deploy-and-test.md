@@ -21,6 +21,7 @@ The agent bundle needs environment variables to connect to the Code Sandbox Serv
 | `CODE_SANDBOX_URL` | URL of the Code Sandbox Manager service |
 | `CODE_SANDBOX_TS_PROFILE` | Profile name for TypeScript execution (e.g., `finance-typescript`) |
 | `CODE_SANDBOX_DS_PROFILE` | Profile name for Python data science execution (e.g., `firekicks-datascience`) |
+| `DATA_ACCESS_URL` | URL of the Data Access Service (for schema fetching) |
 | `LLM_BROKER_HOST` | LLM broker service host |
 | `LLM_BROKER_PORT` | LLM broker service port |
 
@@ -188,7 +189,7 @@ In this tutorial, you've created a complete agent bundle that:
 
 ```
 DemoCoderBot               -> GeneralCoderBot with finance-typescript profile (no domain prompt)
-DemoDataScienceBot         -> GeneralCoderBot with firekicks-datascience profile + domain prompt
+DemoDataScienceBot         -> GeneralCoderBot with firekicks-datascience profile + DAS schema fetch
 CodeTaskEntity             -> Entity + BotRunnableEntityMixin -> DemoCoderBot
 DataScienceTaskEntity      -> Entity + BotRunnableEntityMixin -> DemoDataScienceBot
 CoderBundleAgentBundle     -> API endpoints (/execute, /analyze) + entity factory
@@ -197,9 +198,9 @@ CoderBundleAgentBundle     -> API endpoints (/execute, /analyze) + entity factor
 ### Key Patterns Learned
 
 - **Profile-driven bots** -- Profile is the single source of truth for language, harness, DAS connections, and run script contract
+- **Dynamic schema from DAS** -- Bot fetches database schema from the Data Access Service at init and builds the domain prompt dynamically
 - **Prompt framework for domain prompts** -- Use `PromptTemplateSectionNode` and `PromptTemplateListNode` with semantic types
-- **GeneralCoderBot** -- Minimal constructor (`name`, `modelPoolName`, `profile`, optional `domainPrompt`)
-- **DAS integration** -- Secure database access through the Data Access Service
+- **GeneralCoderBot** -- Minimal constructor (`name`, `modelPoolName`, `profile`) with domain prompt added during init
 - **BotRunnableEntityMixin** -- Decoupled entity-bot wiring via registry
 - **@ApiEndpoint** -- REST endpoints for external consumers
 

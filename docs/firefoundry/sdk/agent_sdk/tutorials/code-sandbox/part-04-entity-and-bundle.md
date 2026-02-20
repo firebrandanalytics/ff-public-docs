@@ -280,20 +280,20 @@ import {
 import { CoderBundleConstructors } from "./constructors.js";
 import type { GeneralCoderOutput } from "@firebrandanalytics/ff-agent-sdk";
 
-const APP_ID = "37f3b877-f486-4bb7-a86b-173b48cc094d";
+const AGENT_BUNDLE_ID = "37f3b877-f486-4bb7-a86b-173b48cc094d";
 
 export class CoderBundleAgentBundle extends FFAgentBundle<any> {
   constructor() {
     super(
       {
-        id: APP_ID,
-        application_id: APP_ID,
+        id: AGENT_BUNDLE_ID,
+        application_id: AGENT_BUNDLE_ID,
         name: "CoderBundle",
         type: "agent_bundle",
         description: "Code sandbox demo using GeneralCoderBot and Code Sandbox Service",
       },
       CoderBundleConstructors,
-      createEntityClient(APP_ID)
+      createEntityClient(AGENT_BUNDLE_ID)
     );
   }
 
@@ -487,4 +487,4 @@ All packages should build with zero errors. The full agent bundle is now wired a
 
 ---
 
-**Next:** [Part 5: Deploy & Test](./part-05-deploy-and-test.md) -- Deploy to a local FireFoundry cluster and test with curl.
+**Next:** [Part 5: Deploy & Test](./part-05-deploy-and-test.md) -- Deploy to your FireFoundry cluster and test both endpoints.

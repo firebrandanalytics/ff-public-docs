@@ -1,6 +1,15 @@
 # Part 2: The Domain Prompt
 
-In this part, you'll learn how `GeneralCoderBot` handles prompt construction and how to write a **domain prompt** using the prompt framework.
+In this part, you'll learn how `GeneralCoderBot` handles prompt construction and how to write a **domain prompt** that teaches the AI about your problem space.
+
+## What Gets Solved at Build Time vs. Runtime
+
+It's important to understand the separation of concerns:
+
+- **Build time (you, the developer):** You define the *problem space* — what data is available, how to access it, what rules to follow. This is the **domain prompt**.
+- **Runtime (your users):** Users submit *specific problems* — "What is the average order value by customer segment?" — and the AI writes code to solve them.
+
+Your domain prompt is **not** the problem being solved. It's the context that enables the AI to solve *whatever problem your users submit*. You're building a reusable problem solver.
 
 ## What GeneralCoderBot Handles for You
 
@@ -46,21 +55,19 @@ CoderBot's `postprocess_generator` parses both blocks, stores them in working me
 
 ## What You Provide: The Domain Prompt
 
-Your job is to write a **domain prompt** that describes:
+Your job is to write a **domain prompt** that describes the problem space your users will be working in:
 
-- What domain the bot operates in
-- What data sources are available and how to access them
-- Database schemas, table definitions, column types
+- What domain the bot operates in (role)
+- What data sources are available and how to query them
 - Business rules, conventions, and constraints
-- Any domain-specific patterns the LLM should follow
 
 The domain prompt is appended after the intrinsic prompt sections, giving the LLM both the structural rules (from CoderBot) and the domain context (from you).
 
-For general-purpose computation (math, string processing, algorithms), no domain prompt is needed at all. This is the case for our TypeScript bot -- `DemoCoderBot` has no domain prompt.
-
 ## Building the FireKicks Domain Prompt
 
-For the data science bot, we need a domain prompt that teaches the LLM about the FireKicks database and how to query it via DAS. We build this using the **prompt framework** -- `PromptTemplateSectionNode` and `PromptTemplateListNode` -- which provides structured, composable prompts with semantic types.
+For the data science bot, we need a domain prompt that teaches the LLM about the FireKicks database and how to query it via DAS (Data Access Service). We build this using the **prompt framework** -- `PromptTemplateSectionNode` and `PromptTemplateListNode` -- which provides structured, composable prompts with semantic types.
+
+A key design principle: **the database schema should be fetched dynamically from DAS**, not hardcoded. This means schema changes (new tables, renamed columns) are picked up automatically without redeploying the agent bundle.
 
 Create the file `apps/coder-bundle/src/prompts/FireKicksDomainPrompt.ts`:
 
@@ -71,15 +78,57 @@ import {
 } from "@firebrandanalytics/ff-agent-sdk";
 import type { CODER_PTH } from "@firebrandanalytics/ff-agent-sdk";
 
+// ---------------------------------------------------------------------------
+// DAS schema types (matches the DAS /v1/connections/:name/schema response)
+// ---------------------------------------------------------------------------
+
+export interface DasColumnInfo {
+  name: string;
+  type: string;
+  normalizedType?: string;
+  nullable?: boolean;
+  primaryKey?: boolean;
+  description?: string;
+}
+
+export interface DasTableInfo {
+  name: string;
+  columns: DasColumnInfo[];
+}
+
+export interface DasSchemaInfo {
+  tables: DasTableInfo[];
+}
+
+// ---------------------------------------------------------------------------
+// Schema formatting — turns DAS schema objects into prompt-friendly strings
+// ---------------------------------------------------------------------------
+
+function formatTableForPrompt(table: DasTableInfo): string {
+  const cols = table.columns.map((c) => {
+    let desc = c.name;
+    if (c.primaryKey) desc += " PK";
+    if (c.type) desc += ` (${c.type})`;
+    return desc;
+  });
+  return `${table.name}: ${cols.join(", ")}`;
+}
+
+// ---------------------------------------------------------------------------
+// Domain prompt builder
+// ---------------------------------------------------------------------------
+
 /**
  * Build the domain prompt sections for the FireKicks data science bot.
  *
- * Each section is a PromptTemplateSectionNode with a semantic_type
- * that helps the rendering engine understand its purpose:
+ * Takes a DAS schema object as input — the schema is fetched dynamically
+ * during bot init, not hardcoded. Each section uses the prompt framework:
  *   - "context" — background information the LLM needs
  *   - "rule" — instructions the LLM must follow
  */
-export function buildFireKicksDomainSections(): PromptTemplateSectionNode<CODER_PTH>[] {
+export function buildFireKicksDomainSections(
+  schema: DasSchemaInfo,
+): PromptTemplateSectionNode<CODER_PTH>[] {
   return [
     // Role and purpose
     new PromptTemplateSectionNode<CODER_PTH>({
@@ -87,7 +136,7 @@ export function buildFireKicksDomainSections(): PromptTemplateSectionNode<CODER_
       content: "Role:",
       children: [
         "You are a data science assistant for FireKicks, an athletic footwear company.",
-        "You receive natural language questions about the FireKicks business and produce Python code that queries the database and performs analysis.",
+        "Users submit natural language questions about the FireKicks business. You produce Python code that queries the database and performs analysis to answer their question.",
       ],
     }),
 
@@ -99,25 +148,15 @@ export function buildFireKicksDomainSections(): PromptTemplateSectionNode<CODER_
         "Use the DAS (Data Access Service) client for all database queries:",
         "`das['firekicks'].query_df('SELECT ...')` returns a pandas DataFrame.",
         "`das['firekicks'].query_rows('SELECT ...')` returns a list of dicts.",
-        "Do NOT use `dbs[]` or any direct database connection — always use `das[]`.",
         "Import packages you need at the top of your code (e.g., `import pandas as pd`).",
       ],
     }),
 
-    // Database schema
+    // Database schema (from DAS — not hardcoded)
     new PromptTemplateSectionNode<CODER_PTH>({
       semantic_type: "context",
-      content: "Database Schema (FireKicks - PostgreSQL):",
-      children: [
-        "customers (customer_id PK, first_name, last_name, email, customer_segment [premium|athlete|bargain-hunter|regular], lifetime_value, city, state)",
-        "orders (order_id PK, customer_id FK→customers, order_date, total_amount, order_status)",
-        "order_items (order_item_id PK, order_id FK→orders, product_id FK→products, quantity, unit_price, line_total)",
-        "products (product_id PK, product_name, category, subcategory, base_cost, msrp)",
-        "product_reviews (review_id PK, product_id FK→products, customer_id FK→customers, rating [1-5], review_text)",
-        "returns (return_id PK, order_id FK→orders, product_id FK→products, return_date, reason, refund_amount)",
-        "",
-        "~10,000 customers, ~131,000 orders, ~200 products, ~50,000 reviews, ~10,000 returns.",
-      ],
+      content: "Database Schema (FireKicks):",
+      children: schema.tables.map(formatTableForPrompt),
     }),
 
     // Data handling rules
@@ -154,6 +193,16 @@ export function buildFireKicksDomainSections(): PromptTemplateSectionNode<CODER_
 
 **`CODER_PTH`** is the prompt type helper for CoderBot. It defines the type signature for the prompt rendering pipeline.
 
+### Dynamic Schema — Why Not Hardcode?
+
+Notice that `buildFireKicksDomainSections` takes a `DasSchemaInfo` parameter rather than embedding the schema as string literals. This is intentional:
+
+- **Schema changes are automatic** -- add a table to the database and the prompt picks it up on next bot init
+- **No code changes for schema updates** -- the agent bundle doesn't need redeployment
+- **DAS is the single source of truth** -- the same schema definition serves both query execution and prompt generation
+
+In Part 3, you'll see how the bot fetches this schema from DAS during initialization.
+
 ### How Sections Render
 
 When the prompt is rendered for the LLM, the tree of nodes becomes structured text:
@@ -161,14 +210,15 @@ When the prompt is rendered for the LLM, the tree of nodes becomes structured te
 ```
 Role:
 You are a data science assistant for FireKicks, an athletic footwear company.
-You receive natural language questions about the FireKicks business...
+Users submit natural language questions about the FireKicks business...
 
 Querying Data:
 Use the DAS (Data Access Service) client for all database queries:
 ...
 
-Database Schema (FireKicks - PostgreSQL):
-customers (customer_id PK, ...)
+Database Schema (FireKicks):
+customers: customer_id PK (integer), first_name (varchar), ...
+orders: order_id PK (integer), customer_id (integer), ...
 ...
 
 Data Handling Rules:
@@ -196,11 +246,11 @@ The prompt file compiles as a standalone module. It doesn't connect to anything 
 
 ## Key Points
 
-> **CoderBot owns the format, you own the domain** -- GeneralCoderBot handles output format and `run()` contract automatically. Your domain prompt describes the problem space: schemas, business rules, data access patterns.
+> **CoderBot owns the format, you own the domain** -- GeneralCoderBot handles output format and `run()` contract automatically. Your domain prompt describes the problem space: data access patterns, schema, business rules.
 
 > **Use the prompt framework** -- Build domain prompts with `PromptTemplateSectionNode` and `PromptTemplateListNode` for structured, composable prompts. This is a core pattern in FireFoundry.
 
-> **Not every bot needs a domain prompt** -- For general-purpose computation, the profile and intrinsic prompt are sufficient.
+> **Fetch schema dynamically** -- The domain prompt builder takes a DAS schema object as input, not hardcoded strings. DAS is the single source of truth for schema information.
 
 ---
 

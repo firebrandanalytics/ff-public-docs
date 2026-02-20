@@ -1,8 +1,8 @@
 # Code Sandbox Tutorial
 
-Imagine asking a question in plain English -- *"What is the average order value by customer segment?"* -- and getting back a precise, data-driven answer seconds later. Behind the scenes, an LLM writes Python code, executes it against a real database, and returns the result. No notebooks, no manual queries, no context-switching.
+Imagine your users asking questions in plain English -- *"What is the average order value by customer segment?"* -- and getting back precise, data-driven answers seconds later. Behind the scenes, an LLM writes Python code, executes it against a real database, and returns the result. No notebooks, no manual queries, no context-switching.
 
-That's what you'll build in this tutorial: an AI-powered agent that turns natural language into executable code, runs it in a secure sandbox, and hands back structured results. You'll build two agents -- a **TypeScript bot** for general computation and a **Python data science bot** that queries a live database -- plus a **web GUI** for interacting with them.
+That's what you'll build in this tutorial: a **reusable AI-powered agent** that your users can talk to. You define the problem space (what data is available, how to access it, what rules to follow) and the agent handles whatever question a user submits. You'll build two agents -- a **TypeScript bot** for general computation and a **Python data science bot** that queries a live database -- plus a **web GUI** for interacting with them.
 
 ## What is the Code Sandbox?
 
@@ -38,7 +38,7 @@ Under the hood:
 | Component | Purpose |
 |-----------|---------|
 | **DemoCoderBot** | Generates and executes TypeScript via the `finance-typescript` profile |
-| **DemoDataScienceBot** | Generates and executes Python via the `firekicks-datascience` profile, with a structured domain prompt |
+| **DemoDataScienceBot** | Generates and executes Python via the `firekicks-datascience` profile, with schema fetched from DAS |
 | **CodeTaskEntity** | Orchestrates TypeScript code generation + execution |
 | **DataScienceTaskEntity** | Orchestrates Python data science analysis |
 
@@ -78,7 +78,7 @@ DemoCoderBot             DemoDataScienceBot
        |-- profile:            |-- profile:
        |   finance-typescript  |   firekicks-datascience
        |-- intrinsic prompt    |-- intrinsic prompt
-       |-- LLM call            |-- domain prompt (schema)
+       |-- LLM call            |-- domain prompt (schema from DAS)
        |                       |-- LLM call
        v                       v
 Code Sandbox Service     Code Sandbox Service
