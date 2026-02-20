@@ -294,5 +294,6 @@ The node ID used for traversal comes from `request.context_provider.get_context(
 
 - [Context Service — Concepts](../../../platform/services/context-service/concepts.md) — how history reconstruction works under the hood
 - [Context Service — Getting Started](../../../platform/services/context-service/getting-started.md) — register custom mappings, call `GetChatHistory` directly
+- [Mapping Examples](../../../platform/services/context-service/mapping-examples.md) — worked examples: simple chat (default mapping) and FireIQ-style (custom mapping)
 - [Working Memory Guide](./working-memory.md) — blob storage for files and documents
 - [Advanced Bot Mixin Patterns](../feature_guides/advanced-bot-mixin-patterns.md) — composing mixins, custom mixin patterns

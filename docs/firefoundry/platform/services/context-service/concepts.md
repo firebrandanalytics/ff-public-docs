@@ -102,6 +102,8 @@ App C: "report_chat"     → includes only ConversationTurn entities with status
 
 When a bot calls `GetChatHistory`, it passes the node ID and optionally the mapping name. The Context Service applies the specified mapping (or `simple_chat` if none is given) and returns ordered `ChatMessage[]`.
 
+For worked examples of both the default and custom mapping patterns, including entity graph diagrams and SDK code, see [Mapping Examples](./mapping-examples.md).
+
 ---
 
 ## Context Assembly
@@ -164,5 +166,6 @@ The client is used directly by agent bundles for working memory operations, and 
 - [Overview](./README.md)
 - [Getting Started](./getting-started.md)
 - [Reference](./reference.md)
+- [Mapping Examples](./mapping-examples.md) — entity graph structures for default and custom chat history mappings
 - [Agent SDK — Chat History Guide](../../../sdk/agent_sdk/guides/chat-history.md)
 - [Agent SDK — Working Memory Guide](../../../sdk/agent_sdk/guides/working-memory.md)

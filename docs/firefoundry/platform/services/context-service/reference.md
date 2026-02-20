@@ -355,5 +355,6 @@ const client = new ContextServiceClient({
 - [Overview](./README.md)
 - [Concepts](./concepts.md)
 - [Getting Started](./getting-started.md)
+- [Mapping Examples](./mapping-examples.md) — entity graph structures for default and custom chat history mappings
 - [Agent SDK — Chat History Guide](../../../sdk/agent_sdk/guides/chat-history.md)
 - [Agent SDK — Working Memory Guide](../../../sdk/agent_sdk/guides/working-memory.md)
