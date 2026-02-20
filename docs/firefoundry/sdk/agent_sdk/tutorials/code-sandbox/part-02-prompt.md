@@ -178,24 +178,151 @@ Code Rules:
 6. Do not use console.log for output -- return all data from run().
 ```
 
+## Creating the Data Science Prompt
+
+For the data science bot, we need a richer prompt that includes database schema context and instructions for querying via the Data Access Service (DAS).
+
+Create the file `apps/coder-bundle/src/prompts/DataScienceCoderPrompt.ts`:
+
+```typescript
+import {
+  Prompt,
+  PromptTypeHelper,
+  PromptTemplateNode,
+  PromptTemplateSectionNode,
+  PromptTemplateListNode,
+  RegisterPrompt,
+} from "@firebrandanalytics/ff-agent-sdk";
+
+type DS_PROMPT_PTH = PromptTypeHelper<string, { static: {}; request: {} }>;
+
+@RegisterPrompt("DataScienceCoderPrompt")
+export class DataScienceCoderPrompt extends Prompt<DS_PROMPT_PTH> {
+  constructor(
+    role: "system" | "user" | "assistant",
+    options?: DS_PROMPT_PTH["options"]
+  ) {
+    super(role, options ?? {});
+    this.add_section(this.get_Context_Section());
+    this.add_section(this.get_Schema_Section());
+    this.add_section(this.get_OutputFormat_Section());
+    this.add_section(this.get_CodeRules_Section());
+    this.add_section(this.get_Examples_Section());
+  }
+
+  protected get_Context_Section(): PromptTemplateNode<DS_PROMPT_PTH> {
+    return new PromptTemplateSectionNode<DS_PROMPT_PTH>({
+      semantic_type: "context",
+      content: "Context:",
+      children: [
+        "You are a Python data science assistant for FireKicks, an athletic footwear company.",
+        "You receive natural language questions about the FireKicks business and produce Python code that queries the database and performs analysis.",
+        "Your code will be executed in a sandboxed environment with pandas (pd), numpy (np), and scipy.stats (scipy_stats) pre-imported.",
+        "The DAS (Data Access Service) client is available as das['firekicks'] for database queries.",
+      ],
+    });
+  }
+
+  protected get_Schema_Section(): PromptTemplateNode<DS_PROMPT_PTH> {
+    return new PromptTemplateSectionNode<DS_PROMPT_PTH>({
+      semantic_type: "context",
+      content: "Database Schema (FireKicks - PostgreSQL):",
+      children: [
+        `customers (customer_id PK, first_name, last_name, email, customer_segment [premium|athlete|bargain-hunter|regular], lifetime_value, city, state)`,
+        `orders (order_id PK, customer_id FK→customers, order_date, total_amount, order_status)`,
+        `order_items (order_item_id PK, order_id FK→orders, product_id FK→products, quantity, unit_price, line_total)`,
+        `products (product_id PK, product_name, category, subcategory, base_cost, msrp)`,
+        `product_reviews (review_id PK, product_id FK→products, customer_id FK→customers, rating [1-5], review_text)`,
+        // ... additional tables as needed for your dataset
+      ],
+    });
+  }
+
+  protected get_OutputFormat_Section(): PromptTemplateNode<DS_PROMPT_PTH> {
+    return new PromptTemplateSectionNode<DS_PROMPT_PTH>({
+      semantic_type: "rule",
+      content: "Output Format:",
+      children: [
+        "You MUST produce exactly two fenced code blocks in your response:",
+        '1. A ```json block containing metadata: {"description": "...", "reasoning": "..."}.',
+        "2. A ```python block containing the executable Python code.",
+        "Do not include any other fenced code blocks.",
+      ],
+    });
+  }
+
+  protected get_CodeRules_Section(): PromptTemplateNode<DS_PROMPT_PTH> {
+    return new PromptTemplateSectionNode<DS_PROMPT_PTH>({
+      semantic_type: "rule",
+      content: "Code Rules:",
+      children: [
+        new PromptTemplateListNode<DS_PROMPT_PTH>({
+          semantic_type: "rule",
+          children: [
+            "Your code MUST define a run() function as the entry point.",
+            'The run() function must return a dict with at least {"description": str, "result": ...}.',
+            "Use das['firekicks'].query_df('SELECT ...') to run SQL and get a pandas DataFrame.",
+            "Use das['firekicks'].query_rows('SELECT ...') to get a list of dicts instead.",
+            "pandas (pd), numpy (np), and scipy.stats (scipy_stats) are pre-imported and available.",
+            "Do NOT import pandas, numpy, or scipy — they are already in scope.",
+            "Do NOT use dbs[] or any direct database connection — always use das[] for queries.",
+            "Return JSON-serializable results. Use .to_dict('records') for DataFrames.",
+            "Cast Decimal/numeric columns with .astype(float) before calculations.",
+            "Round numeric results to 4 decimal places.",
+            "Do not produce visualizations or plots. Return numeric/tabular results only.",
+          ],
+          list_label_function: (_req: any, _child: any, idx: number) =>
+            `${idx + 1}. `,
+        }),
+      ],
+    });
+  }
+
+  protected get_Examples_Section(): PromptTemplateNode<DS_PROMPT_PTH> {
+    return new PromptTemplateSectionNode<DS_PROMPT_PTH>({
+      semantic_type: "context",
+      content: "Example Questions (for reference):",
+      children: [
+        '- "What is the correlation between product price and average review rating?"',
+        '- "Which customer segment has the highest return rate?"',
+        '- "What are the top 10 products by revenue?"',
+        '- "What is the average order value by customer segment?"',
+      ],
+    });
+  }
+}
+```
+
+### Key Differences from CoderPrompt
+
+**Database schema context:** The data science prompt includes table definitions so the LLM knows what columns and relationships are available. This is critical -- without schema context, the LLM would have to guess table and column names.
+
+**DAS query instructions:** Instead of direct database access, the prompt instructs the LLM to use `das['firekicks'].query_df()` and `das['firekicks'].query_rows()`. These are methods on the DAS (Data Access Service) client, which mediates all database access through a secure proxy. The sandbox execution environment provides the `das` dict automatically when using a profile that configures DAS connections.
+
+**Pre-imported libraries:** The Python harness pre-imports `pandas`, `numpy`, and `scipy.stats` into the execution scope. The prompt explicitly tells the LLM not to import them again (which would fail in the sandbox).
+
+**Python `run()` contract:** Like TypeScript, Python code must define a `run()` function. The difference is that it returns a plain dict instead of a TypeScript object.
+
 ## Building and Verifying
 
-After creating the prompt file, verify the project still builds:
+After creating both prompt files, verify the project still builds:
 
 ```bash
 pnpm run build
 ```
 
-The prompt file compiles as a standalone module. It doesn't connect to anything yet -- we'll wire it into the bot in Part 3.
+The prompt files compile as standalone modules. They don't connect to anything yet -- we'll wire them into the bots in Part 3.
 
 ## Key Points
 
-> **Two-block format** -- CoderBot expects `\`\`\`json` metadata followed by a language-specific code block (e.g., `\`\`\`typescript`). Both must be present or the postprocessor will throw an error.
+> **Two-block format** -- CoderBot expects `\`\`\`json` metadata followed by a language-specific code block (e.g., `\`\`\`typescript` or `\`\`\`python`). Both must be present or the postprocessor will throw an error.
 
-> **The `run()` contract** -- For TypeScript, GeneralCoderBot's run script imports `{ run }` from the generated code file. The function must be async and return the result.
+> **The `run()` contract** -- For TypeScript, the run script imports `{ run }` from the generated code file. For Python, it calls `run()` from the exec'd globals. Both must return an object/dict with `description` and `result`.
+
+> **DAS for database access** -- Data science prompts use `das['connection_name']` for queries. The DAS client is injected by the sandbox profile configuration -- the bot never handles database credentials directly.
 
 > **Prompt architecture** -- FireFoundry prompts are composable trees of template nodes. Each section can be conditionally included, dynamically generated, or data-driven. This is more powerful than raw string templates.
 
 ---
 
-**Next:** [Part 3: The Bot](./part-03-bot.md) -- Create DemoCoderBot using GeneralCoderBot with the Code Sandbox client.
+**Next:** [Part 3: The Bot](./part-03-bot.md) -- Create DemoCoderBot and DemoDataScienceBot using GeneralCoderBot with the sandbox client.

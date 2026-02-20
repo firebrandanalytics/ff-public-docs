@@ -57,7 +57,7 @@ apps/coder-bundle/
 
 The coder bundle needs two additional FireFoundry packages beyond the base SDK:
 
-- `@firebrandanalytics/code-sandbox-client` -- client library for the Code Sandbox Service
+- `@firebrandanalytics/ff-sandbox-client` -- client library for the Code Sandbox Service
 - `@firebrandanalytics/shared-types` and `@firebrandanalytics/shared-utils` -- platform types and utilities
 
 Update `apps/coder-bundle/package.json` to include these dependencies:
@@ -68,7 +68,7 @@ Update `apps/coder-bundle/package.json` to include these dependencies:
     "@firebrandanalytics/ff-agent-sdk": "^4.2.0",
     "@firebrandanalytics/shared-types": "^2.1.1",
     "@firebrandanalytics/shared-utils": "^4.1.1",
-    "@firebrandanalytics/code-sandbox-client": "^0.6.0",
+    "@firebrandanalytics/ff-sandbox-client": "^0.1.0",
     "@shared/types": "workspace:*",
     "express": "^4.18.2",
     "zod": "^3.22.4"
@@ -76,9 +76,10 @@ Update `apps/coder-bundle/package.json` to include these dependencies:
 }
 ```
 
-> **Note**: If you're using a local SDK build (e.g., a `.tgz` file), change the SDK dependency to a file reference:
+> **Note**: If you're using a local SDK build (e.g., a `.tgz` file), change the SDK and sandbox client dependencies to file references:
 > ```json
-> "@firebrandanalytics/ff-agent-sdk": "file:../../packages/firebrandanalytics-ff-agent-sdk-4.2.0.tgz"
+> "@firebrandanalytics/ff-agent-sdk": "file:../../packages/firebrandanalytics-ff-agent-sdk-4.2.3.tgz",
+> "@firebrandanalytics/ff-sandbox-client": "file:../../packages/firebrandanalytics-ff-sandbox-client-0.1.0.tgz"
 > ```
 
 ## Configure npm Registry

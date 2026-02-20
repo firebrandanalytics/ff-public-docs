@@ -1,6 +1,6 @@
 # Part 5: Deploy & Test
 
-In this part, you'll deploy the code sandbox agent bundle to a local FireFoundry cluster and test it with curl.
+In this part, you'll deploy the code sandbox agent bundle to a local FireFoundry cluster and test both the TypeScript and data science endpoints with curl.
 
 ## Prerequisites
 
@@ -9,6 +9,7 @@ Before deploying, ensure you have:
 - Minikube running with FireFoundry installed
 - `ff-cli` configured with your license
 - `kubectl` and `helm` installed
+- Code Sandbox Manager service deployed with profiles configured
 
 If you haven't set up your local environment yet, see the [Local Development Guide](../../guides/local_dev_setup.md).
 
@@ -26,12 +27,26 @@ agentBundle:
     tag: latest
   env:
     - name: CODE_SANDBOX_URL
-      value: "http://code-sandbox-service.ff-dev.svc.cluster.local:3000"
+      value: "http://code-sandbox-manager:8080"
+    - name: CODE_SANDBOX_TS_PROFILE
+      value: "finance-typescript"
+    - name: CODE_SANDBOX_DS_PROFILE
+      value: "firekicks-datascience"
     - name: LLM_BROKER_HOST
       value: "firefoundry-core-llm-broker.ff-dev.svc.cluster.local"
     - name: LLM_BROKER_PORT
       value: "50051"
 ```
+
+**Profile environment variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `CODE_SANDBOX_URL` | URL of the Code Sandbox Manager service |
+| `CODE_SANDBOX_TS_PROFILE` | Profile name for TypeScript execution (e.g., `finance-typescript`) |
+| `CODE_SANDBOX_DS_PROFILE` | Profile name for Python data science execution (e.g., `firekicks-datascience`) |
+
+These profiles must be created in the Code Sandbox Manager before the bots can use them. See the [Code Sandbox Service documentation](../../../platform/services/code-sandbox.md) for profile creation.
 
 ### Secrets
 
@@ -104,7 +119,7 @@ Expected response:
 { "status": "ready" }
 ```
 
-### Execute a Code Generation Request
+### TypeScript Code Generation (POST /api/execute)
 
 ```bash
 curl -X POST http://localhost:8080/agents/ff-dev/coder-bundle/api/execute \
@@ -127,7 +142,37 @@ Expected response:
 }
 ```
 
+### Data Science Analysis (POST /api/analyze)
+
+```bash
+curl -X POST http://localhost:8080/agents/ff-dev/coder-bundle/api/analyze \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "How many customers are in each customer segment?"
+  }'
+```
+
+Expected response:
+```json
+{
+  "success": true,
+  "output": {
+    "description": "Customer count by segment",
+    "result": [
+      { "customer_segment": "regular", "count": 4030 },
+      { "customer_segment": "bargain-hunter", "count": 2909 },
+      { "customer_segment": "athlete", "count": 2082 },
+      { "customer_segment": "premium", "count": 979 }
+    ],
+    "stdout": ""
+  },
+  "entity_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
 ### Try More Prompts
+
+**TypeScript (POST /api/execute):**
 
 ```bash
 # Mathematical computation
@@ -139,47 +184,97 @@ curl -X POST http://localhost:8080/agents/ff-dev/coder-bundle/api/execute \
 curl -X POST http://localhost:8080/agents/ff-dev/coder-bundle/api/execute \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Count the frequency of each character in the string: Hello World"}'
+```
 
-# Data transformation
-curl -X POST http://localhost:8080/agents/ff-dev/coder-bundle/api/execute \
+**Data Science (POST /api/analyze):**
+
+```bash
+# Aggregation with ranking
+curl -X POST http://localhost:8080/agents/ff-dev/coder-bundle/api/analyze \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "Generate a multiplication table from 1 to 5 as a 2D array"}'
+  -d '{"prompt": "What is the average order value by customer segment? Which segment spends the most?"}'
+
+# Correlation analysis
+curl -X POST http://localhost:8080/agents/ff-dev/coder-bundle/api/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Is there a correlation between product price and average review rating?"}'
+
+# Top-N query
+curl -X POST http://localhost:8080/agents/ff-dev/coder-bundle/api/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What are the top 10 products by revenue?"}'
 ```
 
 ## Troubleshooting
 
-### "Bot not found: DemoCoderBot"
+### "Bot not found: DemoCoderBot" (or DemoDataScienceBot)
 
-The bot module wasn't loaded before the entity tried to look it up. Ensure `CodeTaskEntity.ts` has the side-effect import:
+The bot module wasn't loaded before the entity tried to look it up. Ensure the entity file has the side-effect import:
 ```typescript
+// In CodeTaskEntity.ts:
 import "../bots/DemoCoderBot.js";
+
+// In DataScienceTaskEntity.ts:
+import "../bots/DemoDataScienceBot.js";
 ```
 
 ### "Code block not found"
 
 The LLM didn't produce the expected two-block format. Check:
-- The CoderPrompt instructions are clear about the output format
+- The prompt instructions are clear about the output format
 - The model pool name matches a configured LLM broker pool
 - The prompt group is wired correctly (system + user messages)
 
+### "Profile not found: firekicks-datascience"
+
+The sandbox profile hasn't been created on the Code Sandbox Manager. Create it via the admin API:
+```bash
+# Port-forward to the sandbox manager
+kubectl port-forward -n ff-dev svc/code-sandbox-manager 8081:8080
+
+# Create the profile
+curl -X POST http://localhost:8081/admin/profiles \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "firekicks-datascience",
+    "runtimeId": "<your-python-runtime-id>",
+    "harness": "datascience",
+    "dasConnections": {
+      "firekicks": {
+        "host": "ff-data-access.ff-dev.svc.cluster.local",
+        "port": 8080
+      }
+    }
+  }'
+```
+
 ### "Working memory path not found"
 
-The `output_working_memory_paths` in `get_bot_request_args_impl()` must contain a path ending with `.ts` (for TypeScript). Verify:
+The `output_working_memory_paths` in `get_bot_request_args_impl()` must contain a path ending with the correct extension. Verify:
 ```typescript
-args: {
-  output_working_memory_paths: ["code/analysis.ts"],
-},
+// TypeScript entity:
+args: { output_working_memory_paths: ["code/analysis.ts"] }
+
+// Python entity:
+args: { output_working_memory_paths: ["code/analysis.py"] }
 ```
 
 ### Sandbox connection timeout
 
-The Code Sandbox Service might not be running or reachable. Check:
+The Code Sandbox Manager might not be running or reachable. Check:
 ```bash
 kubectl get pods -n ff-dev | grep sandbox
-kubectl logs -n ff-dev -l app=code-sandbox-service
+kubectl logs -n ff-dev -l app=code-sandbox-manager
 ```
 
-Verify the `CODE_SANDBOX_URL` environment variable points to the correct service.
+Verify the `CODE_SANDBOX_URL` environment variable points to the correct service (`http://code-sandbox-manager:8080`).
+
+### DAS connection errors in data science execution
+
+If the Python code executes but DAS queries fail:
+1. Verify the DAS service is running: `kubectl get pods -n ff-dev | grep data-access`
+2. Check the profile's DAS connection config points to the correct host/port
+3. Ensure the DAS service has a connection configured for the target database
 
 ### Upgrading After Changes
 
@@ -196,7 +291,7 @@ Use these skills to inspect the running system:
 
 | Tool | Command | Purpose |
 |------|---------|---------|
-| Entity Graph | `ff-eg-read` | Inspect CodeTaskEntity nodes and their data |
+| Entity Graph | `ff-eg-read` | Inspect CodeTaskEntity and DataScienceTaskEntity nodes |
 | Working Memory | `ff-wm-read` | View generated code stored in working memory |
 | Telemetry | `ff-telemetry-read` | Trace LLM broker requests and bot execution |
 | Logs | `kubectl logs -n ff-dev ...` | View pod logs for debugging |
@@ -205,19 +300,23 @@ Use these skills to inspect the running system:
 
 In this tutorial, you've created a complete agent bundle that:
 
-1. **Accepts natural language prompts** via a REST API endpoint
-2. **Generates TypeScript code** using an LLM with structured prompt instructions
-3. **Executes code safely** in the Code Sandbox Service
-4. **Returns structured results** with execution output
-5. **Persists everything** in the entity graph with working memory attachments
+1. **Accepts natural language prompts** via two REST API endpoints (`/api/execute` and `/api/analyze`)
+2. **Generates TypeScript code** for general computation tasks
+3. **Generates Python+pandas code** for data science analysis, querying databases through DAS
+4. **Executes code safely** in the Code Sandbox Service using named profiles
+5. **Returns structured results** with execution output
+6. **Persists everything** in the entity graph with working memory attachments
 
 ### Architecture Recap
 
 ```
-CoderPrompt          → Instructs the LLM (system message)
-DemoCoderBot         → GeneralCoderBot with TypeScript config
-CodeTaskEntity       → Entity + BotRunnableEntityMixin
-CoderBundleAgentBundle → API endpoint + entity factory
+CoderPrompt                → Instructs the LLM for TypeScript (system message)
+DataScienceCoderPrompt     → Instructs the LLM for Python+DAS (system message)
+DemoCoderBot               → GeneralCoderBot with TypeScript config + finance profile
+DemoDataScienceBot         → GeneralCoderBot with Python config + datascience profile
+CodeTaskEntity             → Entity + BotRunnableEntityMixin → DemoCoderBot
+DataScienceTaskEntity      → Entity + BotRunnableEntityMixin → DemoDataScienceBot
+CoderBundleAgentBundle     → API endpoints (/execute, /analyze) + entity factory
 ```
 
 ### Key Patterns Learned
@@ -225,16 +324,20 @@ CoderBundleAgentBundle → API endpoint + entity factory
 - **CoderBot hierarchy** -- Abstract base class with template method pattern for code generation
 - **GeneralCoderBot** -- Ready-made variant for general-purpose code execution
 - **Two-block LLM output** -- JSON metadata + language code block
+- **Profiles** -- Named configurations that bundle runtime, harness, and DAS connections
+- **DAS integration** -- Secure database access through the Data Access Service, no credentials in bot code
 - **BotRunnableEntityMixin** -- Decoupled entity-bot wiring via registry
 - **Working memory** -- Code storage before sandbox execution
 - **@ApiEndpoint** -- REST endpoints for external consumers
+- **Multi-bot bundles** -- A single agent bundle can host multiple bots with different languages and configurations
 
 ## Next Steps
 
-- **Add Python support** -- Create a second bot with `language: "python"` and a Python-specific prompt
+- **Add more data sources** -- Create additional profiles with different DAS connections for other databases
 - **Custom error prompts** -- Override `errorPromptProviders` for better error recovery
-- **Build a web UI** -- Use `@firebrandanalytics/ff-sdk` to build a frontend
-- **Add code history** -- Create a collection entity to track past executions
+- **Build a web UI** -- Use `@firebrandanalytics/ff-sdk` to build a frontend with separate panels for code generation and data analysis
+- **Add code history** -- Create a collection entity to track past executions and their results
+- **Custom run scripts** -- Override the default run script in a profile for specialized execution behavior
 
 ---
 

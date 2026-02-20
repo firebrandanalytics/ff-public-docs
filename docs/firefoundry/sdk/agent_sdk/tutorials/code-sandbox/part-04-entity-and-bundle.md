@@ -1,6 +1,6 @@
 # Part 4: Entity & Bundle
 
-In this part, you'll create `CodeTaskEntity` to connect user prompts to the bot, update the constructors registry, wire the agent bundle with an API endpoint, and verify the full build.
+In this part, you'll create `CodeTaskEntity` and `DataScienceTaskEntity` to connect user prompts to the bots, update the constructors registry, wire the agent bundle with API endpoints, and verify the full build.
 
 ## Understanding the Entity-Bot Connection
 
@@ -141,23 +141,134 @@ CoderBot's postprocess pipeline (stage 5) looks for a path ending with the langu
 
 The type parameter array `[RunnableEntity<...>, BotRunnableEntityMixin<...>]` provides compile-time type safety for the composed class.
 
+## Creating DataScienceTaskEntity
+
+Create the file `apps/coder-bundle/src/entities/DataScienceTaskEntity.ts`:
+
+```typescript
+import {
+  RunnableEntity,
+  BotRunnableEntityMixin,
+  EntityMixin,
+  EntityFactory,
+  logger,
+  Context,
+} from "@firebrandanalytics/ff-agent-sdk";
+import type {
+  EntityNodeTypeHelper,
+  EntityTypeHelper,
+  RunnableEntityTypeHelper,
+  BotRequestArgs,
+  CODER_BTH,
+} from "@firebrandanalytics/ff-agent-sdk";
+import type {
+  EntityNodeDTO,
+  JSONObject,
+  JSONValue,
+  UUID,
+} from "@firebrandanalytics/shared-types";
+import { AddMixins } from "@firebrandanalytics/shared-utils";
+import type { GeneralCoderOutput } from "@firebrandanalytics/ff-agent-sdk";
+
+// Import the bot module to ensure @RegisterBot decorator executes
+import "../bots/DemoDataScienceBot.js";
+
+// ── DTO data shape ──────────────────────────────────────────────────────
+
+export interface DataScienceTaskEntityDTOData extends JSONObject {
+  prompt: string;
+  [key: string]: JSONValue;
+}
+
+export type DataScienceTaskEntityDTO = EntityNodeDTO & {
+  data: DataScienceTaskEntityDTOData;
+};
+
+// ── Type helpers ────────────────────────────────────────────────────────
+
+export type DataScienceTaskEntityENH = EntityNodeTypeHelper<
+  EntityTypeHelper<any, any>,
+  DataScienceTaskEntityDTO,
+  "DataScienceTaskEntity",
+  {},
+  {}
+>;
+
+export type DataScienceTaskEntityRETH = RunnableEntityTypeHelper<
+  DataScienceTaskEntityENH,
+  GeneralCoderOutput
+>;
+
+// ── Entity class ────────────────────────────────────────────────────────
+
+@EntityMixin({
+  specificType: "DataScienceTaskEntity",
+  generalType: "DataScienceTaskEntity",
+  allowedConnections: {},
+})
+export class DataScienceTaskEntity extends AddMixins(
+  RunnableEntity,
+  BotRunnableEntityMixin
+)<[
+  RunnableEntity<DataScienceTaskEntityRETH>,
+  BotRunnableEntityMixin<DataScienceTaskEntityRETH>
+]> {
+  constructor(factory: EntityFactory<any>, idOrDto: UUID | DataScienceTaskEntityDTO) {
+    super(
+      [factory, idOrDto] as any,
+      ["DemoDataScienceBot"]
+    );
+  }
+
+  /**
+   * Build the bot request args from entity data.
+   *
+   * CoderBot requires `output_working_memory_paths` containing a path
+   * ending with the language file extension (.py for Python).
+   */
+  protected async get_bot_request_args_impl(
+    _preArgs: Partial<BotRequestArgs<CODER_BTH>>
+  ): Promise<BotRequestArgs<CODER_BTH>> {
+    const dto = await this.get_dto();
+
+    logger.info(`[DataScienceTaskEntity] Building bot request for prompt: "${dto.data.prompt.substring(0, 80)}..."`, {
+      entity_id: this.id,
+    });
+
+    return {
+      args: {
+        output_working_memory_paths: ["code/analysis.py"],
+      },
+      input: dto.data.prompt,
+      context: new Context(dto),
+    };
+  }
+}
+```
+
+The `DataScienceTaskEntity` follows the same pattern as `CodeTaskEntity`, with two differences:
+- It references `"DemoDataScienceBot"` instead of `"DemoCoderBot"`
+- The working memory path uses `.py` instead of `.ts`
+
 ## Updating the Constructor Registry
 
-The entity factory needs to know about `CodeTaskEntity` to create instances. Update `apps/coder-bundle/src/constructors.ts`:
+The entity factory needs to know about both entity types. Update `apps/coder-bundle/src/constructors.ts`:
 
 ```typescript
 import { FFConstructors } from "@firebrandanalytics/ff-agent-sdk";
 import { CodeTaskEntity } from "./entities/CodeTaskEntity.js";
+import { DataScienceTaskEntity } from "./entities/DataScienceTaskEntity.js";
 
 export const CoderBundleConstructors = {
   ...FFConstructors,
   CodeTaskEntity: CodeTaskEntity,
+  DataScienceTaskEntity: DataScienceTaskEntity,
 } as const;
 ```
 
-## Adding the API Endpoint
+## Adding the API Endpoints
 
-Update `apps/coder-bundle/src/agent-bundle.ts` to add an execute endpoint:
+Update `apps/coder-bundle/src/agent-bundle.ts` to add both an execute endpoint (TypeScript) and an analyze endpoint (data science):
 
 ```typescript
 import {
@@ -192,7 +303,7 @@ export class CoderBundleAgentBundle extends FFAgentBundle<any> {
   }
 
   /**
-   * Execute a code generation request.
+   * Execute a TypeScript code generation request.
    *
    * Creates a CodeTaskEntity with the user's prompt, runs the bot pipeline
    * (LLM generation → sandbox execution), and returns the result.
@@ -228,6 +339,52 @@ export class CoderBundleAgentBundle extends FFAgentBundle<any> {
     const output = await entity.run() as GeneralCoderOutput;
 
     logger.info(`[execute] Execution complete for entity: ${dto.id}`);
+
+    return {
+      success: true,
+      output,
+      entity_id: dto.id,
+    };
+  }
+
+  /**
+   * Execute a Python data science analysis request.
+   *
+   * Creates a DataScienceTaskEntity with the user's prompt, generates Python
+   * code that queries the database via DAS, executes it in the sandbox,
+   * and returns the analysis result.
+   */
+  @ApiEndpoint({ method: "POST", route: "analyze" })
+  async analyze(body: { prompt: string }): Promise<{
+    success: boolean;
+    output: GeneralCoderOutput | null;
+    entity_id: string;
+  }> {
+    const { prompt } = body;
+
+    if (!prompt || prompt.trim().length === 0) {
+      throw new Error("prompt is required and cannot be empty");
+    }
+
+    logger.info(`[analyze] Received prompt: "${prompt.substring(0, 80)}..."`);
+
+    // Create the entity
+    const dto = await this.entity_factory.create_entity_node({
+      app_id: this.get_app_id(),
+      name: `datasci-task-${Date.now()}`,
+      specific_type_name: "DataScienceTaskEntity",
+      general_type_name: "DataScienceTaskEntity",
+      status: "Pending",
+      data: { prompt },
+    });
+
+    logger.info(`[analyze] Created DataScienceTaskEntity: ${dto.id}`);
+
+    // Get the entity instance and run the bot
+    const entity = await this.entity_factory.get_entity(dto.id);
+    const output = await entity.run() as GeneralCoderOutput;
+
+    logger.info(`[analyze] Analysis complete for entity: ${dto.id}`);
 
     return {
       success: true,
@@ -271,6 +428,41 @@ POST /api/execute { "prompt": "Calculate Fibonacci" }
   Return { success: true, output: {...}, entity_id: "..." }
 ```
 
+### How the Analyze Flow Works
+
+```
+POST /api/analyze { "prompt": "What is the average order value by segment?" }
+       |
+       v
+  CoderBundleAgentBundle.analyze()
+       |
+       |-- 1. Create DataScienceTaskEntity in entity graph
+       |-- 2. entity.run()
+       |        |
+       |        v
+       |   BotRunnableEntityMixin
+       |        |-- Look up "DemoDataScienceBot" from registry
+       |        |-- Call get_bot_request_args_impl()
+       |        |     → input: user prompt
+       |        |     → args.output_working_memory_paths: ["code/analysis.py"]
+       |        |-- Run bot (profile: "firekicks-datascience")
+       |             |
+       |             v
+       |        DemoDataScienceBot (GeneralCoderBot)
+       |             |-- Send prompt to LLM via broker
+       |             |-- LLM returns JSON + Python code
+       |             |-- CoderBot postprocesses:
+       |             |     extract → validate → store → execute → return
+       |             |-- Sandbox provides das['firekicks'] client
+       |             |-- Python code calls das['firekicks'].query_df(...)
+       |             |
+       |             v
+       |        GeneralCoderOutput { description, result, stdout }
+       |
+       v
+  Return { success: true, output: {...}, entity_id: "..." }
+```
+
 ## Build and Verify
 
 ```bash
@@ -283,11 +475,13 @@ All packages should build with zero errors. The full agent bundle is now wired a
 
 > **Side-effect imports matter** -- Import the bot module in the entity file to ensure `@RegisterBot` runs before entity code tries to look up the bot.
 
-> **`output_working_memory_paths` is required** -- CoderBot uses this to determine where to store generated code. The path must end with the correct file extension for the language (`.ts`, `.py`, `.sql`).
+> **`output_working_memory_paths` is required** -- CoderBot uses this to determine where to store generated code. The path must end with the correct file extension for the language (`.ts` for TypeScript, `.py` for Python).
 
 > **Entity factory creates entities, not constructors** -- Use `this.entity_factory.create_entity_node()` to create entity DTOs. The factory handles persistence through the Entity Service.
 
 > **`entity.run()` drives the pipeline** -- The single `run()` call triggers the full flow: build request → run bot → LLM call → code extraction → sandbox execution → return result.
+
+> **Two endpoints, two entity types** -- `/api/execute` creates `CodeTaskEntity` → `DemoCoderBot` (TypeScript). `/api/analyze` creates `DataScienceTaskEntity` → `DemoDataScienceBot` (Python + DAS).
 
 ---
 
