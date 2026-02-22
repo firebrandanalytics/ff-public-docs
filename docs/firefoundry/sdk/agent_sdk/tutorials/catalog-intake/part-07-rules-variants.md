@@ -66,7 +66,7 @@ approval_flag: string;
 
 - **No nesting.** You can't put an `@If` inside another `@If`. Keep it flat.
 - **One `@Else`.** Only one per block, and it must come last.
-- **Same field.** All `@ElseIf` branches must reference the same property as the original `@If`.
+- **Same field.** All branches must reference the same property as the original `@If`.
 - **First match wins.** Branches evaluate in order.
 
 ---
@@ -281,7 +281,7 @@ The variant editor feeds directly into the same `SupplierBProductV2` validation 
 Here's a test payload that exercises all the new rules:
 
 ```bash
-curl -X POST http://localhost:3001/api/catalog-intake \
+curl -X POST http://localhost:3002/api/ingest-api \
   -H "Content-Type: application/json" \
   -d '{
     "supplier": "B",
@@ -301,7 +301,7 @@ curl -X POST http://localhost:3001/api/catalog-intake \
 And a bad payload to confirm error reporting:
 
 ```bash
-curl -X POST http://localhost:3001/api/catalog-intake \
+curl -X POST http://localhost:3002/api/ingest-api \
   -H "Content-Type: application/json" \
   -d '{
     "supplier": "B",

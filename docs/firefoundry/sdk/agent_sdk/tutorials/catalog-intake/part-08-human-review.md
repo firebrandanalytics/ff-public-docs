@@ -10,7 +10,7 @@ In this part, you'll add the fourth intake pipeline (human form entry via the GU
 - Routing products through a state machine based on confidence scores
 - Building a review queue with inline editing and re-validation
 
-**Starting point:** Completed code from [Part 7: Business Rules & Nested Variants](./part-07-rules-variants.md). You should have a working pipeline with cross-field rules, nested variants, and `@CollectProperties`.
+**Starting point:** Completed code from [Part 7: Business Rules & Nested Variants](./part-07-rules-variants.md). You should have a working pipeline with cross-field rules and nested variants.
 
 ---
 
@@ -23,6 +23,8 @@ The form is just another intake source. It produces a payload, that payload need
 Create a `ManualEntryWorkflow` that handles form submissions:
 
 ```typescript
+import { validationFactory } from '../validation.js';
+
 @EntityMixin({
   specificType: 'ManualEntryWorkflow',
   generalType: 'SupplierProductDraft',
@@ -30,29 +32,36 @@ Create a `ManualEntryWorkflow` that handles form submissions:
 export class ManualEntryWorkflow extends RunnableEntity<any> {
   protected async *run_impl() {
     const dto = await this.get_dto();
-    const factory = new ValidationFactory();
-    const validated = await factory.create(
-      SupplierProductCanonical,
-      dto.data.raw_payload
-    );
+    const rawPayload = dto.data?.raw_payload;
 
-    const trace = factory.getLastTrace();
-    const confidence = trace.overallConfidence;
-    const status = confidence > 0.95 ? 'approved' : confidence > 0.7 ? 'review' : 'draft';
+    if (!rawPayload) {
+      throw new Error('No raw_payload found on entity data');
+    }
 
-    yield* this.update_entity({
-      ...validated,
-      reviewStatus: status,
-      source: 'manual_entry',
-      submittedBy: dto.data.user_id,
+    yield { type: 'PROGRESS', message: 'Validating form data...' };
+
+    // Use the canonical discriminated union — auto-detects format
+    const validated = await validationFactory.create(SupplierProductCanonical, rawPayload);
+
+    await this.update_data({
+      ...dto.data,
+      source_type: 'manual',
+      status: 'draft',
+      validated_product: (validated as any).toJSON(),
+      validation_trace: validationFactory.getLastTrace?.() ?? null,
     });
+
+    yield { type: 'PROGRESS', message: 'Validation complete' };
+    return validated;
   }
 }
 ```
 
-The workflow runs the same `SupplierProductCanonical` validator that every other pipeline uses. Manual entry data gets the same `@CoerceTrim`, `@CoerceFromSet`, and `@ObjectRule` treatment as an API submission. No special path, no different guarantees.
+The workflow imports the shared `validationFactory` singleton rather than constructing a new `ValidationFactory` per request. This is the same factory instance every other pipeline uses, so configuration and caching stay consistent. The call to `validationFactory.create(SupplierProductCanonical, rawPayload)` runs the canonical discriminated union -- auto-detecting the payload format. Manual entry data gets the same `@CoerceTrim`, `@CoerceFromSet`, and `@ObjectRule` treatment as an API submission. No special path, no different guarantees.
 
-The difference is in what happens after validation. A form entry from a human operator who just typed the values starts as `draft` by default -- unless the data validates with high enough confidence to skip review entirely. An API submission from a trusted supplier might auto-approve at 0.9 confidence. The thresholds can differ by source, but the validation pipeline is the same.
+After validation, `this.update_data(...)` persists the result onto the entity. The workflow sets `source_type: 'manual'` and `status: 'draft'` -- every manually entered product starts as a draft. The validated output and its trace are stored alongside the original data so the review queue can display both.
+
+> **Extending with confidence-based routing:** The demo starts every manual entry as `draft`, but you could use the validation trace to route high-confidence entries directly to `review` or `approved`. Compute `validationFactory.getLastTrace().overallConfidence` and set `status` based on thresholds (e.g., > 0.95 for `approved`, > 0.7 for `review`). The Entity State Machine section below shows how.
 
 > **Without the validation class:** You'd write separate validation logic for the form -- one set of checks in the API handler, another in the form submit handler. When you add a new business rule, you'd need to remember to add it in both places. With the shared validator, there's one definition of "valid."
 

@@ -12,7 +12,7 @@ The big idea here isn't the GUI itself. It's the **shared type package**. The sa
 
 This is the most important concept in this entire part -- arguably in the whole tutorial. So let's start here before we touch any GUI code.
 
-In Part 1, `SupplierProductValidator` lived inside `apps/catalog-bundle/`. That works fine when the bundle is the only consumer. But the moment a frontend needs to know what a product looks like, you have a choice:
+In Part 1, `SupplierProductV1` lived inside `apps/catalog-bundle/`. That works fine when the bundle is the only consumer. But the moment a frontend needs to know what a product looks like, you have a choice:
 
 1. **Copy the type.** Define a `ProductDTO` in the GUI that mirrors the validator fields. Hope someone remembers to update both when a field changes.
 2. **Share the type.** Move the validator to a shared package. Both the bundle and the GUI import from the same source.
@@ -67,7 +67,7 @@ Run `pnpm install` from the project root and the workspace links are live.
 
 ### The Validator in Shared-Types
 
-Move your `SupplierProductValidator` from the bundle into `packages/shared-types/src/product.ts`. It's the same class from Part 1 -- decorators and all:
+Move your `SupplierProductV1` from the bundle into `packages/shared-types/src/product.ts`. It's the same class from Part 1 -- decorators and all:
 
 ```typescript
 // packages/shared-types/src/product.ts
@@ -82,7 +82,7 @@ import {
 } from '@firebrandanalytics/shared-utils/validation';
 
 @Serializable()
-export class SupplierProductValidator {
+export class SupplierProductV1 {
   @CoerceTrim()
   @CoerceCase('title')
   @ValidateRequired()
@@ -112,7 +112,7 @@ export class SupplierProductValidator {
   msrp!: number;
 
   @CoerceTrim()
-  color_variant!: string;
+  color!: string;
 
   @CoerceTrim()
   @ValidatePattern(/^\d+(\.\d+)?-\d+(\.\d+)?$/)
@@ -124,14 +124,14 @@ Export it from the package barrel:
 
 ```typescript
 // packages/shared-types/src/index.ts
-export { SupplierProductValidator } from './product.js';
+export { SupplierProductV1 } from './product.js';
 ```
 
 Back in the bundle, update the import to point at the shared package instead of a local file:
 
 ```typescript
 // apps/catalog-bundle/src/bots/CatalogIntakeBot.ts
-import { SupplierProductValidator } from '@catalog-intake/shared-types';
+import { SupplierProductV1 } from '@catalog-intake/shared-types';
 ```
 
 Same class, same decorators, new home. The bundle's behavior doesn't change at all.
@@ -144,7 +144,7 @@ Let's make the payoff concrete. Today, your validator has these fields:
 
 ```
 product_name, category, subcategory, brand_line,
-base_cost, msrp, color_variant, size_range
+base_cost, msrp, color, size_range
 ```
 
 Next week, the business asks you to add a `material` field. You open `packages/shared-types/src/product.ts` and add:
@@ -214,11 +214,11 @@ catalog-intake/
 
 ### The Bundle Client
 
-The GUI needs to talk to the bundle's API endpoints (the `POST /api/intake` and `GET /api/product` routes from Part 1). Create a thin server-side client:
+The GUI needs to talk to the bundle's API endpoints (the `POST /api/ingest-manual` and `POST /api/ingest-api` routes from Part 1). Create a thin server-side client:
 
 ```typescript
 // apps/catalog-gui/src/lib/bundleClient.ts
-const BUNDLE_URL = process.env.BUNDLE_URL || 'http://localhost:3001';
+const BUNDLE_URL = process.env.BUNDLE_URL || 'http://localhost:3002';
 
 async function callBundle<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const url = `${BUNDLE_URL}/api/${endpoint}`;
@@ -239,7 +239,7 @@ async function callBundle<T>(endpoint: string, options?: RequestInit): Promise<T
 export async function submitProduct(
   supplierData: Record<string, unknown>,
 ): Promise<{ success: boolean; entity_id?: string; errors?: any[] }> {
-  return callBundle('intake', {
+  return callBundle('ingest-manual', {
     method: 'POST',
     body: JSON.stringify({ supplier_id: 'manual', raw_payload: supplierData }),
   });
@@ -248,7 +248,10 @@ export async function submitProduct(
 export async function getProduct(
   entityId: string,
 ): Promise<{ entity_id: string; data: Record<string, unknown> }> {
-  return callBundle(`product?entityId=${encodeURIComponent(entityId)}`);
+  return callBundle(`ingest-api?entityId=${encodeURIComponent(entityId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ action: 'get', entity_id: entityId }),
+  });
 }
 ```
 
@@ -258,7 +261,7 @@ Notice this client doesn't import the shared types at all -- it's just HTTP plum
 
 ## The Intake Form
 
-The intake form submits raw product data to the bundle for validation. The key insight: the form fields are derived directly from the `SupplierProductValidator` class.
+The intake form submits raw product data to the bundle for validation. The key insight: the form fields are derived directly from the `SupplierProductV1` class.
 
 Create an API route that proxies to the bundle (this keeps the bundle URL server-side and avoids CORS):
 
@@ -281,13 +284,13 @@ Now the form page. Here's where the shared type earns its keep:
 'use client';
 
 import { useState } from 'react';
-import { SupplierProductValidator } from '@catalog-intake/shared-types';
+import { SupplierProductV1 } from '@catalog-intake/shared-types';
 
 // The form state mirrors the validator's fields exactly.
-// If someone adds a field to SupplierProductValidator,
+// If someone adds a field to SupplierProductV1,
 // TypeScript will flag this initializer as incomplete.
 type FormState = {
-  [K in keyof SupplierProductValidator]: SupplierProductValidator[K];
+  [K in keyof SupplierProductV1]: SupplierProductV1[K];
 };
 
 const INITIAL_STATE: FormState = {
@@ -297,12 +300,12 @@ const INITIAL_STATE: FormState = {
   brand_line: '',
   base_cost: 0,
   msrp: 0,
-  color_variant: '',
+  color: '',
   size_range: '',
 };
 ```
 
-That `FormState` type is the connection. It's a mapped type over `SupplierProductValidator` -- every field the validator declares, the form must include. If the validator gains a `material` field, `INITIAL_STATE` produces a compile error until you add `material: ''`.
+That `FormState` type is the connection. It's a mapped type over `SupplierProductV1` -- every field the validator declares, the form must include. If the validator gains a `material` field, `INITIAL_STATE` produces a compile error until you add `material: ''`.
 
 The rest of the form is standard React. The submit handler sends the data through the proxy route:
 
@@ -389,22 +392,22 @@ On the GUI side, the product browser fetches this list and renders each product.
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { SupplierProductValidator } from '@catalog-intake/shared-types';
+import type { SupplierProductV1 } from '@catalog-intake/shared-types';
 
 interface ProductEntry {
   entity_id: string;
   // Extend the validator type -- every field the validator declares
   // is available here as a typed property.
-  product: SupplierProductValidator;
+  product: SupplierProductV1;
 }
 ```
 
-Because `ProductEntry.product` is typed as `SupplierProductValidator`, accessing `product.product_name` or `product.base_cost` is fully type-checked. No `any` casts. No optional chaining on fields you know exist. If the validator adds `material`, the product browser can access `product.material` immediately -- and TypeScript will tell you it's a `string`.
+Because `ProductEntry.product` is typed as `SupplierProductV1`, accessing `product.product_name` or `product.base_cost` is fully type-checked. No `any` casts. No optional chaining on fields you know exist. If the validator adds `material`, the product browser can access `product.material` immediately -- and TypeScript will tell you it's a `string`.
 
 The rendering itself is straightforward:
 
 ```tsx
-function ProductCard({ product }: { product: SupplierProductValidator; entityId: string }) {
+function ProductCard({ product }: { product: SupplierProductV1; entityId: string }) {
   return (
     <div className="border rounded-lg p-4">
       <h3 className="text-lg font-semibold">{product.product_name}</h3>
@@ -423,14 +426,14 @@ function ProductCard({ product }: { product: SupplierProductValidator; entityId:
         </div>
       </div>
       <p className="text-sm text-gray-500 mt-2">
-        {product.color_variant} | Sizes: {product.size_range}
+        {product.color} | Sizes: {product.size_range}
       </p>
     </div>
   );
 }
 ```
 
-Every property access -- `product.product_name`, `product.base_cost`, `product.color_variant` -- is type-safe because the type comes from the shared validator class. You don't need to define a separate `DisplayProduct` interface and hope it matches what the bundle actually returns.
+Every property access -- `product.product_name`, `product.base_cost`, `product.color` -- is type-safe because the type comes from the shared validator class. You don't need to define a separate `DisplayProduct` interface and hope it matches what the bundle actually returns.
 
 ### Putting It Together
 
@@ -476,14 +479,14 @@ ff-cli agent-bundle dev
 
 # Terminal 2 -- Catalog GUI
 cd apps/catalog-gui
-echo 'BUNDLE_URL=http://localhost:3001' > .env.local
+echo 'BUNDLE_URL=http://localhost:3002' > .env.local
 pnpm dev
 ```
 
 Open `http://localhost:3000` and walk through the full cycle:
 
 1. **Navigate to `/intake`** -- fill out the form with some messy data. Try title-cased product names, string prices, extra whitespace. The bundle's decorators will clean it all up.
-2. **Submit** -- the bundle validates through the same `SupplierProductValidator` class, stores a typed entity, and returns the result.
+2. **Submit** -- the bundle validates through the same `SupplierProductV1` class, stores a typed entity, and returns the result.
 3. **Navigate to `/products`** -- the product appears with normalized data. `"  air max 90  "` shows as `"Air Max 90"`. `"89.99"` (string) shows as `$89.99` (number, formatted).
 
 The key observation: the validator class ran in the bundle to clean the data, and the same class definition typed the GUI components that display it. The form's field list, the bundle's validation pipeline, and the browser's display columns all derive from one source.
@@ -492,7 +495,7 @@ The key observation: the validator class ran in the bundle to clean the data, an
 
 ## The Three Roles of a Shared Validator
 
-Let's zoom out and name the pattern explicitly. The `SupplierProductValidator` class serves three roles simultaneously:
+Let's zoom out and name the pattern explicitly. The `SupplierProductV1` class serves three roles simultaneously:
 
 | Role | Where | What It Does |
 |------|-------|-------------|

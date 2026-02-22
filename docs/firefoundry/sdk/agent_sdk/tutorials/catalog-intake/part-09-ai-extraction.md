@@ -59,12 +59,15 @@ Define the V3 validation class to capture all of it:
 ```typescript
 @Serializable()
 export class SupplierVariant {
+  @CoerceTrim()
   @ValidateRequired()
   color!: string;
 
   @ValidateRequired()
-  size!: string;
+  sizes!: number[];
 
+  @CoerceTrim()
+  @CoerceCase('upper')
   @ValidateRequired()
   sku!: string;
 }
@@ -109,7 +112,7 @@ Now update `SupplierProductCanonical` to include V3 in the discriminated union:
 @DiscriminatedUnion({
   discriminator: 'supplier_schema',
   map: {
-    'v1_json': SupplierProductV1,
+    'v1_api': SupplierProductV1,
     'v2_csv': SupplierProductV2,
     'v3_pdf': SupplierProductV3,
   }
@@ -198,10 +201,10 @@ To make this concrete, here's what the mock data looks like. This is what `PdfEx
       "materials": ["mesh", "EVA", "rubber"],
       "weight_oz": 9.2,
       "variants": [
-        { "color": "Black", "size": "10", "sku": "FK-BLZ-BK10" },
-        { "color": "Black", "size": "11", "sku": "FK-BLZ-BK11" },
-        { "color": "White", "size": "10", "sku": "FK-BLZ-WH10" },
-        { "color": "White", "size": "11", "sku": "FK-BLZ-WH11" }
+        { "color": "Black", "sizes": [10], "sku": "FK-BLZ-BK10" },
+        { "color": "Black", "sizes": [11], "sku": "FK-BLZ-BK11" },
+        { "color": "White", "sizes": [10], "sku": "FK-BLZ-WH10" },
+        { "color": "White", "sizes": [11], "sku": "FK-BLZ-WH11" }
       ]
     }
   ],

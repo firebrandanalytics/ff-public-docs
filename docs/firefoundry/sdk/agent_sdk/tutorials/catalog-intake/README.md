@@ -86,10 +86,10 @@ All of this is powered by data classes. The class is the contract. The class is 
 
 An agent bundle (`catalog-bundle`) with:
 
-- `CatalogIntakeBot` -- accepts raw supplier data, validates, stores typed entities
-- `SupplierProductDraft` entity -- typed `dto.data` backed by validation classes
-- Supplier-specific validators -- each format gets its own class, all normalizing to one canonical shape
-- `BotRunnableEntityMixin` -- bot output flows to entity storage automatically
+- Four runnable entity workflows -- API ingestion, CSV upload, PDF extraction, manual form entry
+- `SupplierProductDraft` entity -- typed `dto.data` backed by validation classes with `dataClass` auto-reconstruction
+- Progressive schema validators -- V1 (API), V2 (CSV), V3 (PDF), each adding fields as new suppliers arrive
+- `SupplierProductCanonical` discriminated union -- auto-detects format on deserialization
 
 A Next.js GUI (`catalog-gui`) with:
 
@@ -97,7 +97,7 @@ A Next.js GUI (`catalog-gui`) with:
 - **Product browser** -- browse validated products with supplier format badges and match confidence
 - **Validation trace viewer** -- see exactly what each decorator did to every field
 - **Review queue** -- approve, reject, or edit products before final import
-- **AI extraction panel** -- view and correct AI-extracted fields from free-text descriptions
+- **AI extraction panel** -- view and correct AI-extracted fields from PDF extraction
 
 A shared type package (`shared-types`) with:
 
@@ -115,7 +115,7 @@ A shared type package (`shared-types`) with:
 
 | Part | Title | Topics |
 |------|-------|--------|
-| [1](./part-01-working-agent-bundle.md) | A Working Agent Bundle | Bundle anatomy, bot, entity, V1 validator, `BotRunnableEntityMixin`, `@Serializable`, `dataClass` |
+| [1](./part-01-working-agent-bundle.md) | A Working Agent Bundle | Bundle anatomy, workflow, entity, V1 validator, `@ApiEndpoint`, `@Serializable`, `dataClass` |
 | [2](./part-02-catalog-gui.md) | The Catalog GUI | Next.js, intake form, product browser, shared type package |
 | [3](./part-03-multi-supplier-routing.md) | Multi-Supplier Routing | `@DiscriminatedUnion`, `@Discriminator`, `@DerivedFrom`, `@CoerceParse` |
 | [4](./part-04-schema-versioning.md) | Schema Versioning & Auto-Detection | Lambda discriminator, two-phase pattern, schema evolution |
@@ -123,7 +123,7 @@ A shared type package (`shared-types`) with:
 | [6](./part-06-catalog-matching.md) | Catalog Matching & Context | `@CoerceFromSet`, fuzzy matching, `CatalogContext`, DAS integration |
 | [7](./part-07-rules-variants.md) | Business Rules & Nested Variants | `@If`/`@Else`, `@ObjectRule`, `@CrossValidate`, `@ValidatedClassArray` |
 | [8](./part-08-human-review.md) | Human Review Workflow | Entity states, approval flow, inline editing, review queue GUI |
-| [9](./part-09-ai-extraction.md) | AI-Powered Extraction | `@AIExtract`, `@AIClassify`, `@AIJSONRepair`, two AI modalities |
+| [9](./part-09-ai-extraction.md) | AI-Powered Extraction | `@AITransform`, `@AIClassify`, remote bot, two AI modalities |
 | [10](./part-10-recovery-production.md) | Recovery & Production Hardening | `@Catch`, `@AICatchRepair`, `@ValidateAsync`, `@UseStyle`, engine modes |
 
 ## Architecture Overview
@@ -134,16 +134,16 @@ Supplier submits data
        v
   GUI (Next.js)                      Agent Bundle
   +-----------------+                +---------------------------+
-  | Intake Form     |---POST------->| CatalogIntakeBot          |
-  | Product Browser |<--GET---------|   validates via decorators |
-  | Trace Viewer    |               |   BotRunnableEntityMixin  |
-  | Review Queue    |               |   saves to entity graph   |
+  | Intake Form     |---POST------->| @ApiEndpoint handlers     |
+  | Product Browser |<--GET---------|   run ingestion workflows  |
+  | Trace Viewer    |               |   validate via decorators  |
+  | Review Queue    |               |   store SupplierProductDraft|
   +-----------------+                +---------------------------+
        |                                        |
        |              Entity Graph              |
        +---------->  [typed dto.data]  <--------+
-                   SupplierBProduct instance
-                   (not raw JSON)
+                   SupplierProductCanonical
+                   (real class instance, not raw JSON)
 ```
 
 ## Source Code
