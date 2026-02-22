@@ -212,8 +212,7 @@ export class ApiIngestionWorkflow extends RunnableEntity<any> {
     yield { type: 'PROGRESS', message: 'Validating API response...' };
 
     // Step 3: Validate the raw response through the decorator pipeline
-    const factory = new ValidationFactory();
-    const validated = await factory.create(SupplierProductV1, rawProduct);
+    const validated = await validationFactory.create(SupplierProductV1, rawProduct);
 
     // Step 4: Store the validated result
     await this.update_data({
@@ -229,11 +228,13 @@ export class ApiIngestionWorkflow extends RunnableEntity<any> {
 }
 ```
 
+The `validationFactory` is a module-level singleton imported from `src/validation.ts` — a one-liner that creates a shared `ValidationFactory` instance. All four workflows in this bundle import the same instance. The factory holds shared state like registered styles and trace configuration, so you don't want to recreate it on every request.
+
 A few things to notice:
 
 - **The entity carries parameters, not data.** `dto.data.product_id_to_fetch` tells the workflow *what* to fetch. The raw API response is fetched at runtime, validated, and stored alongside the original response for auditability.
 - **This is a `RunnableEntity`, not a bot.** Workflows are idempotent — re-running one produces the same result. The workflow fetches, validates, and stores in one atomic step.
-- **`factory.create()`** runs the full decorator pipeline on the raw API response. If anything fails, it throws with structured errors for every invalid field (thanks to `@UseSinglePassValidation`).
+- **`validationFactory.create()`** runs the full decorator pipeline on the raw API response. If anything fails, it throws with structured errors for every invalid field (thanks to `@UseSinglePassValidation`).
 - **`validated.toJSON()`** serializes the class instance for storage. On read, `fromJSON()` reconstructs it. You never lose the type.
 - **`yield { type: 'PROGRESS' }`** emits progress events. Callers can observe the workflow's lifecycle without polling.
 
