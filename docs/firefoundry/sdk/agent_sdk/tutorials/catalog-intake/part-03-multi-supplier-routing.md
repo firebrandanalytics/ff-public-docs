@@ -1,248 +1,53 @@
-# Part 3: Multi-Supplier Routing
+# Part 3: CSV Ingestion & Multi-Supplier Routing
 
-In Parts 1 and 2, we built a working agent bundle and wired up a GUI -- but everything assumed a single supplier sending flat, snake_case JSON. That was fine for getting started, but FireKicks doesn't have one supplier. It has three, and they each send data in completely different formats.
+Your API pipeline works. Products flow in, validation fires, entities land in the graph. Then your second supplier sends a CSV file, and everything falls apart.
 
-In this part, you'll replace the V1 validator with a `@DiscriminatedUnion` that routes each supplier's payload to a format-specific class. All three classes produce the same canonical output. The bot doesn't care which supplier sent the data -- it just calls `factory.create()` and gets a clean product every time.
+In this part you'll handle a second supplier format -- CSV with ALL_CAPS fields, dollar-sign prices, and comma-separated sizes -- by building a V2 validator and wiring both formats through a discriminated union. One entry point, two validators, zero if/else branches.
 
-**What you'll learn:**
-- Using `@DiscriminatedUnion` and `@Discriminator` to route payloads by format
-- Extracting fields from nested JSON with `@DerivedFrom` and JSONPath
-- Parsing messy strings with `@CoerceParse('currency')`
-- Keeping a single canonical output shape across multiple input formats
-
-**What you'll build:** Three supplier-specific validation classes behind one discriminated union, a bot that handles all three transparently, and GUI updates to select and display the supplier format.
+> **Prerequisite:** Complete [Part 2: The Catalog GUI](./part-02-catalog-gui.md). You should have a working intake form and product browser.
 
 ---
 
-## Step 1: The Problem -- One Format Doesn't Fit All
+## The Problem: A Second Supplier
 
-Open the V1 validator from Part 1. It uses `@Copy()` and `@CoerceTrim()` to map flat fields like `product_name`, `category`, and `base_cost`. That works for Supplier A, whose payloads look like this:
+The V1 validator from Part 1 expects flat, snake_case fields like `product_name`, `base_cost`, and `size_range`. That works for Supplier A's API payloads. Now Supplier B exports from a CSV tool, and a row looks like this:
 
-```json
-{
-  "supplier_schema": "schema_a",
-  "product_name": "Trail Blazer",
-  "category": "hiking",
-  "subcategory": "men's",
-  "brand_line": "outdoor",
-  "base_cost": "79.99",
-  "msrp": "139.99",
-  "color_variant": "Forest Green",
-  "size_range": "7-13"
-}
+```
+PRODUCT_ID,PRODUCT_NAME,CATEGORY,BRAND,GENDER,BASE_COST,MSRP,COLORWAY,SIZES
+FK-BLZ-001,BLAZE RUNNER,RUNNING,FIREKICKS,MENS,$89.99,$159.99,BLACK/WHITE,"7,8,9,10,11,12,13"
 ```
 
-Now look at what Supplier B sends -- nested camelCase with dollar signs in the prices:
+Four things break when you feed this to V1:
 
-```json
-{
-  "supplier_schema": "schema_b",
-  "productInfo": {
-    "name": "Blaze Runner",
-    "categoryCode": "Running",
-    "subcategory": "men's",
-    "brandLine": "performance"
-  },
-  "pricing": {
-    "cost": "$89.99",
-    "retailPrice": "$159.99"
-  },
-  "specs": {
-    "colorway": "Black/White",
-    "sizes": "7-13"
-  }
-}
+1. **ALL_CAPS field names.** V1 expects `product_name`, not `PRODUCT_NAME`. `@Copy()` finds nothing -- the field names don't match.
+2. **Dollar signs in prices.** `@CoerceType('number')` can handle `"89.99"` but chokes on `"$89.99"`. That's not a number, it's a string with a currency symbol.
+3. **Comma-separated sizes.** V1 expects `"7-13"` (a range). The CSV sends `"7,8,9,10,11,12,13"` (a list). The `@ValidatePattern` regex rejects it immediately.
+4. **Extra fields.** The CSV has `BRAND`, `GENDER`, and `COLORWAY` -- fields V1 doesn't define. They'll be silently dropped, losing data you actually want.
+
+If you try it anyway, the factory gives you this:
+
+```
+ValidationError: 3 failures on SupplierProductValidator
+  - product_name: required (got undefined)
+  - base_cost: expected number, got "$89.99"
+  - size_range: pattern mismatch — "7,8,9,10,11,12,13" does not match /^\d+(\.\d+)?-\d+(\.\d+)?$/
 ```
 
-And Supplier C, whose data comes from a CSV export -- everything is ALL_CAPS with dollar signs:
+Every field that V1 looks for by name comes back `undefined` because the source names don't match. The fields V1 does find by coincidence (`BASE_COST`) fail coercion because of the dollar sign. It's not a bug in V1 -- V1 is doing exactly what it was designed to do. The data just doesn't fit.
 
-```json
-{
-  "supplier_schema": "schema_c",
-  "PRODUCT_NAME": "COURT KING",
-  "CATEGORY": "BASKETBALL",
-  "SUBCATEGORY": "MENS",
-  "BRAND_LINE": "STREET",
-  "BASE_COST": "$99.99",
-  "MSRP": "$179.99",
-  "COLOR_VARIANT": "RED/WHITE",
-  "SIZE_RANGE": "8-14"
-}
-```
+You could patch V1 with conditionals, but that's the wrong move. V1 works perfectly for Supplier A. Changing it risks breaking a working pipeline. Instead, you'll build a second validator that speaks CSV-format natively.
 
-Feed Supplier B's payload into the V1 validator and you get empty fields -- there's no `product_name` at the top level, so `@Copy()` finds nothing. Feed Supplier C's payload and you get the same problem, plus raw dollar signs where numbers should be.
+---
 
-You could add if/else branches:
+## The V2 Validator
+
+Create a new class, `SupplierProductV2`, that maps CSV fields to the canonical output shape. Here are the key fields:
 
 ```typescript
-// Don't do this
-function normalizeProduct(raw: any): CanonicalProduct {
-  if (raw.supplier_schema === 'schema_a') {
-    return { product_name: raw.product_name, base_cost: parseFloat(raw.base_cost), ... };
-  } else if (raw.supplier_schema === 'schema_b') {
-    return { product_name: raw.productInfo?.name, base_cost: parseCurrency(raw.pricing?.cost), ... };
-  } else if (raw.supplier_schema === 'schema_c') {
-    return { product_name: titleCase(raw.PRODUCT_NAME), base_cost: parseCurrency(raw.BASE_COST), ... };
-  }
-  throw new Error(`Unknown schema: ${raw.supplier_schema}`);
-}
-```
-
-This grows linearly with each new supplier. Every new field means editing every branch. Every new supplier means another branch. Let's do better.
-
-## Step 2: Create Supplier-Specific Classes
-
-Instead of if/else, you'll create one class per supplier format. Each class uses decorators to map from that supplier's field structure to the canonical output shape. They all extend a common base and produce identical output.
-
-### Supplier A -- Flat snake_case
-
-Supplier A is the "clean" format. Field names already match the canonical schema, so most fields are just `@Copy()` with light normalization.
-
-**`packages/shared-types/src/validators/SupplierAProduct.ts`**:
-
-```typescript
-import {
-  Serializable,
-  UseSinglePassValidation,
-  Discriminator,
-  Copy,
-  CoerceTrim,
-  CoerceCase,
-  CoerceType,
-  ValidateRequired,
-} from '@firebrandanalytics/shared-utils/validation';
-
 @Serializable()
 @UseSinglePassValidation()
-export class SupplierAProduct {
-  @Discriminator('schema_a')
-  supplier_schema!: string;
-
-  @Copy()
-  @CoerceTrim()
-  @ValidateRequired()
-  product_name!: string;
-
-  @Copy()
-  @CoerceTrim()
-  @CoerceCase('lower')
-  category!: string;
-
-  @Copy()
-  @CoerceTrim()
-  subcategory!: string;
-
-  @Copy()
-  @CoerceTrim()
-  @CoerceCase('lower')
-  brand_line!: string;
-
-  @Copy()
-  @CoerceType('number')
-  base_cost!: number;
-
-  @Copy()
-  @CoerceType('number')
-  msrp!: number;
-
-  @Copy()
-  @CoerceTrim()
-  color_variant!: string;
-
-  @Copy()
-  @CoerceTrim()
-  size_range!: string;
-}
-```
-
-This is essentially the V1 validator from Part 1 with two additions: `@Discriminator('schema_a')` marks which union branch this class handles, and `@Serializable()` makes the output safe for entity graph storage.
-
-### Supplier B -- Nested camelCase
-
-Supplier B nests everything inside `productInfo`, `pricing`, and `specs` objects. The `@DerivedFrom` decorator with JSONPath expressions extracts values from deep inside the raw payload. Prices arrive as strings like `"$89.99"`, so `@CoerceParse('currency')` strips the dollar sign and converts to a number.
-
-**`packages/shared-types/src/validators/SupplierBProduct.ts`**:
-
-```typescript
-import {
-  Serializable,
-  UseSinglePassValidation,
-  Discriminator,
-  DerivedFrom,
-  CoerceTrim,
-  CoerceCase,
-  CoerceParse,
-  ValidateRequired,
-} from '@firebrandanalytics/shared-utils/validation';
-
-@Serializable()
-@UseSinglePassValidation()
-export class SupplierBProduct {
-  @Discriminator('schema_b')
-  supplier_schema!: string;
-
-  @DerivedFrom('$.productInfo.name')
-  @CoerceTrim()
-  @ValidateRequired()
-  product_name!: string;
-
-  @DerivedFrom('$.productInfo.categoryCode')
-  @CoerceTrim()
-  @CoerceCase('lower')
-  category!: string;
-
-  @DerivedFrom('$.productInfo.subcategory')
-  @CoerceTrim()
-  subcategory!: string;
-
-  @DerivedFrom('$.productInfo.brandLine')
-  @CoerceTrim()
-  @CoerceCase('lower')
-  brand_line!: string;
-
-  @DerivedFrom('$.pricing.cost')
-  @CoerceParse('currency')
-  base_cost!: number;
-
-  @DerivedFrom('$.pricing.retailPrice')
-  @CoerceParse('currency')
-  msrp!: number;
-
-  @DerivedFrom('$.specs.colorway')
-  @CoerceTrim()
-  color_variant!: string;
-
-  @DerivedFrom('$.specs.sizes')
-  @CoerceTrim()
-  size_range!: string;
-}
-```
-
-Look at what `@DerivedFrom('$.pricing.cost')` does. The raw input has `{ pricing: { cost: "$89.99" } }`. The JSONPath expression navigates into the nested structure, pulls out `"$89.99"`, and hands it to the next decorator in the chain. Then `@CoerceParse('currency')` strips the dollar sign and converts it to `89.99`. No manual destructuring. No `parseFloat(str.replace('$', ''))`.
-
-### Supplier C -- ALL_CAPS (CSV-derived)
-
-Supplier C exports from a CSV tool, so everything is uppercase with dollar signs on prices. `@DerivedFrom` maps the ALL_CAPS field names to canonical output names, `@CoerceCase('title')` converts `"COURT KING"` to `"Court King"`, and `@CoerceParse('currency')` handles the price strings.
-
-**`packages/shared-types/src/validators/SupplierCProduct.ts`**:
-
-```typescript
-import {
-  Serializable,
-  UseSinglePassValidation,
-  Discriminator,
-  DerivedFrom,
-  CoerceTrim,
-  CoerceCase,
-  CoerceParse,
-  CoerceType,
-  ValidateRequired,
-} from '@firebrandanalytics/shared-utils/validation';
-
-@Serializable()
-@UseSinglePassValidation()
-export class SupplierCProduct {
-  @Discriminator('schema_c')
+export class SupplierProductV2 {
+  @Discriminator('v2_csv')
   supplier_schema!: string;
 
   @DerivedFrom('$.PRODUCT_NAME')
@@ -251,477 +56,259 @@ export class SupplierCProduct {
   @ValidateRequired()
   product_name!: string;
 
-  @DerivedFrom('$.CATEGORY')
-  @CoerceTrim()
-  @CoerceCase('lower')
-  category!: string;
-
-  @DerivedFrom('$.SUBCATEGORY')
-  @CoerceTrim()
-  @CoerceCase('lower')
-  subcategory!: string;
-
-  @DerivedFrom('$.BRAND_LINE')
-  @CoerceTrim()
-  @CoerceCase('lower')
-  brand_line!: string;
-
   @DerivedFrom('$.BASE_COST')
   @CoerceParse('currency')
+  @ValidateRequired()
+  @ValidateRange(0.01)
   base_cost!: number;
 
   @DerivedFrom('$.MSRP')
   @CoerceParse('currency')
+  @ValidateRequired()
+  @ValidateRange(0.01)
   msrp!: number;
 
-  @DerivedFrom('$.COLOR_VARIANT')
+  @DerivedFrom('$.SIZES')
   @CoerceTrim()
-  color_variant!: string;
+  @ValidateRequired()
+  sizes!: string;
 
-  @DerivedFrom('$.SIZE_RANGE')
-  @CoerceTrim()
-  size_range!: string;
+  // ... remaining fields follow the same pattern (full class in companion repo)
 }
 ```
 
-Three classes, three completely different input shapes, one canonical output: `{ product_name, category, subcategory, brand_line, base_cost, msrp, color_variant, size_range }`.
+Three decorators are doing the heavy lifting here:
 
-### Export them
+**`@Discriminator('v2_csv')`** -- This tag tells the discriminated union (next section) that this class handles payloads tagged with `"v2_csv"`. It's a declaration, not logic.
 
-**`packages/shared-types/src/validators/index.ts`**:
+**`@DerivedFrom('$.PRODUCT_NAME')`** -- Maps an ALL_CAPS source field to the canonical `product_name` output. The `$` is JSONPath syntax: `$.PRODUCT_NAME` means "the `PRODUCT_NAME` field at the root of the input object." This is what lets you rename fields declaratively -- no manual `obj.PRODUCT_NAME` destructuring.
+
+**`@CoerceParse('currency')`** -- Strips the `$` and converts to a number. `"$89.99"` becomes `89.99`. This is different from `@CoerceType('number')` in V1, which only handles plain numeric strings. `CoerceParse` understands format-specific patterns like currency symbols, so you don't write `parseFloat(str.replace('$', ''))` yourself.
+
+Compare this to the V1 approach for the same fields:
 
 ```typescript
-export { SupplierAProduct } from './SupplierAProduct.js';
-export { SupplierBProduct } from './SupplierBProduct.js';
-export { SupplierCProduct } from './SupplierCProduct.js';
-export { SupplierProductDraftV3 } from './SupplierProductDraftV3.js';
+// V1: flat snake_case, no currency symbols
+@Copy()
+@CoerceType('number')
+@ValidateRequired()
+base_cost!: number;
 ```
 
-## Step 3: Wire the Discriminated Union
+V1 uses `@Copy()` because the source field name already matches. V2 uses `@DerivedFrom()` because it doesn't. V1 uses `@CoerceType('number')` because the value is `"89.99"`. V2 uses `@CoerceParse('currency')` because the value is `"$89.99"`. Different decorators, same output type.
 
-The three supplier classes exist, but nothing connects them yet. The `@DiscriminatedUnion` decorator ties them together. When you call `factory.create(SupplierProductDraftV3, payload)`, the factory reads the `supplier_schema` field from the raw payload, looks it up in the `map`, and dispatches to the correct class.
+Notice what V2 *doesn't* have: no `@ValidatePattern` for size ranges. The CSV sends comma-separated size lists (`"7,8,9,10,11,12,13"`), not ranges (`"7-13"`). V2 accepts the list format as-is. Each validator class owns the rules for its format. V1 and V2 don't have to agree on how sizes are represented -- they just both have a `sizes` (or `size_range`) field in the output.
 
-**`packages/shared-types/src/validators/SupplierProductDraftV3.ts`**:
+---
+
+## The Discriminated Union
+
+Now you have two validators, but nothing connects them. The discriminated union is the glue:
 
 ```typescript
-import {
-  Serializable,
-  DiscriminatedUnion,
-  Copy,
-} from '@firebrandanalytics/shared-utils/validation';
-import { SupplierAProduct } from './SupplierAProduct.js';
-import { SupplierBProduct } from './SupplierBProduct.js';
-import { SupplierCProduct } from './SupplierCProduct.js';
-
 @DiscriminatedUnion({
   discriminator: 'supplier_schema',
   map: {
-    schema_a: SupplierAProduct,
-    schema_b: SupplierBProduct,
-    schema_c: SupplierCProduct,
+    v1_api: SupplierProductV1,
+    v2_csv: SupplierProductV2,
   },
 })
 @Serializable()
-export class SupplierProductDraftV3 {
+export class SupplierProductDraft {
   @Copy()
   supplier_schema!: string;
 }
 ```
 
-Here's what happens at runtime when a Supplier B payload arrives:
+Here's the runtime flow when a CSV payload arrives:
 
 ```
-1. factory.create(SupplierProductDraftV3, payload)
-2. Factory reads payload.supplier_schema  ->  "schema_b"
-3. Looks up "schema_b" in the map         ->  SupplierBProduct
-4. Instantiates SupplierBProduct
-5. All decorators on SupplierBProduct fire:
-   - @DerivedFrom('$.productInfo.name')   ->  extracts "Blaze Runner"
-   - @CoerceParse('currency')             ->  "$89.99" becomes 89.99
-   - @CoerceCase('lower')                 ->  "Running" becomes "running"
-   - ... every field gets mapped and cleaned
+1. factory.create(SupplierProductDraft, payload)
+2. Factory reads payload.supplier_schema  -->  "v2_csv"
+3. Looks up "v2_csv" in the map           -->  SupplierProductV2
+4. Instantiates SupplierProductV2
+5. Decorators fire in order:
+   - @DerivedFrom('$.PRODUCT_NAME')       -->  extracts "BLAZE RUNNER"
+   - @CoerceCase('title')                 -->  "Blaze Runner"
+   - @CoerceParse('currency')             -->  "$89.99" becomes 89.99
 6. Returns a canonical product instance
 ```
 
-The caller doesn't know or care that SupplierBProduct was used. The output has the same shape as Supplier A and Supplier C. It's the same product, just from a different source.
+The caller doesn't know which class handled the payload. It just calls `factory.create()` and gets back a validated product with the same shape regardless of source format.
 
-> **Data Classes > Raw JSON:** Without the discriminated union, your bot would need to understand every supplier's format -- spreading format-specific logic across the codebase. With the union, the bot sees one type: `SupplierProductDraftV3`. The format complexity is fully encapsulated in the validation classes.
+An API payload with `"supplier_schema": "v1_api"` routes to V1. A CSV-derived payload with `"supplier_schema": "v2_csv"` routes to V2. One entry point, two validators.
 
-## Step 4: Update the Bot
+> **Why not if/else?** Every new supplier format means another branch, and every new field means editing every branch. With the union, adding Supplier C means writing one class and adding one line to the `map`. Nothing else changes.
 
-The bot needs exactly one change: swap the V1 validation class for `SupplierProductDraftV3`.
+There's a subtlety worth noting: the `SupplierProductDraft` class itself only has one field -- `supplier_schema`. It doesn't redeclare `product_name`, `base_cost`, or any other product fields. Those live on the branch classes (V1 and V2). The draft class is purely a routing layer. The factory reads the discriminator, picks the branch, and the branch class defines the full output shape.
 
-**`apps/catalog-bundle/src/bots/CatalogIntakeBot.ts`** (updated):
+This means the bot works with the branch class instance directly. After `factory.create()` returns, you have a `SupplierProductV1` or `SupplierProductV2` -- complete with all fields validated and coerced. The `SupplierProductDraft` wrapper is gone.
+
+---
+
+## The CSV Ingestion Workflow
+
+The API workflow from Part 1 accepted JSON over HTTP. The CSV workflow is similar but adds a parsing step: read the file, convert each row to a keyed object, tag it with `supplier_schema: 'v2_csv'`, and feed it through the same factory.
+
+Here's the core of `CsvIngestionWorkflow`:
 
 ```typescript
-import {
-  RegisterBot,
-  MixinBot,
-  ComposeMixins,
-  StructuredOutputBotMixin,
-  logger,
-} from '@firebrandanalytics/ff-agent-sdk';
-import { ValidationFactory } from '@firebrandanalytics/shared-utils/validation';
-import { SupplierProductDraftV3 } from '@catalog-intake/shared-types';
+async processFile(csvContent: string): Promise<ValidationResult[]> {
+  const rows = parseCsv(csvContent); // each row is a Record<string, string>
 
-const validationFactory = new ValidationFactory();
-
-@RegisterBot('CatalogIntakeBot')
-export class CatalogIntakeBot extends ComposeMixins(MixinBot, StructuredOutputBotMixin) {
-  constructor() {
-    super({
-      name: 'CatalogIntakeBot',
-      modelPoolName: 'default',
-    });
-  }
-
-  async validateProduct(rawPayload: Record<string, any>) {
-    // The factory reads supplier_schema and dispatches automatically.
-    // The bot doesn't know which supplier class was used.
-    const product = await validationFactory.create(
-      SupplierProductDraftV3,
-      rawPayload,
-    );
-
-    logger.info('[CatalogIntakeBot] Validated product', {
-      product_name: product.product_name,
-      supplier_schema: product.supplier_schema,
-      base_cost: product.base_cost,
-    });
-
-    return product;
-  }
-
-  public override get_semantic_label_impl(): string {
-    return 'CatalogIntakeBot';
-  }
-}
-```
-
-The raw payload must include a `supplier_schema` field (`"schema_a"`, `"schema_b"`, or `"schema_c"`). The GUI will add it via a dropdown (next step), or the system can inject it based on which supplier API sent the data.
-
-## Step 5: Update the GUI
-
-The GUI needs three changes: a supplier format selector on the intake form, a format badge on the product browser, and a side-by-side view showing raw input vs. canonical output.
-
-### Intake form: add "Supplier Format" dropdown
-
-**`apps/catalog-gui/src/components/IntakeForm.tsx`** (updated):
-
-```tsx
-'use client';
-
-import { useState } from 'react';
-
-const SUPPLIER_FORMATS = [
-  { value: 'schema_a', label: 'Supplier A (flat snake_case)' },
-  { value: 'schema_b', label: 'Supplier B (nested camelCase)' },
-  { value: 'schema_c', label: 'Supplier C (ALL_CAPS CSV)' },
-];
-
-export function IntakeForm() {
-  const [supplierSchema, setSupplierSchema] = useState('schema_a');
-  const [rawPayload, setRawPayload] = useState('');
-  const [result, setResult] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-
-    try {
-      const parsed = JSON.parse(rawPayload);
-      // Inject the supplier_schema from the dropdown
-      const payload = { ...parsed, supplier_schema: supplierSchema };
-
-      const res = await fetch('/api/intake', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      setResult(data);
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div>
-        <label htmlFor="supplier-format" className="block text-sm font-medium">
-          Supplier Format
-        </label>
-        <select
-          id="supplier-format"
-          value={supplierSchema}
-          onChange={(e) => setSupplierSchema(e.target.value)}
-          className="mt-1 block w-full rounded border-gray-300 shadow-sm"
-        >
-          {SUPPLIER_FORMATS.map((f) => (
-            <option key={f.value} value={f.value}>{f.label}</option>
-          ))}
-        </select>
-      </div>
-
-      <div>
-        <label htmlFor="raw-payload" className="block text-sm font-medium">
-          Raw Supplier Payload (JSON)
-        </label>
-        <textarea
-          id="raw-payload"
-          value={rawPayload}
-          onChange={(e) => setRawPayload(e.target.value)}
-          rows={12}
-          className="mt-1 block w-full rounded border-gray-300 font-mono text-sm"
-          placeholder='{ "product_name": "Trail Blazer", "category": "hiking", ... }'
-        />
-      </div>
-
-      <button type="submit" className="rounded bg-blue-600 px-4 py-2 text-white">
-        Submit for Validation
-      </button>
-
-      {error && <p className="text-red-600">{error}</p>}
-
-      {result && (
-        <div className="mt-4 grid grid-cols-2 gap-4">
-          <div>
-            <h3 className="font-medium">Raw Input</h3>
-            <pre className="mt-1 rounded bg-gray-100 p-3 text-xs overflow-auto">
-              {rawPayload}
-            </pre>
-          </div>
-          <div>
-            <h3 className="font-medium">Canonical Output</h3>
-            <pre className="mt-1 rounded bg-green-50 p-3 text-xs overflow-auto">
-              {JSON.stringify(result.product, null, 2)}
-            </pre>
-          </div>
-        </div>
-      )}
-    </form>
+  const results = await Promise.all(
+    rows.map((row) =>
+      this.validationFactory.create(SupplierProductDraft, {
+        ...row,
+        supplier_schema: 'v2_csv',
+      })
+    )
   );
+
+  return results;
 }
 ```
 
-The side-by-side view at the bottom is the key addition. When a product is validated, you see the raw input on the left and the canonical output on the right. Paste in a Supplier B nested payload, and the right side shows the same flat structure you'd get from Supplier A.
+The `supplier_schema` tag is injected here, not expected in the CSV itself. The CSV just has data columns. The workflow knows it's processing a CSV file, so it stamps each row accordingly before handing it to the factory.
 
-### Product browser: show supplier format badge
+This is the same `factory.create(SupplierProductDraft, ...)` call that the API workflow uses -- the only difference is the source of the payload and the `supplier_schema` value.
 
-**`apps/catalog-gui/src/components/ProductCard.tsx`** (updated):
+A few things to notice about this pattern:
+
+- **The CSV never contains `supplier_schema`.** That's a routing concern, not a data concern. The workflow injects it because it knows where the data came from.
+- **`parseCsv` turns each row into a flat object** with the header names as keys: `{ PRODUCT_ID: "FK-BLZ-001", PRODUCT_NAME: "BLAZE RUNNER", ... }`. This is exactly the shape that `@DerivedFrom('$.PRODUCT_NAME')` expects.
+- **Errors are per-row.** If row 3 has a missing product name and row 7 has a negative price, those rows fail individually. The rest succeed. You get back an array of results, each with its own validation status.
+
+---
+
+## GUI Updates
+
+Three additions to the GUI: a file upload component, supplier format badges in the product browser, and a side-by-side raw-vs-canonical view.
+
+### File upload for CSV
+
+Add a file input that reads the CSV, parses it client-side, and submits each row through the existing intake endpoint:
 
 ```tsx
-const SCHEMA_LABELS: Record<string, { label: string; color: string }> = {
-  schema_a: { label: 'A', color: 'bg-blue-100 text-blue-800' },
-  schema_b: { label: 'B', color: 'bg-purple-100 text-purple-800' },
-  schema_c: { label: 'C', color: 'bg-orange-100 text-orange-800' },
+const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  const text = await file.text();
+  const res = await fetch('/api/intake/csv', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/csv' },
+    body: text,
+  });
+
+  const data = await res.json();
+  setResults(data.products);
+};
+```
+
+```tsx
+<input
+  type="file"
+  accept=".csv"
+  onChange={handleFileUpload}
+  className="block w-full text-sm text-gray-500
+    file:mr-4 file:rounded file:border-0
+    file:bg-blue-50 file:px-4 file:py-2
+    file:text-sm file:font-semibold file:text-blue-700
+    hover:file:bg-blue-100"
+/>
+```
+
+The `/api/intake/csv` route handles parsing server-side and returns the validated products. Users drag-and-drop a CSV and see results instantly.
+
+### Supplier format badges
+
+In the product browser, show which format each product came from:
+
+```tsx
+const SCHEMA_BADGES: Record<string, { label: string; color: string }> = {
+  v1_api: { label: 'API', color: 'bg-blue-100 text-blue-800' },
+  v2_csv: { label: 'CSV', color: 'bg-amber-100 text-amber-800' },
 };
 
-interface ProductCardProps {
-  product: {
-    product_name: string;
-    category: string;
-    base_cost: number;
-    msrp: number;
-    color_variant: string;
-    supplier_schema: string;
-  };
-}
-
-export function ProductCard({ product }: ProductCardProps) {
-  const schema = SCHEMA_LABELS[product.supplier_schema] ?? {
-    label: '?',
+function SupplierBadge({ schema }: { schema: string }) {
+  const badge = SCHEMA_BADGES[schema] ?? {
+    label: schema,
     color: 'bg-gray-100 text-gray-800',
   };
 
   return (
-    <div className="rounded border p-4 shadow-sm">
-      <div className="flex items-center justify-between">
-        <h3 className="font-semibold">{product.product_name}</h3>
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${schema.color}`}>
-          {schema.label}
-        </span>
-      </div>
-      <p className="text-sm text-gray-600">{product.category}</p>
-      <p className="mt-1 text-sm">
-        ${product.base_cost.toFixed(2)} / ${product.msrp.toFixed(2)}
-      </p>
-      <p className="text-xs text-gray-400">{product.color_variant}</p>
-    </div>
+    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badge.color}`}>
+      {badge.label}
+    </span>
   );
 }
 ```
 
-Every product card now shows a small badge -- "A", "B", or "C" -- so you can see at a glance which supplier it came from. The product data itself is always in canonical form.
+Now when you browse products, you can see at a glance which ones came from the API pipeline and which came from a CSV upload.
 
-## Step 6: Test All Three Formats
+### Side-by-side view
 
-Build and deploy, then test with all three supplier formats. Each payload includes a `supplier_schema` field that tells the factory which class to use.
+When a product is validated -- from either the JSON form or CSV upload -- show the raw input on the left and the canonical output on the right:
 
-### Supplier A test payload
-
-```json
-{
-  "supplier_schema": "schema_a",
-  "product_name": "Trail Blazer",
-  "category": "hiking",
-  "subcategory": "men's",
-  "brand_line": "outdoor",
-  "base_cost": "79.99",
-  "msrp": "139.99",
-  "color_variant": "Forest Green",
-  "size_range": "7-13"
-}
+```tsx
+{result && (
+  <div className="mt-4 grid grid-cols-2 gap-4">
+    <div>
+      <h3 className="text-sm font-medium text-gray-700">Raw Input</h3>
+      <pre className="mt-1 rounded bg-gray-100 p-3 text-xs overflow-auto">
+        {JSON.stringify(result.raw, null, 2)}
+      </pre>
+    </div>
+    <div>
+      <h3 className="text-sm font-medium text-gray-700">Canonical Output</h3>
+      <pre className="mt-1 rounded bg-green-50 p-3 text-xs overflow-auto">
+        {JSON.stringify(result.product, null, 2)}
+      </pre>
+    </div>
+  </div>
+)}
 ```
 
-### Supplier B test payload
+Upload a CSV row where `BASE_COST` is `"$89.99"` and `PRODUCT_NAME` is `"BLAZE RUNNER"`. On the left you see the raw ALL_CAPS fields. On the right: `base_cost: 89.99` and `product_name: "Blaze Runner"`. The decorators did all the work.
 
-```json
-{
-  "supplier_schema": "schema_b",
-  "productInfo": {
-    "name": "Blaze Runner",
-    "categoryCode": "Running",
-    "subcategory": "men's",
-    "brandLine": "performance"
-  },
-  "pricing": {
-    "cost": "$89.99",
-    "retailPrice": "$159.99"
-  },
-  "specs": {
-    "colorway": "Black/White",
-    "sizes": "7-13"
-  }
-}
-```
+This is the fastest way to verify your decorators are correct. If `@CoerceParse('currency')` isn't stripping the dollar sign, you'll see it immediately in the side-by-side view -- no need to dig through logs or inspect entity graph records.
 
-### Supplier C test payload
+---
 
-```json
-{
-  "supplier_schema": "schema_c",
-  "PRODUCT_NAME": "COURT KING",
-  "CATEGORY": "BASKETBALL",
-  "SUBCATEGORY": "MENS",
-  "BRAND_LINE": "STREET",
-  "BASE_COST": "$99.99",
-  "MSRP": "$179.99",
-  "COLOR_VARIANT": "RED/WHITE",
-  "SIZE_RANGE": "8-14"
-}
-```
+## Putting It Together
 
-### Expected output (all three)
+Let's trace a full CSV upload end-to-end to make sure the pieces connect:
 
-All three produce the same canonical shape:
+1. User drags `firekicks-catalog.csv` onto the upload component.
+2. The browser reads the file and POSTs the raw text to `/api/intake/csv`.
+3. The API route calls `CsvIngestionWorkflow.processFile()`, which parses the CSV into row objects.
+4. Each row gets `supplier_schema: 'v2_csv'` injected and is passed to `factory.create(SupplierProductDraft, row)`.
+5. The factory reads `"v2_csv"`, looks it up in the union map, and dispatches to `SupplierProductV2`.
+6. V2's decorators fire: `@DerivedFrom` maps fields, `@CoerceParse('currency')` strips dollar signs, `@CoerceCase('title')` fixes casing.
+7. The validated product is stored as a typed entity in the graph, tagged with `supplier_schema: 'v2_csv'`.
+8. The response flows back to the GUI, which renders the side-by-side view and adds a "CSV" badge.
 
-```json
-{
-  "supplier_schema": "schema_a",
-  "product_name": "Trail Blazer",
-  "category": "hiking",
-  "subcategory": "men's",
-  "brand_line": "outdoor",
-  "base_cost": 79.99,
-  "msrp": 139.99,
-  "color_variant": "Forest Green",
-  "size_range": "7-13"
-}
-```
+Meanwhile, the existing JSON intake form still works exactly as before -- it sends `"supplier_schema": "v1_api"` and routes to V1. The two paths share a factory call and an entity type, but nothing else.
 
-```json
-{
-  "supplier_schema": "schema_b",
-  "product_name": "Blaze Runner",
-  "category": "running",
-  "subcategory": "men's",
-  "brand_line": "performance",
-  "base_cost": 89.99,
-  "msrp": 159.99,
-  "color_variant": "Black/White",
-  "size_range": "7-13"
-}
-```
-
-```json
-{
-  "supplier_schema": "schema_c",
-  "product_name": "Court King",
-  "category": "basketball",
-  "subcategory": "mens",
-  "brand_line": "street",
-  "base_cost": 99.99,
-  "msrp": 179.99,
-  "color_variant": "RED/WHITE",
-  "size_range": "8-14"
-}
-```
-
-Notice what changed in each case:
-- **Supplier A**: `base_cost` went from string `"79.99"` to number `79.99` (via `@CoerceType('number')`). Category was already lowercase.
-- **Supplier B**: Nested fields were flattened (`$.productInfo.name` became `product_name`). Dollar signs were stripped (`"$89.99"` became `89.99`). `"Running"` was lowered to `"running"`.
-- **Supplier C**: ALL_CAPS were title-cased (`"COURT KING"` became `"Court King"`). Dollar signs were stripped. Category was lowered.
-
-The entity graph stores the canonical data along with the `supplier_schema` discriminator, so you always know where the data came from but never have to deal with the original format again.
-
-### Test with ff-sdk-cli
-
-You can also test directly against the agent bundle without the GUI:
-
-```bash
-# Supplier A
-ff-sdk-cli api call intake \
-  --method POST \
-  --body '{"supplier_schema":"schema_a","product_name":"Trail Blazer","category":"hiking","subcategory":"men'\''s","brand_line":"outdoor","base_cost":"79.99","msrp":"139.99","color_variant":"Forest Green","size_range":"7-13"}' \
-  --url http://localhost:3001
-
-# Supplier B
-ff-sdk-cli api call intake \
-  --method POST \
-  --body '{"supplier_schema":"schema_b","productInfo":{"name":"Blaze Runner","categoryCode":"Running","subcategory":"men'\''s","brandLine":"performance"},"pricing":{"cost":"$89.99","retailPrice":"$159.99"},"specs":{"colorway":"Black/White","sizes":"7-13"}}' \
-  --url http://localhost:3001
-
-# Supplier C
-ff-sdk-cli api call intake \
-  --method POST \
-  --body '{"supplier_schema":"schema_c","PRODUCT_NAME":"COURT KING","CATEGORY":"BASKETBALL","SUBCATEGORY":"MENS","BRAND_LINE":"STREET","BASE_COST":"$99.99","MSRP":"$179.99","COLOR_VARIANT":"RED/WHITE","SIZE_RANGE":"8-14"}' \
-  --url http://localhost:3001
-```
-
-All three should return the canonical shape. Use `ff-eg-read` to verify the entities were stored correctly:
-
-```bash
-ff-eg-read search nodes-scoped --page 1 --size 5 \
-  --condition '{"specific_type_name": "SupplierProductEntity"}' \
-  --order-by '{"created": "desc"}'
-```
+---
 
 ## What You've Built
 
-You now have:
-- **Three supplier-specific validation classes** -- each with its own field mappings and transformations
-- **One discriminated union** -- `SupplierProductDraftV3` routes to the right class based on `supplier_schema`
-- **A bot that handles all three formats transparently** -- one `factory.create()` call, no if/else
-- **A GUI with format selection and side-by-side comparison** -- paste any supplier's payload and see the canonical output
+You now have two supplier formats flowing through one pipeline:
 
-Adding a fourth supplier means writing one new class and adding one line to the `map`. No changes to the bot, no changes to the GUI, no changes to Suppliers A, B, or C.
+- **`SupplierProductV1`** handles API payloads with flat snake_case fields
+- **`SupplierProductV2`** handles CSV data with ALL_CAPS fields, currency strings, and comma-separated sizes
+- **`SupplierProductDraft`** is the discriminated union that routes to the right validator based on `supplier_schema`
+- **The bot doesn't change** -- it still calls `factory.create()` and gets a canonical product
+- **The GUI** now supports CSV file upload, shows format badges, and displays raw-vs-canonical comparisons
 
-## Key Takeaways
-
-1. **`@DiscriminatedUnion` replaces if/else trees** -- The factory reads a discriminator field and dispatches to the matching class. No branching logic in your code.
-2. **`@DerivedFrom` with JSONPath handles nesting** -- `'$.productInfo.name'` navigates into nested objects declaratively. No manual destructuring.
-3. **`@CoerceParse('currency')` handles messy strings** -- `"$89.99"` becomes `89.99` without any `parseFloat(str.replace('$', ''))`.
-4. **Each supplier is isolated** -- A bug in Supplier C's class can't break Supplier A. Each class can be unit tested independently.
-5. **The canonical shape is the contract** -- Everything downstream (the bot, the GUI, the entity graph) works with one shape. The format complexity is fully encapsulated in the validation classes.
+Adding a third supplier means writing one new class and adding one line to the union's `map`. No changes to V1, V2, the bot, or the GUI.
 
 ---
 
 ## What's Next
 
-Every product now has a `supplier_schema` field, but what happens when a new supplier joins and you don't want to require a format tag? In [Part 4: Schema Versioning & Auto-Detection](./part-04-schema-versioning.md), we'll add a lambda discriminator that auto-detects the format by inspecting the data shape -- and we'll tackle schema versioning so old entities keep working when the model evolves.
+Both formats currently require a `supplier_schema` field -- either present in the API payload or injected by the CSV workflow. That works when you control the ingestion path, but what happens when a new supplier sends data and you don't know the format ahead of time? In [Part 4: Schema Versioning & Auto-Detection](./part-04-schema-versioning.md), we'll replace the string discriminator with a lambda that auto-detects the format by inspecting the data shape.
 
-**Previous:** [Part 2: The Catalog GUI](./part-02-catalog-gui.md)
+**Previous:** [Part 2: The Catalog GUI](./part-02-catalog-gui.md) | **Next:** [Part 4: Schema Versioning & Auto-Detection](./part-04-schema-versioning.md)

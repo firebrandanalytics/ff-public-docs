@@ -1,574 +1,368 @@
-# Part 9: AI-Powered Extraction
+# Part 9: AI-Powered Extraction (PDF)
 
-In Parts 1 through 8, every supplier -- however messy their format -- sent structured data. Fields had names. Values had types. The decorators mapped, coerced, and validated. But now Supplier D shows up, and Supplier D doesn't send structured data at all. Supplier D sends a paragraph.
+Supplier C doesn't send structured data -- they send a PDF catalog. Forty pages of product tables, lifestyle photos, and marketing copy. No `product_name` field. No `category` field. No JSON at all. Just a file.
 
-In this part, you'll introduce AI decorators to handle unstructured input. You'll learn two fundamentally different ways AI fits into the validation pipeline -- as a **data generator** and as a **data transformer** -- and you'll see why the distinction matters.
+In Parts 1 through 8, every supplier -- however messy their format -- sent something with identifiable fields. You could point `@Copy()` or `@DerivedFrom()` at a named path and get a value back. Even Supplier B's ALL_CAPS CSV had column headers you could map to. A PDF gives you nothing to point at.
 
-**What you'll learn:**
-- Using `@AIExtract` to pull structured fields from free-text descriptions
-- Using `@AIClassify` to map messy values to a canonical taxonomy
-- Using `@AIJSONRepair` to fix malformed JSON before parsing
-- The two AI modalities: generator vs. transformer
-- Auto-retry with error context when AI output fails validation
-- Wiring AI-extracted data into the review workflow from Part 8
+Here's a page from Supplier C's catalog:
 
-**What you'll build:** A `SupplierDProduct` validation class that extracts structured product data from free text, an AI classification layer for fuzzy category mapping, a JSON repair pipeline for malformed input, and GUI updates to show AI extraction results with confidence scores.
+```
+┌─────────────────────────────────────────────┐
+│  FIREKICKS SPRING 2025 COLLECTION           │
+│                                             │
+│  Blaze Runner Pro                           │
+│  Premium performance running shoe           │
+│  Materials: Mesh upper, EVA midsole,        │
+│  rubber outsole. Weight: 9.2 oz.            │
+│                                             │
+│  Wholesale: $95.00  |  MSRP: $189.99        │
+│                                             │
+│  SKU          Color       Size              │
+│  FK-BLZ-BK10  Black      10                 │
+│  FK-BLZ-BK11  Black      11                 │
+│  FK-BLZ-WH10  White      10                 │
+│  FK-BLZ-WH11  White      11                 │
+│  ...                                        │
+└─────────────────────────────────────────────┘
+```
+
+All the data is there. Product name, prices, materials, a full variant table with individual SKUs. But it's pixels on a page, not fields in a payload. You need AI to read the page and produce structured data before the validation pipeline can do anything.
+
+This part introduces two fundamentally different ways AI fits into that process. Understanding the distinction is the most important concept in this tutorial.
 
 ---
 
-## Step 1: The Problem -- Free Text
+## The Two AI Modalities
 
-Open the discriminated union from Part 4. It handles three suppliers: flat JSON (Supplier A), nested JSON (Supplier B), and ALL_CAPS CSV (Supplier C). All three have identifiable fields. You can point `@Copy()` or `@DerivedFrom()` at a named field and get a value.
+Before writing any code, understand this distinction. It shapes every design decision in this part and beyond.
 
-Now look at what Supplier D sends:
+> **AI as Generator**
+>
+> The LLM *creates* new structured data from unstructured input. A remote PDF extraction bot reads a catalog page and produces `{ product_name, category, base_cost, variants: [...] }`. The AI is the **source** of the data. Nothing structured existed before the AI ran.
+>
+> **AI as Transformer**
+>
+> The LLM *improves* existing structured data within the validation pipeline. `@AIClassify` takes a messy category string and maps it to the canonical taxonomy. `@AITransform` rewrites an ambiguous description into a clean one. The AI is a **tool** within the pipeline, not the source.
+>
+> **The key insight:** Both modalities go through the same validation gate. AI-generated data gets `@CoerceTrim`, `@ValidateRequired`, `@ValidateRange` -- the full decorator pipeline. AI-transformed data passes through `@CoerceFromSet` for exact matching. **The AI doesn't get a free pass.** Whether the LLM generated the data or transformed it, the validation pipeline is the quality gate.
 
-```json
-{
-  "supplier_schema": "schema_d",
-  "free_text": "Premium men's running shoe, the Blaze Runner Pro. Black and white colorway. Retail price $189.99, wholesale $95.00. Available in sizes 7 through 14. Part of the Performance Elite line."
+Keep this distinction in mind as you work through the rest of the part.
+
+---
+
+## V3 Schema: The Richest Data
+
+PDF extraction produces the most detailed data of any supplier. A catalog page has variant tables with colors, sizes, and individual SKUs. It has descriptions, materials, weights -- far more than Supplier A's flat JSON or Supplier B's CSV.
+
+Define the V3 validation class to capture all of it:
+
+```typescript
+@Serializable()
+export class SupplierVariant {
+  @ValidateRequired()
+  color!: string;
+
+  @ValidateRequired()
+  size!: string;
+
+  @ValidateRequired()
+  sku!: string;
 }
 ```
 
-No `product_name` field. No `category` field. No `base_cost` field. Just a description with all the information buried in prose. You can't point `@DerivedFrom('$.product_name')` at anything because there's nothing to point at.
-
-Try feeding this to Supplier A's class:
-
 ```typescript
-const result = await factory.create(SupplierAProduct, {
-  supplier_schema: 'schema_d',
-  free_text: 'Premium men\'s running shoe, the Blaze Runner Pro...'
-});
-// ValidationError: product_name is required
-```
-
-Every field comes back empty. `@Copy()` looks for `product_name` in the raw input and finds nothing. This isn't a mapping problem or a coercion problem -- there's nothing to map or coerce. You need something to **create** the structured data from scratch.
-
-## Step 2: @AIExtract -- AI as Data Generator
-
-`@AIExtract` sends the raw text to an LLM and asks it to pull out specific named fields. The LLM reads the description, understands the meaning, and returns structured data.
-
-Before using any AI decorator, you need an `aiHandler` on the `ValidationFactory`. If you haven't configured one yet:
-
-```typescript
-import { ValidationFactory } from '@firebrandanalytics/shared-utils/validation';
-
-const factory = new ValidationFactory({
-  aiHandler: async (params, prompt) => {
-    return await broker.complete({
-      messages: [{ role: 'user', content: prompt }],
-      model: 'default',
-    });
-  }
-});
-```
-
-Now build the Supplier D validation class.
-
-**`packages/shared-types/src/validators/SupplierDProduct.ts`**:
-
-```typescript
-import {
-  Serializable,
-  UseSinglePassValidation,
-  Discriminator,
-  DerivedFrom,
-  AIExtract,
-  Staging,
-  CoerceTrim,
-  CoerceCase,
-  CoerceParse,
-  CoerceType,
-  ValidateRequired,
-  ValidateRange,
-} from '@firebrandanalytics/shared-utils/validation';
-
 @Serializable()
-@UseSinglePassValidation()
-export class SupplierDProduct {
-  @Discriminator('schema_d')
+export class SupplierProductV3 {
+  @Discriminator('v3_pdf')
   supplier_schema!: string;
 
-  // Step 1: Extract all fields from free text into a staging object
-  @DerivedFrom('$.free_text')
-  @AIExtract([
-    'product_name',
-    'category',
-    'subcategory',
-    'brand_line',
-    'base_cost',
-    'msrp',
-    'color_variant',
-    'size_range',
-  ])
-  @Staging()
-  _extracted!: Record<string, string>;
-
-  // Step 2: Derive each field from the extraction, then validate normally
-
-  @DerivedFrom('_extracted', (e) => e.product_name)
-  @CoerceTrim()
-  @CoerceCase('title')
+  // All the V1 + V2 fields
   @ValidateRequired()
   product_name!: string;
 
-  @DerivedFrom('_extracted', (e) => e.category)
-  @CoerceTrim()
-  @CoerceCase('lower')
+  @ValidateRequired()
   category!: string;
 
-  @DerivedFrom('_extracted', (e) => e.subcategory)
-  @CoerceTrim()
-  @CoerceCase('lower')
-  subcategory!: string;
-
-  @DerivedFrom('_extracted', (e) => e.brand_line)
-  @CoerceTrim()
-  @CoerceCase('lower')
-  brand_line!: string;
-
-  @DerivedFrom('_extracted', (e) => e.base_cost)
-  @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
   base_cost!: number;
 
-  @DerivedFrom('_extracted', (e) => e.msrp)
-  @CoerceParse('currency', { locale: 'en-US', allowNonString: true })
   @ValidateRange(0.01)
   msrp!: number;
 
-  @DerivedFrom('_extracted', (e) => e.color_variant)
-  @CoerceTrim()
-  color_variant!: string;
+  // PDF-specific richness
+  description!: string;
 
-  @DerivedFrom('_extracted', (e) => e.size_range)
-  @CoerceTrim()
-  size_range!: string;
+  materials!: string[];
+
+  weight_oz!: number;
+
+  @ValidatedClassArray(SupplierVariant)
+  variants!: SupplierVariant[];
 }
 ```
 
-Walk through what happens when you validate Supplier D's payload:
+The `variants` array is new. Previous suppliers sent a single `size_range` string like `"7-13"`. The PDF has a full table: Black / Size 10 / SKU FK-BLZ-BK10, White / Size 11 / SKU FK-BLZ-WH11, and so on. `@ValidatedClassArray` validates each variant through its own class -- the same pattern you'd use for any nested object.
 
-1. `@DerivedFrom('$.free_text')` pulls the description string from the raw input.
-2. `@AIExtract([...])` sends that string to the LLM with a prompt like: "Extract the following fields from this text: product_name, category, subcategory, brand_line, base_cost, msrp, color_variant, size_range." The LLM returns a JSON object: `{ product_name: "Blaze Runner Pro", category: "running", base_cost: "$95.00", ... }`.
-3. `@Staging()` marks `_extracted` as temporary -- it won't appear in the final output.
-4. Each real property uses `@DerivedFrom('_extracted', (e) => e.field_name)` to pick its value from the extraction result.
-5. From there, the same decorators you've been using since Part 1 take over: `@CoerceTrim()`, `@CoerceCase()`, `@CoerceParse('currency')`, `@ValidateRange()`.
-
-Run it:
+Now update `SupplierProductCanonical` to include V3 in the discriminated union:
 
 ```typescript
-const result = await factory.create(SupplierDProduct, {
-  supplier_schema: 'schema_d',
-  free_text: `Premium men's running shoe, the Blaze Runner Pro. Black and white colorway.
-Retail price $189.99, wholesale $95.00. Available in sizes 7 through 14.
-Part of the Performance Elite line.`
-});
-
-console.log(JSON.stringify(result, null, 2));
-```
-
-**Output:**
-
-```json
-{
-  "supplier_schema": "schema_d",
-  "product_name": "Blaze Runner Pro",
-  "category": "running",
-  "subcategory": "men's",
-  "brand_line": "performance elite",
-  "base_cost": 95,
-  "msrp": 189.99,
-  "color_variant": "black and white",
-  "size_range": "7-14"
-}
-```
-
-The `_extracted` staging field is gone. Every value has been coerced and validated. The AI did the hard part -- understanding natural language -- and the decorator pipeline did the rest.
-
-For more control over what the AI extracts, pass an object schema with hints instead of a plain string array:
-
-```typescript
-@AIExtract({
-  product_name: 'The full product name including model, excluding brand line',
-  category: 'The athletic category (e.g., running, basketball, hiking)',
-  base_cost: 'The wholesale/cost price as a number',
-  msrp: 'The retail/MSRP price as a number',
+@DiscriminatedUnion({
+  discriminator: 'supplier_schema',
+  map: {
+    'v1_json': SupplierProductV1,
+    'v2_csv': SupplierProductV2,
+    'v3_pdf': SupplierProductV3,
+  }
 })
+export class SupplierProductCanonical {
+  @Copy()
+  supplier_schema!: string;
+}
 ```
 
-The object values become extraction hints in the prompt, which improves accuracy for ambiguous fields.
+Same pattern as Parts 3 and 4. The union routes by discriminator, V3 handles the rest.
 
-## Step 3: @AIClassify -- AI as Data Transformer
+One thing to note: the V3 class doesn't use `@DerivedFrom` or `@Copy` to pull fields from the raw input. It doesn't need to. The extraction bot already produces a clean JSON object with the right field names. The V3 class validates the shape and values of that object -- it doesn't need to navigate or transform the source structure. That's a direct consequence of the Generator modality: the AI already did the structural work.
 
-Extraction is one way to use AI. Classification is another -- and the two serve fundamentally different roles.
+---
 
-Look at the `category` field on `SupplierDProduct`. Right now, `@AIExtract` returns whatever the LLM interprets as the category. For the Blaze Runner description, it returns `"running"` -- which happens to match the canonical taxonomy. But what if the description said "high-performance road shoe"? The LLM might extract `"road running"` or `"performance"`. Neither matches the taxonomy.
+## The PDF Extraction Workflow
 
-`@AIClassify` solves this by constraining the LLM to pick from a specific set of values:
+Here's the fundamental difference from previous suppliers: you can't validate a PDF directly. There's no JSON payload to feed into `factory.create()`. You need a separate step that reads the PDF and produces structured data first.
+
+That's the **AI as Generator** modality. A remote extraction bot -- a separate agent running an LLM with vision capabilities -- reads the PDF pages and outputs structured product records. Your workflow then validates those records through the same pipeline as any other supplier.
 
 ```typescript
-import {
-  AIClassify,
-  CoerceFromSet,
-} from '@firebrandanalytics/shared-utils/validation';
+export class PdfExtractionWorkflow extends Workflow {
+  protected async *run_impl() {
+    const dto = this.dto;
+    const pdfBlob = dto.data.pdf_blob;
 
-// In SupplierDProduct, replace the category decorators:
+    // ------------------------------------------------------------------
+    // AI as Generator: remote bot extracts structured data from PDF
+    // ------------------------------------------------------------------
+    // In production, this calls the remote extraction agent:
+    // const result = await client.run_bot_with_blobs(
+    //   'PdfExtractionBot',
+    //   { catalog_id: dto.data.catalog_id },
+    //   [pdfBlob]
+    // );
+    // const extracted = result.data.products;
 
-  @DerivedFrom('_extracted', (e) => e.category)
-  @AIClassify(['Running Shoes', 'Basketball', 'Hiking', 'Training', 'Casual', 'Skateboarding'])
-  category!: string;
+    // For local dev, use mock extracted data:
+    const extracted = dto.data.extracted_products;
+
+    // ------------------------------------------------------------------
+    // Validation as quality gate -- AI output through same pipeline
+    // ------------------------------------------------------------------
+    const validated = [];
+    for (const product of extracted) {
+      const result = await factory.create(SupplierProductV3, product);
+      validated.push(result.toJSON());
+    }
+
+    // AI-extracted products default to 'review' -- they need human eyes
+    await this.update_data({
+      ...dto.data,
+      validated_products: validated,
+      status: 'review',
+    });
+  }
+}
 ```
 
-`@AIClassify` builds a prompt that forces the LLM to choose exactly one label from the provided list. It also internally applies `@CoerceFromSet` to the LLM's response, so if the LLM returns `"running shoes"` (lowercase), the fuzzy matching resolves it to `"Running Shoes"`.
+Three things to notice:
 
-But you don't have to hardcode the list. Use the `CatalogContext` from Part 6 to supply the valid categories at runtime:
+1. **The remote bot call is commented out.** In local development, you mock the extracted data. The `PdfExtractionBot` is a separate agent that runs in the cluster -- you don't need it running to develop the validation logic. Swap in the real call when you deploy.
 
-```typescript
-  @DerivedFrom('_extracted', (e) => e.category)
-  @AIClassify<CatalogContext>((ctx) => ctx.validCategories)
-  category!: string;
-```
+2. **`factory.create(SupplierProductV3, product)` is the same call you've used since Part 1.** The AI-generated data goes through exactly the same validation pipeline as Supplier A's API payload or Supplier B's CSV row. Coercion, validation, range checks -- all of it.
 
-Now the classification uses whatever categories are loaded from the DAS catalog. Add a new category to the master catalog and it's automatically available for classification -- no code changes.
+3. **Status defaults to `'review'`.** AI-extracted products need human verification. The review workflow from Part 8 handles this. A human reviewer sees the extraction results, confirms or corrects them, and approves the product for import.
 
-Here's the difference between extraction and classification:
+This is the Generator pattern in action: the AI creates the data, then the validation pipeline cleans, coerces, and validates it. The AI is the source, not the authority.
 
-| | @AIExtract | @AIClassify |
-|---|---|---|
-| **AI role** | Creates data that didn't exist | Transforms data into a canonical form |
-| **Input** | Unstructured text | A messy or ambiguous value |
-| **Output** | Whatever the LLM extracts | One of the provided labels |
-| **Constraint** | None -- LLM can return anything | Must choose from the label set |
+### What the Extraction Bot Returns
 
-## Step 4: @AIJSONRepair -- Fixing Malformed Input
-
-Not every unstructured data problem is free text. Some suppliers send *almost*-valid JSON -- close enough that a human can read it, broken enough that `JSON.parse()` rejects it.
-
-Common problems: trailing commas, single quotes instead of double quotes, unquoted keys, missing closing brackets. You've probably seen this from APIs that hand-build JSON strings or from copy-paste errors.
+To make this concrete, here's what the mock data looks like. This is what `PdfExtractionBot` would return for the catalog page shown earlier:
 
 ```json
 {
-  "supplier_schema": "schema_d_broken",
-  "payload": "{ product_name: 'Velocity Sprint', category: 'running', base_cost: 85.00, msrp: 149.99, }"
+  "products": [
+    {
+      "supplier_schema": "v3_pdf",
+      "product_name": "Blaze Runner Pro",
+      "category": "men's performance running",
+      "base_cost": 95.00,
+      "msrp": 189.99,
+      "description": "Premium performance running shoe with mesh upper...",
+      "materials": ["mesh", "EVA", "rubber"],
+      "weight_oz": 9.2,
+      "variants": [
+        { "color": "Black", "size": "10", "sku": "FK-BLZ-BK10" },
+        { "color": "Black", "size": "11", "sku": "FK-BLZ-BK11" },
+        { "color": "White", "size": "10", "sku": "FK-BLZ-WH10" },
+        { "color": "White", "size": "11", "sku": "FK-BLZ-WH11" }
+      ]
+    }
+  ],
+  "confidence": {
+    "product_name": 0.97,
+    "category": 0.72,
+    "base_cost": 0.95,
+    "msrp": 0.95,
+    "description": 0.88,
+    "variants": 0.91
+  }
 }
 ```
 
-`@CoerceParse('json')` throws on this. But `@AIJSONRepair` can fix it:
+Notice the `category` value: `"men's performance running"`. That's what the AI read from the PDF. It's descriptive and accurate, but it doesn't match any value in the canonical taxonomy. The validation pipeline will need to handle that -- and that's where the Transformer modality comes in.
+
+Also notice the `confidence` object. The extraction bot reports how confident it is about each field. Category is low (0.72) because the PDF didn't have an explicit category label -- the bot inferred it from context. Product name is high (0.97) because it was a clear heading on the page. These scores drive the review workflow.
+
+---
+
+## @AITransform and @AIClassify: AI as Transformer
+
+The other modality works inside the validation pipeline itself. Instead of generating data from scratch, it transforms existing data into a better form.
+
+### @AIClassify
+
+Say the PDF extraction bot returns `"men's performance running"` as the category. That's not in your canonical taxonomy. `@AIClassify` maps it to the closest match:
 
 ```typescript
-import {
-  DerivedFrom,
-  AIJSONRepair,
-  CoerceParse,
-  Staging,
-  CoerceTrim,
-  CoerceCase,
-  CoerceType,
-  ValidateRequired,
-  ValidateRange,
-} from '@firebrandanalytics/shared-utils/validation';
-
-class BrokenJSONProcessor {
-  // Step 1: Repair the broken JSON
-  @DerivedFrom('$.payload')
-  @AIJSONRepair()
-  @CoerceParse('json', { allowNonString: true })
-  @Staging()
-  _repaired!: Record<string, any>;
-
-  // Step 2: Extract fields from the repaired object
-  @DerivedFrom('_repaired', (obj) => obj.product_name)
-  @CoerceTrim()
-  @CoerceCase('title')
-  @ValidateRequired()
-  product_name!: string;
-
-  @DerivedFrom('_repaired', (obj) => obj.category)
-  @CoerceTrim()
-  @CoerceCase('lower')
-  category!: string;
-
-  @DerivedFrom('_repaired', (obj) => obj.base_cost)
-  @CoerceType('number')
-  @ValidateRange(0.01)
-  base_cost!: number;
-
-  @DerivedFrom('_repaired', (obj) => obj.msrp)
-  @CoerceType('number')
-  @ValidateRange(0.01)
-  msrp!: number;
-}
+@AIClassify({
+  prompt: 'Classify this product into one of the canonical categories',
+  allowedValues: ctx => ctx.categories,
+})
+category!: string;
 ```
 
-The chain works like this:
+The decorator sends the value to the LLM along with the list of allowed categories. The LLM picks the best match -- `"Running Shoes"` -- and the pipeline continues. If the LLM's pick doesn't exactly match the set (case difference, extra whitespace), the built-in `@CoerceFromSet` fuzzy matching cleans it up.
 
-1. `@AIJSONRepair()` sends the broken JSON to the LLM. The LLM returns valid JSON: `{"product_name": "Velocity Sprint", "category": "running", "base_cost": 85.00, "msrp": 149.99}`.
-2. `@CoerceParse('json')` parses the repaired string into a JavaScript object.
-3. `@Staging()` marks it as temporary scaffolding.
-4. Each field is derived from the repaired object and validated normally.
+### @AITransform
 
-The AI fixed the syntax. The pipeline validated the data. Same pattern as `@AIExtract` -- AI does the heavy lifting, decorators clean up after it.
-
-## Step 5: The Two AI Modalities
-
-You've now seen three AI decorators. Step back and notice the pattern. They split into two fundamentally different roles:
-
-### AI as Data Generator
-
-> The LLM creates new structured data from unstructured input. `@AIExtract` takes a free-text description and produces `{ product_name, category, base_cost, ... }`. The AI is the *source* of the data -- it's generating fields that didn't exist in any structured form.
-
-### AI as Data Transformer
-
-> The LLM transforms existing data into a better form. `@AIClassify` maps a messy category string to one of the canonical taxonomy labels. `@AIJSONRepair` fixes broken JSON syntax. The AI is a *tool within the pipeline* -- it transforms data, it doesn't create it from scratch.
-
-### Why the Distinction Matters
-
-The key insight:
-
-> **AI outputs need validation just as much as human inputs do.** Whether the LLM generated the data or transformed it, the validation pipeline is the quality gate. `@AIExtract` feeds its output back through the same decorator chain -- `@CoerceTrim`, `@CoerceCase`, `@CoerceParse`, `@ValidateRange`. The AI doesn't get a free pass.
-
-This is why you put `@AIExtract` alongside `@ValidateRequired`, `@CoerceCase`, and the rest. The AI generates, then the pipeline validates. If the AI extracts `"$95.00"` for `base_cost`, `@CoerceParse('currency')` strips the dollar sign and converts it to `95`. If the AI extracts `"running"` for category, `@AIClassify` or `@CoerceFromSet` maps it to the canonical label. If the AI returns something completely wrong, `@ValidateRequired` or `@ValidateRange` catches it.
-
-The same principle applies to transformers. `@AIClassify` constrains the LLM to the label set, but the result still passes through `@CoerceFromSet` for exact matching. `@AIJSONRepair` fixes the syntax, but `@CoerceParse('json')` still has to parse it -- if the AI's repair is still invalid JSON, the parse fails and the retry mechanism kicks in.
-
-In both cases, **the validation pipeline is the single source of truth**. The AI is a powerful tool in the pipeline, not a replacement for it.
-
-### When to Use Which
-
-| Scenario | Modality | Decorator |
-|----------|----------|-----------|
-| Free-text description with no fields | Generator | `@AIExtract` |
-| Messy value that needs canonical mapping | Transformer | `@AIClassify` |
-| Broken JSON from a flaky API | Transformer | `@AIJSONRepair` |
-| Validation failure that AI can fix | Transformer | `@AICatchRepair` (Part 10) |
-| Custom extraction or transformation | Either | `@AITransform` |
-
-## Step 6: Auto-Retry with Error Context
-
-What happens when the AI gets it wrong?
-
-Say the LLM extracts `"running"` for the category field, but the canonical taxonomy uses `"Running Shoes"`. Without fuzzy matching, `@CoerceFromSet` would fail. But there's a built-in recovery mechanism: **auto-retry with error context**.
-
-When a subsequent decorator fails after an AI decorator, the library automatically retries the AI call with the error message included in the prompt. The LLM sees what went wrong and can correct its output.
-
-Here's the flow:
-
-```
-Attempt 1:
-  AI extracts: { category: "running" }
-  @CoerceFromSet(['Running Shoes', 'Basketball', 'Hiking', ...])
-  → No exact match for "running"
-  → CoercionError: "running" does not match any valid option
-
-Attempt 2 (automatic):
-  Prompt now includes: "Previous attempt returned 'running' which failed validation.
-  Valid options are: Running Shoes, Basketball, Hiking, Training, Casual, Skateboarding.
-  Please return a corrected value."
-  AI returns: "Running Shoes"
-  @CoerceFromSet → exact match → success
-```
-
-This retry loop is built into all AI decorators. You configure it with `maxRetries` (default: 2):
+For fields that need more than classification -- a rewrite, a cleanup, a format change -- use `@AITransform`:
 
 ```typescript
-@DerivedFrom('$.free_text')
-@AIExtract([
-  'product_name', 'category', 'subcategory', 'brand_line',
-  'base_cost', 'msrp', 'color_variant', 'size_range',
-], { maxRetries: 3 })
-@Staging()
-_extracted!: Record<string, string>;
+@AITransform({
+  prompt: 'Rewrite this product description as a concise, factual summary. '
+        + 'Remove marketing language. Keep materials, dimensions, and features.',
+})
+description!: string;
 ```
 
-The retry mechanism means you don't have to get the prompt perfect on the first try. Write the extraction, stack the validation decorators after it, and the pipeline self-corrects when the AI's output doesn't quite fit.
+The LLM takes the raw extracted description (which might be three paragraphs of marketing copy from the PDF) and returns a clean, factual summary. The important thing is that `description` already has a value -- the extraction bot produced one. `@AITransform` makes it better.
 
-> **Without data classes:**
-> ```typescript
-> // Manual retry logic everywhere
-> let category = await llm.extract(text, 'category');
-> if (!validCategories.includes(category)) {
->   category = await llm.extract(text, 'category',
->     { hint: `Must be one of: ${validCategories.join(', ')}` });
->   if (!validCategories.includes(category)) {
->     throw new Error(`AI failed to extract valid category after 2 attempts`);
->   }
-> }
-> ```
-> With the decorator pipeline, retry logic is built in. You declare what valid looks like, and the framework handles the retry loop.
+You can stack these with other decorators. The AI transform runs, then `@CoerceTrim` strips whitespace, then `@ValidateRequired` confirms the result isn't empty. Same decorator chain as any other field.
 
-## Step 7: Update the GUI
+### The Difference in Practice
 
-The review queue from Part 8 shows validated products. Now you need to show *how* the data was produced -- especially for AI-extracted fields where a human reviewer should verify the AI's work.
+Both `@AIClassify` and `@AITransform` take **existing data** and make it better. They don't create data from nothing. The PDF extraction bot already produced a `category` value and a `description` value. These decorators improve those values within the pipeline.
+
+Compare that to the extraction workflow, where the LLM read raw PDF pixels and created structured fields that didn't exist before. That's the Generator modality.
+
+| | AI as Generator | AI as Transformer |
+|---|---|---|
+| **Where** | Outside the validation pipeline (workflow) | Inside the validation pipeline (decorators) |
+| **Input** | Unstructured (PDF, images, free text) | Structured but messy (extracted fields) |
+| **Output** | New structured data | Improved structured data |
+| **Example** | `PdfExtractionBot` reads a catalog page | `@AIClassify` maps a category to the taxonomy |
+| **AI is the...** | Source | Tool |
+
+Both go through the same validation gate afterward. That's the key insight.
+
+---
+
+## SDK Gap: Remote Bot Wrapper
+
+> **Note:** The SDK will provide a `RemoteBotWrapper` pattern that encapsulates the remote bot call + local validation + retry-with-error-context into a reusable abstraction. When the extraction bot's output fails validation, the wrapper will automatically re-invoke the bot with the validation errors as additional context -- giving the LLM a chance to self-correct. For now, the workflow handles this manually. Watch the SDK changelog for this feature.
+
+---
+
+## GUI Updates
+
+The review queue from Part 8 needs three additions for AI-extracted products.
 
 ### AI Extraction Panel
 
-Add an extraction detail panel to the review page. When a product was processed through `SupplierDProduct`, show each field with its extraction source:
-
-**`apps/catalog-gui/src/app/review/[entityId]/AIExtractionPanel.tsx`**:
+When a reviewer opens an AI-extracted product, show the extraction pipeline: raw PDF on the left, extraction results in the middle, validated output on the right. This lets the reviewer see what the AI saw and what it produced.
 
 ```tsx
-'use client';
-
-import { useValidationTrace } from '@/hooks/useValidationTrace';
-
-interface AIExtractionPanelProps {
-  entityId: string;
-  trace: ReturnType<typeof useValidationTrace>['trace'];
-}
-
-export function AIExtractionPanel({ entityId, trace }: AIExtractionPanelProps) {
-  if (!trace) return null;
-
-  // Find fields that went through AI decorators
-  const aiFields = Object.entries(trace.fields).filter(([_, fieldTrace]) =>
-    fieldTrace.steps.some(step =>
-      step.decorator === 'AIExtract' ||
-      step.decorator === 'AIClassify' ||
-      step.decorator === 'AIJSONRepair'
-    )
-  );
-
-  if (aiFields.length === 0) return null;
-
-  return (
-    <div className="border rounded-lg p-4 bg-blue-50">
-      <h3 className="text-sm font-semibold text-blue-800 mb-3">
-        AI-Extracted Fields
-      </h3>
-      <p className="text-xs text-blue-600 mb-4">
-        These fields were extracted by AI from unstructured text.
-        Review each value and correct if needed.
-      </p>
-      <div className="space-y-3">
-        {aiFields.map(([fieldName, fieldTrace]) => {
-          const aiStep = fieldTrace.steps.find(s =>
-            s.decorator.startsWith('AI')
-          );
-          return (
-            <div key={fieldName} className="flex items-center justify-between">
-              <div>
-                <span className="text-sm font-medium">{fieldName}</span>
-                <span className="ml-2 text-xs text-blue-600">
-                  via @{aiStep?.decorator}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm">{fieldTrace.finalValue}</span>
-                {aiStep?.retryCount && aiStep.retryCount > 0 && (
-                  <span className="text-xs text-amber-600">
-                    ({aiStep.retryCount} {aiStep.retryCount === 1 ? 'retry' : 'retries'})
-                  </span>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+// In the review detail page, add an extraction source panel:
+{product.supplier_schema === 'v3_pdf' && (
+  <AIExtractionPanel
+    pdfBlobId={product.pdf_blob_id}
+    rawExtraction={product.raw_extraction}
+    validatedProduct={product}
+  />
+)}
 ```
 
-### Inline Correction with Re-Validation
+The panel renders a three-column layout:
 
-From Part 8, the review detail page already supports inline editing. When a human corrects an AI-extracted field, the correction needs to run back through validation. The existing `handleFieldEdit` function from Part 8 handles this -- re-validation runs when the reviewer saves a correction.
+- **Left column:** The original PDF page, rendered as an image. The reviewer sees exactly what the AI saw.
+- **Middle column:** The raw extraction output -- the JSON that `PdfExtractionBot` returned, with confidence scores per field.
+- **Right column:** The validated output -- after `factory.create()` ran the decorators, coerced types, and classified categories.
 
-The key addition is visual: mark AI-extracted fields with a badge so reviewers know which fields to scrutinize:
+Differences between the middle and right columns are highlighted. If `@AIClassify` changed `"men's performance running"` to `"Running Shoes"`, the reviewer sees both values with a visual diff. This makes it obvious what the validation pipeline changed versus what the AI originally produced.
+
+### Confidence Scores
+
+The extraction bot returns a confidence score per field. Display these inline so reviewers know which fields to scrutinize:
 
 ```tsx
-// In ReviewDetailPage.tsx, update the field rendering:
-{trace.fields[fieldName]?.steps.some(s => s.decorator.startsWith('AI')) && (
-  <span className="ml-1 px-1.5 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">
-    AI
+{fieldConfidence < 0.8 && (
+  <span className="text-xs text-amber-600 ml-2">
+    Low confidence ({Math.round(fieldConfidence * 100)}%)
   </span>
 )}
 ```
 
-This gives reviewers a clear signal: structured supplier fields (Suppliers A-C) came from mapped data. AI-badged fields (Supplier D) were generated by the LLM and deserve extra attention.
+Fields below 80% confidence get an amber badge. This draws the reviewer's eye to the fields most likely to need correction -- a description the bot wasn't sure about, a price it guessed from context, a category it couldn't classify with certainty.
 
-## Step 8: Add to the Discriminated Union
+### Human Correction Interface
 
-Supplier D plugs into the same discriminated union from Part 4. The union routes by `supplier_schema`, but Supplier D's payload has `"schema_d"` as its discriminator value. Add it to the map:
+When a reviewer overrides an AI-extracted value, the correction runs back through the validation pipeline. This is the same re-validation flow from Part 8 -- the `handleFieldEdit` function submits the edited value through `factory.create()` and shows the updated validation trace.
 
-**`packages/shared-types/src/validators/ProductSubmission.ts`**:
-
-```typescript
-import {
-  DiscriminatedUnion,
-  Copy,
-} from '@firebrandanalytics/shared-utils/validation';
-import { SupplierAProduct } from './SupplierAProduct.js';
-import { SupplierBProduct } from './SupplierBProduct.js';
-import { SupplierCProduct } from './SupplierCProduct.js';
-import { SupplierDProduct } from './SupplierDProduct.js';
-
-@DiscriminatedUnion({
-  discriminator: 'supplier_schema',
-  map: {
-    'schema_a': SupplierAProduct,
-    'schema_b': SupplierBProduct,
-    'schema_c': SupplierCProduct,
-    'schema_d': SupplierDProduct,
-  }
-})
-export class ProductSubmission {
-  @Copy()
-  supplier_schema!: string;
-}
-```
-
-If Supplier D doesn't always include a `supplier_schema` field, add a lambda discriminator from Part 4 that detects the free-text format:
+The new piece is tracking overrides. When a human corrects an AI-extracted field, record both the original AI value and the human correction:
 
 ```typescript
-@DiscriminatedUnion({
-  discriminator: 'supplier_schema',
-  map: {
-    'schema_a': SupplierAProduct,
-    'schema_b': SupplierBProduct,
-    'schema_c': SupplierCProduct,
-    'schema_d': SupplierDProduct,
-  },
-  lambdaDiscriminator: (data: any) => {
-    // If there's a free_text field and no product_name, it's Supplier D
-    if (typeof data.free_text === 'string' && !data.product_name) {
-      return 'schema_d';
-    }
-    return undefined; // Fall through to field-based discrimination
-  }
-})
-export class ProductSubmission {
-  @Copy()
-  supplier_schema!: string;
-}
-```
+// In the review submission handler:
+const overrides = changedFields.map(field => ({
+  field_name: field,
+  ai_value: originalProduct[field],
+  human_value: editedProduct[field],
+  confidence: rawExtraction.confidence[field],
+}));
 
-The lambda runs before the field-based discriminator. If it returns a key, that class is used. If it returns `undefined`, the engine falls back to checking the `supplier_schema` field. This means Supplier D's payload can omit the `supplier_schema` entirely -- the lambda detects it by shape.
-
-From the bot's perspective, nothing changes:
-
-```typescript
-const result = await factory.create(ProductSubmission, rawPayload, {
-  context: catalogContext
+await this.update_data({
+  ...dto.data,
+  human_overrides: overrides,
+  status: 'approved',
 });
-// Works for all four suppliers. The union routes, the class validates.
 ```
 
-Structured or unstructured, flat or nested, clean JSON or free text -- the pipeline handles it all through the same `factory.create()` call. The discriminated union routes to the right class, and each class uses whatever decorators it needs.
+This override log is valuable for two reasons. First, it gives you training data -- if humans consistently override the AI's category classification, the extraction bot's prompts need tuning. Second, it provides an audit trail showing exactly what the AI produced versus what a human approved.
 
-## What You've Built
+---
 
-You now have:
-- **`SupplierDProduct`** -- a validation class that extracts structured product data from free-text descriptions using `@AIExtract`
-- **AI classification** -- `@AIClassify` for mapping messy categories to canonical taxonomy labels
-- **JSON repair** -- `@AIJSONRepair` for fixing malformed JSON before parsing
-- **Auto-retry** -- built-in retry with error context when AI output fails validation
-- **AI extraction panel** -- GUI component showing which fields were AI-generated, with visual badges for reviewers
-- **Discriminated union integration** -- Supplier D plugged into the same routing architecture as all other suppliers
+## Putting It All Together
+
+Here's the full flow for a Supplier C PDF:
+
+1. **Ingest:** The workflow receives a PDF blob and a catalog ID.
+2. **Extract (AI as Generator):** The remote `PdfExtractionBot` reads the PDF and returns an array of product objects with fields, variants, and confidence scores.
+3. **Validate:** Each extracted product goes through `factory.create(SupplierProductV3, ...)`. The validation pipeline coerces types, trims strings, validates ranges -- same as any supplier.
+4. **Transform (AI as Transformer):** Within the V3 class, `@AIClassify` maps categories to the taxonomy and `@AITransform` cleans up descriptions. These decorators improve the already-extracted data.
+5. **Route to review:** All AI-extracted products default to `'review'` status. No auto-import.
+6. **Human review:** A reviewer sees the extraction panel with confidence scores, corrects any errors, and approves.
+7. **Import:** Approved products flow to the catalog via the same DAS write path as any other supplier.
+
+The PDF never touches the validation pipeline directly. The extraction bot converts it to structured data, and from that point on it's just another supplier format flowing through the same infrastructure you built in Parts 1 through 8.
 
 ---
 
 ## What's Next
 
-AI extraction handles unstructured data, but what about failures? A size range comes in as "seven to thirteen" -- that fails the regex pattern. A network timeout kills the AI call mid-extraction. A price value comes back as `"ninety-five dollars"` instead of a number.
-
-In [Part 10: Recovery & Production Hardening](./part-10-recovery-production.md), you'll add graceful error recovery with `@Catch`, AI-powered repair suggestions with `@AICatchRepair`, async validation with `@ValidateAsync`, and production hardening patterns to make the entire pipeline resilient.
+In [Part 10: Recovery & Production Hardening](./part-10-recovery-production.md), you'll add error recovery and production hardening -- `@Catch` for graceful degradation, `@AICatchRepair` for AI-powered repair suggestions, and patterns for making the entire pipeline resilient when real-world data inevitably breaks things.

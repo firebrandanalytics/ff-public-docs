@@ -1,468 +1,250 @@
 # Part 10: Recovery & Production Hardening
 
-Over the last nine parts you built a complete catalog intake system -- validation, multi-supplier routing, schema versioning, catalog matching, business rules, human review, and AI extraction. But we've been assuming the happy path. What happens when a supplier sends `"seven to thirteen"` as a size range? Or `"TBD"` as a price? Or a brand name that doesn't match anything in your catalog?
+What happens when validation fails on a field that's almost right?
 
-In production, you can't just reject everything that doesn't parse cleanly. You need graceful degradation: catch failures, attempt repairs, flag uncertain values for review, and keep the pipeline moving. That's what this part is about.
+A supplier sends `"7to13"` as a size range. Your `@ValidatePattern(/^\d+(-\d+)?$/)` rejects it. Fair enough -- it doesn't match. But a human reading that value knows exactly what it means. The data isn't wrong, it's just formatted badly. Do you reject the entire product and make someone fix it by hand? Or do you try to extract "7" and "13" and fix it yourself?
 
-We'll also DRY up the codebase -- nine parts of decorator stacking has created some repetition -- and cover engine modes and production considerations.
+Over nine parts you've been building the happy path. This part is about what happens when the path isn't happy -- and how to keep the pipeline moving anyway.
 
 ---
 
-## Step 1: The Problem -- Failures Happen
+## Failing vs. Recovering
 
-Look at some real supplier data that would crash the current pipeline:
+Here's a real payload that would crash the current pipeline:
 
 ```json
 {
   "product_name": "Air Zoom Pegasus 41",
-  "category": "running",
-  "base_cost": "TBD",
-  "msrp": "call for pricing",
-  "size_range": "seven to thirteen",
-  "color_variant": "Black/White"
+  "category": "runing shoes",
+  "base_cost": "89.99",
+  "msrp": "150.00",
+  "size_range": "7to13"
 }
 ```
 
-Three fields will fail:
+The `size_range` field fails pattern validation. But the information is there -- it's just got `"to"` instead of `"-"`. Right now, the entire submission gets rejected. For a batch of 500 products from a supplier who always formats sizes this way, that's a workflow bottleneck.
 
-- **`base_cost`**: `"TBD"` can't be coerced to a number by `@CoerceType('number')`. Result: `NaN`, which fails `@ValidateRange(0.01)`.
-- **`msrp`**: Same problem. `"call for pricing"` is not a number.
-- **`size_range`**: `"seven to thirteen"` doesn't match the pattern `/^\d+(\.\d+)?-\d+(\.\d+)?$/`.
+You have three options, in order of preference:
 
-Right now, all three fields produce validation errors, the entire submission is rejected, and someone has to manually fix the data and resubmit. For one or two records, that's fine. For a batch of 500 products from a supplier who always sends prices as `"TBD"` until contracts are finalized? That's a workflow bottleneck.
+1. **Programmatic recovery** -- extract digits mechanically. Free, fast, deterministic.
+2. **AI-assisted recovery** -- ask the LLM to suggest a valid value. Costs money, slower, but handles the long tail.
+3. **Reject and flag** -- give up and surface the error to a reviewer.
 
-What you want instead:
-
-1. **Try to recover automatically** -- if the regex fails on `"seven to thirteen"`, try extracting digits or converting words to numbers.
-2. **Use AI as a fallback** -- if programmatic recovery fails, ask the AI to suggest a valid value.
-3. **Flag repaired values** -- don't silently fix data. Mark it so reviewers know what was changed and why.
-4. **Validate against live data** -- check uniqueness constraints, catalog existence, and other things you can't verify with a regex.
+The decorators for options 1 and 2 are `@Catch` and `@AICatchRepair`. Option 3 is what you already have -- it's the default behavior when neither is present.
 
 ---
 
-## Step 2: @Catch -- Graceful Degradation
+## @Catch -- Programmatic Recovery
 
-`@Catch` wraps a field's decorator pipeline with a fallback. If any decorator in the chain throws, the catch handler gets the error and the raw value, and can attempt a repair.
-
-Update `SupplierProductValidator` to add catch handlers:
-
-**`apps/catalog-bundle/src/validators/SupplierProductValidator.ts`** (updated fields):
+`@Catch` wraps a field's validation pipeline with a fallback handler. If any decorator below it in the stack throws, your handler gets the raw value and can attempt a repair:
 
 ```typescript
-import {
-  ValidationFactory,
-  ValidateRequired,
-  CoerceTrim,
-  CoerceCase,
-  CoerceType,
-  ValidateRange,
-  ValidatePattern,
-  Serializable,
-  Catch,
-} from '@firebrandanalytics/shared-utils/validation';
-
-// Helper: convert word-numbers to digits
-function wordsToDigits(text: string): string {
-  const wordMap: Record<string, string> = {
-    zero: '0', one: '1', two: '2', three: '3', four: '4',
-    five: '5', six: '6', seven: '7', eight: '8', nine: '9',
-    ten: '10', eleven: '11', twelve: '12', thirteen: '13',
-    fourteen: '14', fifteen: '15', sixteen: '16',
-  };
-  let result = text.toLowerCase();
-  for (const [word, digit] of Object.entries(wordMap)) {
-    result = result.replace(new RegExp(`\\b${word}\\b`, 'g'), digit);
-  }
-  return result;
-}
-
-// Helper: extract a size range from messy text
-function extractSizeRange(rawValue: string): string {
-  const converted = wordsToDigits(rawValue);
-  const digits = converted.match(/\d+(\.\d+)?/g);
-  if (!digits || digits.length < 2) {
-    throw new Error(`Cannot extract size range from: "${rawValue}"`);
-  }
-  return `${digits[0]}-${digits[digits.length - 1]}`;
-}
-
-@Serializable()
-export class SupplierProductValidator {
-  @CoerceTrim()
-  @CoerceCase('title')
-  @ValidateRequired()
-  product_name!: string;
-
-  @CoerceTrim()
-  @CoerceCase('lower')
-  @ValidateRequired()
-  category!: string;
-
-  @CoerceTrim()
-  @CoerceCase('lower')
-  subcategory!: string;
-
-  @CoerceTrim()
-  @CoerceCase('lower')
-  brand_line!: string;
-
-  @CoerceType('number')
-  @ValidateRequired()
-  @ValidateRange(0.01)
-  base_cost!: number;
-
-  @CoerceType('number')
-  @ValidateRequired()
-  @ValidateRange(0.01)
-  msrp!: number;
-
-  @CoerceTrim()
-  color_variant!: string;
-
-  @CoerceTrim()
-  @Catch((error, rawValue) => extractSizeRange(rawValue as string))
-  @ValidatePattern(/^\d+(\.\d+)?-\d+(\.\d+)?$/)
-  size_range!: string;
-}
+@Catch({
+  handler: (value) => {
+    const match = String(value).match(/(\d+)\D+(\d+)/);
+    return match ? `${match[1]}-${match[2]}` : undefined;
+  },
+})
+@ValidatePattern(/^\d+(-\d+)?$/)
+size_range!: string;
 ```
 
-Now when `size_range` receives `"seven to thirteen"`:
+The flow for `"7to13"`:
 
-1. `@CoerceTrim()` trims it -- no change.
-2. `@ValidatePattern(...)` fails -- `"seven to thirteen"` doesn't match.
-3. `@Catch` intercepts the error and calls `extractSizeRange("seven to thirteen")`.
-4. `wordsToDigits` converts it to `"7 to 13"`.
-5. The regex extracts `["7", "13"]` and returns `"7-13"`.
-6. The catch result (`"7-13"`) is used as the field value.
+1. `@ValidatePattern` fails -- `"7to13"` doesn't match `^\d+(-\d+)?$`.
+2. `@Catch` intercepts the error and calls the handler with `"7to13"`.
+3. The regex extracts `"7"` and `"13"`, returns `"7-13"`.
+4. `"7-13"` goes back through `@ValidatePattern` -- this time it passes.
 
-If the catch handler itself throws (say the input is `"no sizes available"`), the original validation error propagates as if `@Catch` wasn't there.
+If the handler returns `undefined` or throws, the original validation error propagates as if `@Catch` wasn't there. And critically, the repaired value isn't silently accepted -- it goes through validation again. `@Catch` provides a second chance, not a free pass.
 
-A few things to note about `@Catch`:
+The philosophy: fix what you can, flag what you can't, never crash.
 
-- **The catch result goes through validation again.** If `extractSizeRange` returns `"7-abc"`, the `@ValidatePattern` check runs on the repaired value and rejects it. `@Catch` doesn't bypass validation -- it provides a second chance.
-- **Repaired values are flagged in the trace.** The validation trace (Part 5) records that this field was caught and repaired, including the original value, the error, and the repaired value. Reviewers see it in the GUI.
-- **Place `@Catch` between coercion and validation.** In the decorator stack, `@Catch` wraps everything below it. Placing it right above `@ValidatePattern` means it only catches pattern failures, not trim failures.
+One important detail about placement. `@Catch` wraps everything below it in the decorator stack. Place it right above the validator you want to catch:
+
+```typescript
+// Catches only pattern failures
+@Catch({ handler: repairSize })
+@ValidatePattern(/^\d+(-\d+)?$/)
+size_range!: string;
+
+// Catches pattern failures AND range failures
+@Catch({ handler: repairCost })
+@ValidateRange(0.01)
+@ValidatePattern(/^\d+(\.\d+)?$/)
+base_cost!: string;
+```
+
+Repaired values are also flagged in the validation trace (Part 5). The trace records the original value, the error, and the repaired value. Reviewers in the GUI (Part 8) see exactly what changed and why -- an "Auto-Repaired" badge next to the field with the original value on hover. This means `@Catch` doesn't hide anything. The data gets fixed, the pipeline keeps moving, and humans can verify the fix later.
+
+One more thing: `@Catch` handlers should be fast and deterministic. This is the place for regex extraction, lookup tables, string manipulation -- not HTTP calls or database queries. If you need external data to repair a value, that's what `@AICatchRepair` and `@ValidateAsync` are for.
 
 ---
 
-## Step 3: @AICatchRepair -- AI as Repair Tool
+## @AICatchRepair -- When Code Can't Fix It
 
-`@Catch` works when you can write a deterministic fallback. But some failures need judgment. What's the right size range for `"Small/Medium/Large"`? That's not a digit extraction problem -- it's a domain interpretation problem.
+Some failures need judgment. A supplier sends `"casual/lifestyle"` as a category, but your canonical set is `['running', 'basketball', 'hiking', 'casual']`. That's not a regex problem -- it's a domain interpretation problem. Is `"casual/lifestyle"` closest to `"casual"`? Probably. But writing `if` statements for every possible variant is a losing game.
 
-`@AICatchRepair` uses AI as a repair tool. When validation fails, it sends the error, the raw value, and your prompt to an LLM and asks for a suggestion:
-
-```typescript
-import {
-  // ... existing imports
-  AICatchRepair,
-} from '@firebrandanalytics/shared-utils/validation';
-
-@Serializable()
-export class SupplierProductValidator {
-  // ... other fields unchanged
-
-  @CoerceTrim()
-  @Catch((error, rawValue) => extractSizeRange(rawValue as string))
-  @AICatchRepair({
-    prompt: 'Suggest the closest valid numeric size range in the format "X-Y" (e.g., "7-13"). If the input uses letter sizes (S, M, L, XL), convert to numeric equivalents.',
-  })
-  @ValidatePattern(/^\d+(\.\d+)?-\d+(\.\d+)?$/)
-  size_range!: string;
-}
-```
-
-Now the fallback chain for `size_range` is:
-
-1. `@ValidatePattern` fails.
-2. `@AICatchRepair` catches it, sends the value and prompt to the AI.
-   - Input: `"Small/Medium/Large"`, error: `"does not match required pattern"`
-   - AI response: `"6-10"` (mapping S=6, M=8, L=10)
-3. The AI suggestion goes through `@ValidatePattern` again. If `"6-10"` matches, it's accepted.
-4. If the AI suggestion also fails validation, `@Catch` catches that and tries `extractSizeRange`.
-5. If everything fails, the original error propagates.
-
-The decorator stack reads top-to-bottom, and the catch chain unwinds bottom-to-top. `@AICatchRepair` sits between `@Catch` and `@ValidatePattern`, so it fires first on a pattern failure. If the AI repair fails, `@Catch` gets a second shot.
-
-This is the same "AI as data transformer" pattern from Part 9, applied to validation failures instead of extraction. The AI doesn't decide whether the value is valid -- the decorators below it do. The AI just suggests a repair candidate, and that candidate goes through the same validation pipeline as any other value.
-
-> **Without @AICatchRepair:**
->
-> ```typescript
-> // You'd have to handle every possible format yourself
-> if (value.includes('Small')) return '6-10';
-> if (value.includes('Youth')) return '3.5-7';
-> if (value.includes('Toddler')) return '2-10';
-> // ... infinite edge cases
-> ```
->
-> **With @AICatchRepair:**
->
-> The AI handles the long tail of formats you'd never anticipate. The validation pipeline ensures the AI's output is actually valid.
-
----
-
-## Step 4: @ValidateAsync -- Live Database Checks
-
-All the validators we've written so far are synchronous -- they check format, range, and pattern against the value itself. But some validations require external data:
-
-- Is this SKU already in the database?
-- Does this product name duplicate an existing entry?
-- Is the supplier still active in the system?
-
-`@ValidateAsync` runs asynchronous validators after all synchronous decorators complete:
+`@AICatchRepair` sends the failed value, the error message, and your prompt to the LLM:
 
 ```typescript
-import {
-  // ... existing imports
-  ValidateAsync,
-} from '@firebrandanalytics/shared-utils/validation';
-import { catalogService } from '../services/CatalogService.js';
-
-@Serializable()
-export class SupplierProductValidator {
-  @CoerceTrim()
-  @CoerceCase('title')
-  @ValidateRequired()
-  @ValidateAsync(async (value: string) => {
-    const exists = await catalogService.productNameExists(value);
-    if (exists) {
-      throw new Error(`Product "${value}" already exists in catalog`);
-    }
-  })
-  product_name!: string;
-
-  // ... other fields
-
-  @CoerceTrim()
-  @ValidateRequired()
-  @ValidateAsync(async (value: string) => {
-    const exists = await catalogService.skuExists(value);
-    if (exists) {
-      throw new Error(`SKU "${value}" is already registered`);
-    }
-  })
-  sku!: string;
-}
-```
-
-The catalog service is a thin wrapper around DAS queries (the same `CatalogContext` from Part 6):
-
-```typescript
-// apps/catalog-bundle/src/services/CatalogService.ts
-import { CatalogContext } from '../context/CatalogContext.js';
-
-class CatalogServiceImpl {
-  private context: CatalogContext;
-
-  constructor() {
-    this.context = new CatalogContext();
-  }
-
-  async productNameExists(name: string): Promise<boolean> {
-    const results = await this.context.searchProducts({
-      name,
-      exactMatch: true,
-    });
-    return results.length > 0;
-  }
-
-  async skuExists(sku: string): Promise<boolean> {
-    const results = await this.context.searchBySku(sku);
-    return results.length > 0;
-  }
-}
-
-export const catalogService = new CatalogServiceImpl();
-```
-
-Key behavior of `@ValidateAsync`:
-
-- **Runs after all sync decorators.** Coercion, pattern checks, range checks -- all run first. The async validator sees the fully coerced, sync-validated value. This means you're not hitting the database with garbage values.
-- **Multiple async validators run in parallel.** If `product_name` and `sku` both have `@ValidateAsync`, both database checks run concurrently.
-- **Errors are collected, not short-circuited.** If both `product_name` and `sku` fail uniqueness, both errors appear in the result.
-- **Works with `@Catch` and `@AICatchRepair`.** If an async validator throws, catch handlers can attempt repair (though async repairs are less common).
-
----
-
-## Step 5: Reuse Patterns -- DRY Decorators
-
-After nine parts, you've probably noticed the same decorator combos appearing everywhere:
-
-```typescript
-// This pattern appears on product_name, brand_line, category_name, etc.
-@CoerceTrim()
-@CoerceCase('title')
-@ValidateRequired()
-product_name!: string;
-
-// This pattern appears on category, subcategory, brand_line in some validators
-@CoerceTrim()
-@CoerceCase('lower')
-@ValidateRequired()
+@AICatchRepair({
+  prompt: 'The category value failed validation. Suggest the closest canonical category.',
+})
+@CoerceFromSet(['running', 'basketball', 'hiking', 'casual'])
 category!: string;
 ```
 
-`@UseStyle` lets you define reusable decorator combinations:
+When `@CoerceFromSet` can't match `"casual/lifestyle"`, the AI gets:
 
-**`apps/catalog-bundle/src/validators/styles.ts`**:
+- The raw value: `"casual/lifestyle"`
+- The error: `"Value not found in allowed set"`
+- Your prompt with context
+
+The AI responds with `"casual"`. That candidate goes back through `@CoerceFromSet`, matches, and the field is accepted.
+
+This is the same "AI as transformer" pattern from Part 9, applied to validation failures instead of extraction. The AI doesn't decide whether the value is valid -- the decorators below it do. The AI just suggests a repair candidate.
+
+You can chain both decorators. `@Catch` fires first (it's cheaper), and `@AICatchRepair` fires only if the programmatic handler can't fix it:
 
 ```typescript
-import {
-  StyleDefinition,
-  CoerceTrim,
-  CoerceCase,
-  ValidateRequired,
-} from '@firebrandanalytics/shared-utils/validation';
-
-// Title-cased required string: trim + title case + required
-@StyleDefinition()
-export class TitleStringStyle {
-  @CoerceTrim()
-  @CoerceCase('title')
-  @ValidateRequired()
-  declare value: string;
-}
-
-// Lowercased required string: trim + lowercase + required
-@StyleDefinition()
-export class LowerStringStyle {
-  @CoerceTrim()
-  @CoerceCase('lower')
-  @ValidateRequired()
-  declare value: string;
-}
-
-// Optional trimmed string: trim only, no required check
-@StyleDefinition()
-export class OptionalTrimmedStyle {
-  @CoerceTrim()
-  declare value: string;
-}
+@Catch({
+  handler: (value) => {
+    const match = String(value).match(/(\d+)\D+(\d+)/);
+    return match ? `${match[1]}-${match[2]}` : undefined;
+  },
+})
+@AICatchRepair({
+  prompt: 'Convert this size description to a numeric range in "X-Y" format.',
+})
+@ValidatePattern(/^\d+(-\d+)?$/)
+size_range!: string;
 ```
 
-Now the validator reads like a schema:
+The fallback chain unwinds bottom-to-top: pattern fails, AI tries first (closest to the failure), if the AI's suggestion also fails, `@Catch` gets a shot. Programmatic recovery as the safety net behind AI repair.
+
+A note on costs: `@AICatchRepair` calls the LLM, which means latency and money. Always put `@Catch` above `@AICatchRepair` in the stack so programmatic fixes run first. If 90% of your size range failures are just `"to"` instead of `"-"`, the regex handler catches those for free. The AI only fires on the remaining 10% -- the weird ones like `"Small/Medium/Large"` or `"fits size 7 through 13 wide"`. Monitor how often `@AICatchRepair` actually fires per field. If it's firing on most records, the upstream data quality is bad enough to address at the source.
+
+Both `@Catch` and `@AICatchRepair` repairs show up in the validation trace with distinct markers -- `catchApplied` for programmatic and `aiRepairApplied` for AI. The trace also records the AI's raw response before re-validation, so reviewers can see exactly what the model suggested. This audit trail matters in production: you want to know not just that a value was repaired, but how.
+
+---
+
+## @ValidateAsync -- Live Database Checks
+
+Everything so far validates the value in isolation. But some checks need external data: Is this SKU already in the catalog? Does this product name duplicate an existing entry?
+
+`@ValidateAsync` runs after all synchronous decorators complete:
 
 ```typescript
-import {
-  Serializable,
-  CoerceType,
-  ValidateRange,
-  ValidatePattern,
-  Catch,
-  AICatchRepair,
-  UseStyle,
-} from '@firebrandanalytics/shared-utils/validation';
-import {
-  TitleStringStyle,
-  LowerStringStyle,
-  OptionalTrimmedStyle,
-} from './styles.js';
+@ValidateAsync(async (value, ctx) => {
+  const exists = await ctx.dasClient.query(
+    `SELECT 1 FROM products WHERE sku = $1`, [value]
+  );
+  return !exists ? true : 'SKU already exists in the catalog';
+})
+sku!: string;
+```
 
-@Serializable()
-export class SupplierProductValidator {
-  @UseStyle(TitleStringStyle)
-  product_name!: string;
+Key behaviors:
 
-  @UseStyle(LowerStringStyle)
+- **Runs after sync decorators.** Coercion, pattern checks, range checks -- all finish first. The async validator sees the fully coerced, sync-validated value. You're not hitting the database with garbage.
+- **Multiple async validators run in parallel.** If `product_name` and `sku` both have `@ValidateAsync`, both database checks fire concurrently.
+- **Errors are collected, not short-circuited.** If both checks fail, both errors appear in the result.
+- **Works with `@Catch`.** If an async validator throws, catch handlers can attempt repair -- though this is less common than catching sync failures.
+
+Async validators are the right tool for uniqueness checks, foreign key validation, and any constraint that depends on the current state of your data. They're not the right tool for format validation -- keep that synchronous.
+
+In production, batch your async checks. Validating 500 SKUs with 500 individual queries is slow. A single bulk query is better:
+
+```typescript
+// In your bot's validate method, before per-field validation
+const existingSkus = await catalogService.bulkCheckSkus(batch.map(p => p.sku));
+
+// Then use the pre-fetched set in the async validator
+@ValidateAsync(async (value, ctx) => {
+  return !ctx.existingSkus.has(value) ? true : 'SKU already exists';
+})
+sku!: string;
+```
+
+---
+
+## @UseStyle / @DefaultTransforms -- DRY Patterns
+
+Nine parts of decorator stacking has created some repetition. How many times have you written `@CoerceTrim() @CoerceCase('lower') @ValidateRequired()`? Count the fields in your validator -- it's a lot.
+
+`UseStyle` lets you define reusable decorator combinations:
+
+```typescript
+const TrimmedLowerString = UseStyle([CoerceTrim(), CoerceCase('lower')]);
+
+class SupplierProductValidator {
+  @TrimmedLowerString
+  @ValidateRequired()
   category!: string;
 
-  @UseStyle(LowerStringStyle)
+  @TrimmedLowerString
   subcategory!: string;
-
-  @UseStyle(LowerStringStyle)
-  brand_line!: string;
-
-  @CoerceType('number')
-  @ValidateRequired()
-  @ValidateRange(0.01)
-  base_cost!: number;
-
-  @CoerceType('number')
-  @ValidateRequired()
-  @ValidateRange(0.01)
-  msrp!: number;
-
-  @UseStyle(OptionalTrimmedStyle)
-  color_variant!: string;
-
-  @UseStyle(OptionalTrimmedStyle)
-  @Catch((error, rawValue) => extractSizeRange(rawValue as string))
-  @AICatchRepair({
-    prompt: 'Suggest the closest valid numeric size range in format "X-Y"',
-  })
-  @ValidatePattern(/^\d+(\.\d+)?-\d+(\.\d+)?$/)
-  size_range!: string;
 }
 ```
 
-`@UseStyle` expands the style's decorators in place. `@UseStyle(TitleStringStyle)` is exactly equivalent to writing `@CoerceTrim() @CoerceCase('title') @ValidateRequired()`. The style class is never instantiated -- it's a decorator template.
+`@TrimmedLowerString` expands to `@CoerceTrim() @CoerceCase('lower')` in place. You can still stack additional decorators on top of a style. The style is a template, not a constraint.
 
-### @DefaultTransforms -- Class-Level Defaults
-
-If most fields in a class should be trimmed, you can set that at the class level instead of per-field:
+For class-wide defaults, `@DefaultTransforms` applies baseline transforms to every field:
 
 ```typescript
 @Serializable()
 @DefaultTransforms({ trim: true, case: 'lower' })
 export class SupplierProductValidator {
-  @CoerceCase('title')  // overrides the class-level 'lower' for this field
+  @CoerceCase('title')  // overrides 'lower' for this field
   @ValidateRequired()
   product_name!: string;
 
   @ValidateRequired()   // inherits trim + lower from class defaults
   category!: string;
-
-  // ...
 }
 ```
 
-`@DefaultTransforms` applies to every field that doesn't explicitly override those transforms. It reduces boilerplate when you have a consistent baseline.
+Fields that don't explicitly override get the class-level defaults. This works well when most of your string fields need the same baseline treatment.
 
-### @ManageAll -- Declaring Managed Fields
-
-By default, the validation engine processes fields that have at least one decorator. `@ManageAll` explicitly lists which fields the engine should manage, even if some don't have decorators:
+The benefit is readability. Compare the before and after:
 
 ```typescript
-@Serializable()
-@ManageAll(['product_name', 'category', 'subcategory', 'brand_line',
-            'base_cost', 'msrp', 'color_variant', 'size_range', 'sku'])
-export class SupplierProductValidator {
-  // ...
-}
+// Before: 6 lines of decorators for 2 fields
+@CoerceTrim()
+@CoerceCase('lower')
+@ValidateRequired()
+category!: string;
+
+@CoerceTrim()
+@CoerceCase('lower')
+subcategory!: string;
+
+// After: 3 lines for 2 fields, intent is clearer
+@TrimmedLowerString
+@ValidateRequired()
+category!: string;
+
+@TrimmedLowerString
+subcategory!: string;
 ```
 
-This is useful when you add fields that should appear in the trace and validation result even if they're pass-through (no coercion, no validation). Without `@ManageAll`, undecorated fields are invisible to the engine.
+Styles compose with other decorators. You can put `@Catch`, `@AICatchRepair`, `@ValidateAsync`, or any other decorator on a field that already uses a style. The style handles the baseline; you stack the field-specific behavior on top.
 
 ---
 
-## Step 6: Engine Modes
+## Engine Modes
 
-The validation engine has two modes. Until now, we've been using the default without thinking about it.
+The validation engine has two modes. You've been using the default without thinking about it.
 
-### Convergent Engine (Default)
+**Convergent** (default) re-runs the decorator pipeline until all field values stabilize. This matters when fields depend on each other -- like the `margin_pct` computed from `base_cost` and `msrp` in Part 7. If `base_cost` changes during coercion, `margin_pct` needs to recompute. The convergent engine handles this automatically, typically converging in 2-3 passes.
 
-The convergent engine iterates the decorator pipeline until all field values stabilize. This matters when fields depend on each other.
-
-Remember the margin calculation from Part 7?
+**Single-pass** runs the pipeline exactly once. Use it when fields don't reference each other:
 
 ```typescript
-@ComputeFrom(['base_cost', 'msrp'], (cost, msrp) => ((msrp - cost) / msrp) * 100)
-margin_pct!: number;
-```
-
-If `base_cost` changes during coercion (say `"89.99"` becomes `89.99`), then `margin_pct` needs to recompute. The convergent engine runs the pipeline again, detects that `margin_pct` changed, and iterates until nothing changes. Typically this converges in 2-3 passes.
-
-### Single-Pass Engine
-
-When there are no circular dependencies -- fields don't reference each other -- the convergent engine's iteration is wasted work. `@UseSinglePassValidation()` tells the engine to run the pipeline exactly once:
-
-```typescript
-import { UseSinglePassValidation } from '@firebrandanalytics/shared-utils/validation';
-
 @Serializable()
 @UseSinglePassValidation()
 export class SupplierBValidator {
-  // Extraction-heavy, no computed fields
   @UseStyle(TitleStringStyle)
   product_name!: string;
 
@@ -472,333 +254,48 @@ export class SupplierBValidator {
   @CoerceType('number')
   @ValidateRange(0.01)
   base_cost!: number;
-
-  // ... all independent fields
 }
 ```
 
-When to use which:
+When to use which: single-pass for straightforward intake -- the supplier-specific validators from Parts 3 and 4 that just extract and normalize. Convergent for the main validator where business rules and `@ComputeFrom` create field dependencies. Single-pass is faster and more predictable; convergent handles complexity you can't linearize.
 
-| Engine | Use When | Example |
-|--------|----------|---------|
-| **Convergent** (default) | Fields depend on each other (`@ComputeFrom`, `@DerivedFrom`, cross-field rules) | `SupplierProductValidator` with `margin_pct` |
-| **Single-pass** | All fields are independent -- extraction and coercion only | `SupplierBValidator`, `SupplierCValidator` from Parts 3-4 |
+How do you know if you need convergent mode? If any field uses `@ComputeFrom`, `@DerivedFrom`, or `@CrossValidate` that references other fields, use convergent. If every field's decorators only look at that field's own value, single-pass is safe. When in doubt, leave it on convergent -- the overhead is small for most validators, and it's always correct.
 
-Single-pass is faster and more predictable. Use it for supplier-specific validators that just extract and normalize. Use convergent for the main validator where business rules create field dependencies.
+In practice, this maps cleanly to the architecture from Parts 3-4: supplier-specific validators (`SupplierAProduct`, `SupplierBProduct`, `SupplierCProduct`) do extraction and normalization -- single-pass is ideal. The main `SupplierProductValidator` with business rules, computed margins, and cross-field validation needs convergent. The discriminated union handles routing; each validator picks the engine mode that fits its complexity level.
 
 ---
 
-## Step 7: Update the GUI
+## What You Built
 
-The GUI needs to surface recovery information so reviewers know when values were repaired and can verify the repairs.
+Ten parts. Let's look at the full arc.
 
-### Recovery Indicators
+You started with a JSON payload and a few decorators (Part 1). By the end, you have:
 
-Add repair badges to the product detail view. The validation trace already contains the catch/repair metadata -- you just need to display it:
-
-**`apps/catalog-gui/src/components/FieldDisplay.tsx`**:
-
-```tsx
-import { TraceEntry } from '@firebrandanalytics/shared-utils/validation';
-
-interface FieldDisplayProps {
-  fieldName: string;
-  value: unknown;
-  trace?: TraceEntry;
-}
-
-export function FieldDisplay({ fieldName, value, trace }: FieldDisplayProps) {
-  const wasRepaired = trace?.catchApplied || trace?.aiRepairApplied;
-  const originalValue = trace?.originalValue;
-
-  return (
-    <div className="field-row">
-      <label>{fieldName}</label>
-      <span className="field-value">
-        {String(value)}
-        {wasRepaired && (
-          <span className="repair-badge" title={`Original: "${originalValue}"`}>
-            {trace?.aiRepairApplied ? 'AI Repaired' : 'Auto-Repaired'}
-          </span>
-        )}
-      </span>
-      {wasRepaired && (
-        <div className="repair-detail">
-          <span className="original-value">
-            Was: &ldquo;{String(originalValue)}&rdquo;
-          </span>
-          {trace?.catchError && (
-            <span className="repair-reason">
-              Reason: {trace.catchError}
-            </span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-```
-
-### Async Validation Status
-
-Async validators can take time (database queries, external API calls). Show a loading state while they run:
-
-**`apps/catalog-gui/src/components/AsyncValidationStatus.tsx`**:
-
-```tsx
-interface AsyncStatusProps {
-  field: string;
-  status: 'pending' | 'checking' | 'passed' | 'failed';
-  error?: string;
-}
-
-export function AsyncValidationStatus({ field, status, error }: AsyncStatusProps) {
-  return (
-    <div className="async-status">
-      {status === 'checking' && (
-        <span className="spinner">Checking {field}...</span>
-      )}
-      {status === 'passed' && (
-        <span className="check-pass">Unique</span>
-      )}
-      {status === 'failed' && (
-        <span className="check-fail">{error}</span>
-      )}
-    </div>
-  );
-}
-```
-
-### Summary Dashboard
-
-Add a dashboard that shows validation health across all submissions:
-
-**`apps/catalog-gui/src/components/ValidationDashboard.tsx`**:
-
-```tsx
-interface DashboardProps {
-  stats: {
-    totalSubmissions: number;
-    passedClean: number;
-    passedWithRepairs: number;
-    failed: number;
-    repairsByField: Record<string, number>;
-    commonErrors: Array<{ message: string; count: number }>;
-  };
-}
-
-export function ValidationDashboard({ stats }: DashboardProps) {
-  const repairRate = stats.totalSubmissions > 0
-    ? ((stats.passedWithRepairs / stats.totalSubmissions) * 100).toFixed(1)
-    : '0';
-
-  return (
-    <div className="validation-dashboard">
-      <h2>Validation Summary</h2>
-
-      <div className="stat-cards">
-        <div className="stat-card success">
-          <span className="stat-value">{stats.passedClean}</span>
-          <span className="stat-label">Passed Clean</span>
-        </div>
-        <div className="stat-card warning">
-          <span className="stat-value">{stats.passedWithRepairs}</span>
-          <span className="stat-label">Passed with Repairs</span>
-        </div>
-        <div className="stat-card error">
-          <span className="stat-value">{stats.failed}</span>
-          <span className="stat-label">Failed</span>
-        </div>
-        <div className="stat-card info">
-          <span className="stat-value">{repairRate}%</span>
-          <span className="stat-label">Repair Rate</span>
-        </div>
-      </div>
-
-      <h3>Repairs by Field</h3>
-      <ul>
-        {Object.entries(stats.repairsByField)
-          .sort(([, a], [, b]) => b - a)
-          .map(([field, count]) => (
-            <li key={field}>
-              <strong>{field}</strong>: {count} repairs
-            </li>
-          ))}
-      </ul>
-
-      <h3>Common Errors</h3>
-      <ul>
-        {stats.commonErrors.map(({ message, count }) => (
-          <li key={message}>
-            {message} ({count} occurrences)
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-```
-
-This dashboard tells you things like: "Supplier B's `size_range` field gets auto-repaired 40% of the time -- maybe we should talk to them about their format." Operational insight from the validation pipeline.
-
----
-
-## Step 8: Production Checklist
-
-Before deploying to production, walk through these considerations:
-
-### Error Monitoring
-
-Track validation outcomes in your observability stack:
-
-```typescript
-import { logger, metrics } from '@firebrandanalytics/ff-agent-sdk';
-
-// In CatalogIntakeBot.validate()
-const result = await this.factory.create(SupplierProductValidator, raw_payload);
-const trace = this.factory.getLastTrace();
-
-// Log repair events
-for (const [field, entry] of Object.entries(trace.fields)) {
-  if (entry.catchApplied) {
-    metrics.increment('validation.repairs', {
-      field,
-      supplier: supplier_id,
-      type: entry.aiRepairApplied ? 'ai' : 'programmatic',
-    });
-  }
-}
-
-// Track overall success rates
-metrics.increment('validation.result', {
-  outcome: result.success ? 'pass' : 'fail',
-  supplier: supplier_id,
-});
-```
-
-Set alerts on:
-- **Repair rate spikes** -- if a supplier's repair rate jumps from 5% to 50%, their data format probably changed.
-- **AI repair failures** -- if `@AICatchRepair` is failing frequently, the prompt may need tuning or the data is genuinely unparseable.
-- **Async validation latency** -- database checks should be fast. If `@ValidateAsync` calls start taking seconds, check your indices.
-
-### Performance
-
-- **Use single-pass when possible.** Supplier-specific validators (`SupplierBValidator`, `SupplierCValidator`) that just extract and normalize don't need convergent iteration. Add `@UseSinglePassValidation()`.
-- **Batch async validations.** If you're checking 500 SKUs for uniqueness, a single bulk query is better than 500 individual queries. Implement `@ValidateAsync` with batch-aware logic or use a batch validation endpoint.
-- **Cache catalog data.** The `CatalogContext` from Part 6 queries DAS on every `@CoerceFromSet` call. Add a TTL cache for catalog lookups that don't change frequently.
-
-### AI Costs
-
-AI decorators (`@AICatchRepair`, `@AIExtract`, `@AIClassify`, `@AIJSONRepair`) call LLMs. In production:
-
-- **Place `@Catch` before `@AICatchRepair`** in the decorator stack. Programmatic recovery is free and fast. AI recovery costs money and takes time. Only invoke the AI when your code can't handle it.
-- **Monitor AI decorator invocations.** Track how often `@AICatchRepair` actually fires. If it's firing on 80% of records, the upstream data quality is bad enough that you should address it at the source.
-- **Set cost budgets per supplier.** Some suppliers send clean data (low AI usage). Others send garbage (high AI usage). Track per-supplier AI costs to have informed conversations about data quality.
-
-### Testing
-
-Unit test your validators with edge cases, especially the recovery chain:
-
-```typescript
-import { ValidationFactory } from '@firebrandanalytics/shared-utils/validation';
-import { SupplierProductValidator } from './SupplierProductValidator.js';
-
-describe('SupplierProductValidator', () => {
-  const factory = new ValidationFactory();
-
-  it('handles word-number size ranges', async () => {
-    const result = await factory.create(SupplierProductValidator, {
-      product_name: 'Test Shoe',
-      category: 'running',
-      base_cost: '100',
-      msrp: '150',
-      size_range: 'seven to thirteen',
-    });
-    expect(result.size_range).toBe('7-13');
-  });
-
-  it('rejects completely unparseable size ranges', async () => {
-    await expect(
-      factory.create(SupplierProductValidator, {
-        product_name: 'Test Shoe',
-        category: 'running',
-        base_cost: '100',
-        msrp: '150',
-        size_range: 'no sizes available',
-      }),
-    ).rejects.toThrow(/size_range/);
-  });
-
-  it('coerces string prices to numbers', async () => {
-    const result = await factory.create(SupplierProductValidator, {
-      product_name: 'Test Shoe',
-      category: 'running',
-      base_cost: '89.99',
-      msrp: '120.00',
-      size_range: '7-13',
-    });
-    expect(result.base_cost).toBe(89.99);
-    expect(typeof result.base_cost).toBe('number');
-  });
-
-  it('reports all validation errors, not just the first', async () => {
-    try {
-      await factory.create(SupplierProductValidator, {
-        product_name: '',
-        base_cost: '-5',
-        msrp: '0',
-        size_range: 'invalid',
-      });
-      fail('Expected validation to throw');
-    } catch (error: any) {
-      expect(error.errors.length).toBeGreaterThanOrEqual(3);
-    }
-  });
-});
-```
-
-Test the full decorator chain, not just individual validators. The interaction between `@Catch`, `@AICatchRepair`, and `@ValidatePattern` is where bugs hide.
-
----
-
-## Wrapping Up
-
-You've built a complete supplier catalog intake system across ten parts. Let's look at the full arc:
-
-1. **[Part 1: A Working Agent Bundle](./part-01-working-agent-bundle.md)** -- Scaffolded the application, wrote the first validation class with decorators, created an entity with `@Serializable` + `dataClass`, and proved the round-trip: raw JSON in, typed class instance out, stored and reconstructed from the entity graph.
-
-2. **[Part 2: The Catalog GUI](./part-02-catalog-gui.md)** -- Added a Next.js frontend that shares the same `SupplierProductValidator` class. One definition, three consumers: bundle, GUI, backend. The GUI provides an intake form and a product browser.
-
-3. **[Part 3: Multi-Supplier Routing](./part-03-multi-supplier-routing.md)** -- Handled Supplier A (flat JSON), Supplier B (nested JSON), and Supplier C (ALL_CAPS CSV) with `@DiscriminatedUnion`. Each supplier gets its own validator class; the union routes automatically based on data shape.
-
-4. **[Part 4: Schema Versioning](./part-04-schema-versioning.md)** -- Added lambda discriminators for auto-detecting schema versions. New versions don't break old data. Zero-migration evolution: old entities deserialize with their original validator, new submissions use the latest.
-
-5. **[Part 5: The Validation Trace](./part-05-validation-trace.md)** -- Made the pipeline observable. Every decorator records what it did -- original value, coerced value, validation result -- into a per-field trace. The trace viewer in the GUI shows the full transformation history.
-
-6. **[Part 6: Catalog Matching](./part-06-catalog-matching.md)** -- Connected to the live product catalog via DAS. `@CoerceFromSet` does fuzzy matching against real catalog data, with confidence scores and match explanations.
-
-7. **[Part 7: Business Rules & Nested Variants](./part-07-rules-variants.md)** -- Added conditional validation (`@If`/`@Else`), cross-field rules (`@CrossValidate`), object-level rules (`@ObjectRule`), and nested variant arrays (`@ValidatedClassArray`).
-
-8. **[Part 8: Human Review Workflow](./part-08-human-review.md)** -- Built the approval pipeline. Products move through entity states (Draft, Pending Review, Approved, Rejected). Reviewers can edit fields inline, and changes go through the same validation pipeline.
-
-9. **[Part 9: AI-Powered Extraction](./part-09-ai-extraction.md)** -- Used `@AIExtract` for structured data from free text and `@AIClassify` for category assignment. Two AI modalities: generator (create data from unstructured input) and transformer (reclassify existing data). AI outputs go through the same validation pipeline as human inputs.
-
-10. **[Part 10: Recovery & Production](./part-10-recovery-production.md)** -- Added `@Catch` for programmatic recovery, `@AICatchRepair` for AI-assisted repair, `@ValidateAsync` for live database checks, and `@UseStyle` for DRY decorator patterns. Covered engine modes and production hardening.
+- **4 intake pipelines**: API, CSV, PDF, human form -- all routing through a single discriminated union (Parts 3-4)
+- **Progressive schema evolution**: V1, V2, V3 with lambda auto-detection -- new versions don't break old data (Part 4)
+- **Observable validation**: Per-field traces showing every decorator's before/after (Part 5)
+- **Fuzzy catalog matching**: `@CoerceFromSet` against live DAS data with confidence scores (Part 6)
+- **Business rules and nested variants**: Conditional validation, cross-field rules, variant arrays (Part 7)
+- **Human review workflow**: Entity states, inline editing, approval pipeline (Part 8)
+- **AI-powered extraction and classification**: Generator mode for free text, transformer mode for reclassification (Part 9)
+- **Error recovery and production hardening**: `@Catch`, `@AICatchRepair`, async validation, DRY patterns, engine modes (this part)
 
 ### The Key Takeaways
 
-**The validation class is the single source of truth.** It's shared across the agent bundle, the GUI, and any backend service that touches product data. When you add a field or change a rule, you update one class. Every consumer gets the change.
+**The validation class is the single source of truth.** One `@Serializable` definition, shared across the agent bundle, the GUI, and the backend. When you added a field, changed a rule, or introduced a new supplier format, you updated one class. Every consumer got the change automatically.
 
-**Data classes beat raw JSON at every level.** Type safety, serialization, evolution, debugging -- typed class instances with `@Serializable` and `dataClass` give you all of it. `instanceof` checks work. Methods work. The prototype chain survives a round-trip through the entity graph.
+**AI outputs go through the same pipeline as human inputs.** `@AIExtract`, `@AIClassify`, and `@AICatchRepair` produce candidate values. Those candidates run through coercion, validation, and business rules just like manually entered data. The AI doesn't get a free pass -- and that's why you can trust the output.
 
-**AI outputs go through the same validation pipeline as human inputs.** `@AIExtract`, `@AIClassify`, and `@AICatchRepair` produce candidate values. Those candidates run through coercion, validation, and business rules just like manually entered data. The AI doesn't get a free pass.
+**Decorator stacking is the architecture.** Every capability -- coercion, validation, routing, tracing, matching, business rules, human review, AI extraction, recovery -- was a decorator or a combination of decorators on that same class. The validator grew from 8 fields with basic decorators to a full production pipeline, and the fundamental pattern never changed: define the shape, stack the decorators, let the engine run.
 
-**The entity graph stores typed class instances, not raw JSON.** `@EntityDecorator({ dataClass })` and `@Serializable` handle the serialization lifecycle natively. When you load an entity, `dto.data` is a real class instance -- not a `{ product_name: "..." }` plain object.
+**Recovery is a first-class concern, not an afterthought.** `@Catch` and `@AICatchRepair` aren't workarounds. They're part of the decorator stack, subject to the same validation rules, visible in the same trace, and reviewable in the same GUI. Production data is messy. The pipeline should handle that messiness explicitly, not pretend it doesn't exist.
 
-**Decorator stacking is the architecture.** Every capability you added -- coercion, validation, routing, tracing, matching, business rules, human review, AI extraction, recovery -- was a decorator or a combination of decorators on the same class. The validation class grew from 8 fields with basic decorators to a full production pipeline, and the fundamental pattern never changed.
+Raw supplier data goes in -- messy, inconsistent, sometimes broken. Typed, validated, reviewed product records come out.
 
 ---
 
-You now have a production-ready catalog intake system. Raw supplier data goes in -- messy, inconsistent, sometimes broken -- and typed, validated, reviewed product records come out. The decorators do the heavy lifting. The validation class is the contract. The entity graph is the persistence layer. And the GUI makes it all visible.
+## Further Reading
 
-**Ready to go deeper?** Check out the [Validation Library Reference](../../utils/validation/README.md) for the complete decorator API, or explore the [News Analysis Tutorial](../news-analysis/README.md) for a different take on the agent bundle pattern.
+- [Validation Library Reference](../../utils/validation/README.md) -- full decorator API
+- [News Analysis Tutorial](../news-analysis/README.md) -- different use case, same SDK patterns
+- [Report Generator Tutorial](../report-generator/README.md) -- advanced entity/bot/prompt stack
