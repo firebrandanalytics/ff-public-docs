@@ -1,6 +1,6 @@
 # Working Memory
 
-Working Memory is FireFoundry's persistent blob storage system for entities. It stores binary files (PDFs, images, CSVs, generated documents) alongside JSON metadata, accessible by a unique `working_memory_id`. The underlying storage is managed by the [Context Service](../../../platform/services/context-service.md).
+Working Memory is FireFoundry's persistent blob storage system for entities. It stores binary files (PDFs, images, CSVs, generated documents) alongside JSON metadata, accessible by a unique `working_memory_id`. The underlying storage is managed by the [Context Service](../../../platform/services/context-service/README.md).
 
 ## When to Use Working Memory
 
@@ -250,4 +250,4 @@ ff-wm-write upload --entity-id <entity-id> --file ./document.pdf --name "documen
 - [File Upload Patterns](../feature_guides/file-upload-patterns.md) -- comprehensive patterns including retrieval, error handling, and client examples
 - [File Upload Tutorial](../tutorials/file-upload/README.md) -- step-by-step tutorial building a file upload agent bundle
 - [Report Generator Part 4](../tutorials/report-generator/part-04-working-memory.md) -- Working Memory in a multi-stage pipeline tutorial
-- [Context Service](../../../platform/services/context-service.md) -- platform service documentation (storage backends, gRPC API, configuration)
+- [Context Service](../../../platform/services/context-service/README.md) -- platform service documentation (storage backends, gRPC API, configuration)
