@@ -203,7 +203,7 @@ catalog-intake/
     catalog-bundle/         # Agent bundle from Part 1
     catalog-gui/            # Next.js GUI (new)
       src/app/
-        intake/             # Intake form page
+        intake/             # API ingestion trigger page
         products/           # Product browser page
       src/lib/
         bundleClient.ts     # Server-side bundle client
@@ -232,9 +232,11 @@ That's the entire client. Three lines. The `RemoteAppRunnerClient` knows how to 
 
 ## The Intake Form
 
-The intake form submits raw product data to the bundle for validation. The key insight: the form fields are derived directly from the `SupplierProductV1` class.
+In Part 1, you tested API ingestion with curl: `POST /api/ingest-api` with a product ID. The intake form is the GUI equivalent -- enter a product ID, click "Fetch & Validate", and the bundle fetches from the supplier's API, validates through the decorator pipeline, and stores the result.
 
-Create an API route that proxies to the bundle through the SDK client:
+> **Note:** This form triggers the `ApiIngestionWorkflow` from Part 1. We're not entering product data manually -- we're telling the bundle *which product to fetch*. A full manual entry form comes in [Part 8](./part-08-human-review.md).
+
+Create an API route that proxies to the bundle through the SDK client. This calls the `ingest-api` endpoint we built in Part 1:
 
 ```typescript
 // apps/catalog-gui/src/app/api/intake/route.ts
@@ -243,98 +245,96 @@ import { bundleClient } from '@/lib/bundleClient';
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const result = await bundleClient.invoke_entity_method(
-    body.workflow_entity_id,
-    'ingest-manual',
-    { raw_payload: body.supplier_data },
-  );
+  // Call the bundle's ingest-api endpoint — same as our curl test from Part 1
+  const result = await bundleClient.call_api_endpoint('ingest-api', {
+    method: 'POST',
+    body: {
+      product_id_to_fetch: body.product_id,
+      supplier_api_url: body.supplier_api_url,
+    },
+  });
   return NextResponse.json(result);
 }
 ```
 
-Now the form page. Here's where the shared type earns its keep:
+Now the form page. It's simple -- just a product ID input and an optional API URL override:
 
 ```tsx
 // apps/catalog-gui/src/app/intake/page.tsx
 'use client';
 
 import { useState } from 'react';
-import { SupplierProductV1 } from '@catalog-intake/shared-types';
 
-// The form state mirrors the validator's fields exactly.
-// If someone adds a field to SupplierProductV1,
-// TypeScript will flag this initializer as incomplete.
-type FormState = {
-  [K in keyof SupplierProductV1]: SupplierProductV1[K];
-};
+export default function IntakePage() {
+  const [productId, setProductId] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
-const INITIAL_STATE: FormState = {
-  product_name: '',
-  category: '',
-  subcategory: '',
-  brand_line: '',
-  base_cost: 0,
-  msrp: 0,
-  color: '',
-  size_range: '',
-};
-```
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    setResult(null);
 
-That `FormState` type is the connection. It's a mapped type over `SupplierProductV1` -- every field the validator declares, the form must include. If the validator gains a `material` field, `INITIAL_STATE` produces a compile error until you add `material: ''`.
+    const res = await fetch('/api/intake', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_id: productId }),
+    });
 
-The rest of the form is standard React. The submit handler sends the data through the proxy route:
+    const data = await res.json();
 
-```tsx
-async function handleSubmit(e: React.FormEvent) {
-  e.preventDefault();
-  setSubmitting(true);
+    if (data.success) {
+      setResult(data);
+    } else {
+      setError(data.error || 'Ingestion failed');
+    }
 
-  const res = await fetch('/api/intake', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ supplier_data: form }),
-  });
-
-  const data = await res.json();
-
-  if (data.success) {
-    setResult({ entity_id: data.entity_id, status: 'validated' });
-  } else {
-    setErrors(data.errors || [{ field: 'unknown', message: 'Submission failed' }]);
+    setSubmitting(false);
   }
 
-  setSubmitting(false);
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4 max-w-md">
+      <h1 className="text-2xl font-bold">API Ingestion</h1>
+      <p className="text-gray-600">
+        Enter a product ID to fetch from the supplier API.
+        The bundle validates and normalizes the response.
+      </p>
+      <input
+        type="text"
+        value={productId}
+        onChange={(e) => setProductId(e.target.value)}
+        placeholder="e.g. FK-BLZ-001"
+        className="border rounded px-3 py-2 w-full"
+      />
+      <button
+        type="submit"
+        disabled={submitting || !productId}
+        className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
+      >
+        {submitting ? 'Fetching...' : 'Fetch & Validate'}
+      </button>
+      {result && (
+        <div className="bg-green-50 border border-green-200 rounded p-3 text-sm">
+          <p className="font-medium text-green-800">Product validated and stored</p>
+          <p className="text-green-600">Entity ID: {result.entity_id}</p>
+          <pre className="mt-2 text-xs overflow-auto">
+            {JSON.stringify(result.validated_product, null, 2)}
+          </pre>
+        </div>
+      )}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded p-3 text-sm text-red-800">
+          {error}
+        </div>
+      )}
+    </form>
+  );
 }
 ```
 
-The response tells you whether validation passed or failed. If it failed, the bundle returns per-field errors (from Part 1's `@UseSinglePassValidation`), so the form can highlight exactly which fields need fixing.
-
-Each form input maps to a validator field:
-
-```tsx
-<input
-  type="text"
-  value={form.product_name}
-  onChange={(e) => setForm({ ...form, product_name: e.target.value })}
-  placeholder="e.g. Air Max 90"
-/>
-
-<input
-  type="text"
-  value={form.base_cost || ''}
-  onChange={(e) => setForm({ ...form, base_cost: parseFloat(e.target.value) || 0 })}
-  placeholder="89.99"
-/>
-
-<input
-  type="text"
-  value={form.size_range}
-  onChange={(e) => setForm({ ...form, size_range: e.target.value })}
-  placeholder="7-13"
-/>
-```
-
-You might wonder why we send `base_cost` as a number from the form when the validator's `@CoerceType('number')` can handle strings. You could send it as a string -- the bundle would coerce it just fine. But the shared type says `base_cost: number`, so TypeScript nudges you toward sending the right type from the start. The coercion decorators are a safety net, not a crutch.
+The response shows the validated product -- the same normalized output we saw from curl in Part 1, now displayed in the browser. You can see exactly how the decorators cleaned up the supplier's messy data.
 
 ---
 
@@ -460,11 +460,11 @@ pnpm dev
 
 Open `http://localhost:3000` and walk through the full cycle:
 
-1. **Navigate to `/intake`** -- fill out the form with some messy data. Try title-cased product names, string prices, extra whitespace. The bundle's decorators will clean it all up.
-2. **Submit** -- the bundle validates through the same `SupplierProductV1` class, stores a typed entity, and returns the result.
-3. **Navigate to `/products`** -- the product appears with normalized data. `"  air max 90  "` shows as `"Air Max 90"`. `"89.99"` (string) shows as `$89.99` (number, formatted).
+1. **Navigate to `/intake`** -- enter a product ID like `FK-BLZ-001`. The bundle fetches from the supplier's API (or loads from mock data in local dev), validates through the decorator pipeline, and stores the result.
+2. **See the result** -- the response panel shows the normalized product. `"  blaze runner  "` became `"Blaze Runner"`. `"89.99"` (string) became `89.99` (number). `"RUNNING"` became `"running"`.
+3. **Navigate to `/products`** -- the product appears in the browser with all fields properly typed and displayed.
 
-The key observation: the validator class ran in the bundle to clean the data, and the same class definition typed the GUI components that display it. The form's field list, the bundle's validation pipeline, and the browser's display columns all derive from one source.
+The key observation: the validator class ran in the bundle to clean the data, and the same class definition typed the GUI components that display it. The bundle's validation pipeline and the browser's display columns derive from the same shared type.
 
 ---
 
