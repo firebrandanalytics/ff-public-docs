@@ -280,6 +280,92 @@ You never call `toJSON()` or `fromJSON()` yourself. The SDK handles the round-tr
 
 ---
 
+## Expose the API Endpoint
+
+We have a workflow that fetches and validates, and an entity that stores the result. But how does a request from the outside world trigger this pipeline? That's the agent bundle's job.
+
+The agent bundle class exposes HTTP endpoints via `@ApiEndpoint`. Each endpoint creates an entity, runs the workflow, and returns the result. Here's the key snippet from `apps/catalog-bundle/src/agent-bundle.ts`:
+
+```typescript
+export class CatalogIntakeAgentBundle extends FFAgentBundle<any> {
+  constructor() {
+    super(
+      {
+        id: APP_ID,
+        application_id: APP_ID,
+        name: 'CatalogIntakeBundle',
+        type: 'agent_bundle',
+        description: 'Catalog intake — supplier product validation and harmonization',
+      },
+      CatalogBundleConstructors,
+      createEntityClient(APP_ID),
+    );
+  }
+
+  @ApiEndpoint({ method: 'POST', route: 'ingest-api' })
+  async ingestFromApi(body: {
+    product_id_to_fetch: string;
+    supplier_api_url?: string;
+  }) {
+    const { product_id_to_fetch, supplier_api_url } = body;
+
+    // 1. Create the entity with parameters for the workflow
+    const entityDto = await this.entity_factory.create_entity_node({
+      app_id: this.get_app_id(),
+      name: `api-ingest-${product_id_to_fetch}-${Date.now()}`,
+      specific_type_name: 'ApiIngestionWorkflow',
+      general_type_name: 'SupplierProductDraft',
+      data: { product_id_to_fetch, supplier_api_url },
+    });
+
+    // 2. Run the workflow — it fetches from the API, validates, and stores
+    const runnable = await this.entity_factory.get_entity(entityDto.id);
+    const result = yield* await (runnable as any).start();
+
+    // 3. Return the entity ID and validated product
+    return {
+      success: true,
+      entity_id: entityDto.id,
+      validated_product: result?.toJSON?.() ?? result,
+    };
+  }
+}
+```
+
+This is the connection point. Follow the data flow:
+
+1. **HTTP request** hits `POST /api/ingest-api` with `{ product_id_to_fetch: "FK-BLZ-001" }`
+2. **`create_entity_node`** creates a `SupplierProductDraft` entity in the graph. Its `data` contains the parameters — *what* to fetch, not the data itself.
+3. **`get_entity`** returns the entity as a runnable (because `specific_type_name` is `'ApiIngestionWorkflow'`, the constructors map resolves to the workflow class).
+4. **`start()`** runs `run_impl()` — the workflow fetches from the supplier API, validates through the decorator pipeline, and calls `update_data()` to store the validated result back on the entity.
+5. **`return result`** — the workflow's return value (a `SupplierProductV1` instance) flows back to the endpoint, which serializes it in the response.
+
+The `CatalogBundleConstructors` object (in `constructors.ts`) is what makes the mapping from type names to classes work:
+
+```typescript
+export const CatalogBundleConstructors = {
+  ...FFConstructors,
+  SupplierProductDraft,
+  ApiIngestionWorkflow,
+  CsvIngestionWorkflow,
+  PdfExtractionWorkflow,
+  ManualEntryWorkflow,
+} as const;
+```
+
+Every entity type and workflow type that appears in `create_entity_node` must be registered here. Without it, `get_entity` wouldn't know which class to instantiate.
+
+Finally, `index.ts` boots the server:
+
+```typescript
+import { createStandaloneAgentBundle } from '@firebrandanalytics/ff-agent-sdk';
+import { CatalogIntakeAgentBundle } from './agent-bundle.js';
+
+await createStandaloneAgentBundle(CatalogIntakeAgentBundle, { port: 3002 });
+```
+
+---
+
 ## Deploy and Test
 
 Build and deploy:
@@ -291,23 +377,15 @@ ff application register
 ff agent-bundle deploy
 ```
 
-Create a workflow entity with the API call parameters — notice we're telling it *what to fetch*, not giving it the data:
+Call the API endpoint — notice we're telling it *what to fetch*, not giving it the data:
 
 ```bash
-ff-sdk-cli entity create SupplierProductDraft \
-  --data '{
-    "product_id_to_fetch": "FK-BLZ-001",
-    "supplier_api_url": "http://localhost:3050"
-  }'
+curl -X POST http://localhost:3002/api/ingest-api \
+  -H 'Content-Type: application/json' \
+  -d '{ "product_id_to_fetch": "FK-BLZ-001" }'
 ```
 
-Run the workflow:
-
-```bash
-ff-sdk-cli entity run <entity-id>
-```
-
-Expected result — the workflow fetched from the API, cleaned up the data, and stored it:
+Expected result — the workflow fetched from the supplier API, cleaned up the data, and stored it:
 
 ```json
 {
@@ -339,15 +417,12 @@ Compare this to the raw API response we started with:
 
 Every transformation is declared in the data class. None of it lives in the workflow handler.
 
-Now test a bad submission — create an entity with an invalid product ID to simulate an API response with missing/bad data:
+Now test a bad submission — send a product ID that returns incomplete data:
 
 ```bash
-ff-sdk-cli entity create SupplierProductDraft \
-  --data '{
-    "product_id_to_fetch": "INVALID-999",
-    "supplier_api_url": "http://localhost:3050"
-  }'
-ff-sdk-cli entity run <entity-id>
+curl -X POST http://localhost:3002/api/ingest-api \
+  -H 'Content-Type: application/json' \
+  -d '{ "product_id_to_fetch": "INVALID-999" }'
 ```
 
 If the product doesn't exist, the workflow throws. If the API returns incomplete data, the validation pipeline catches it:
@@ -378,7 +453,7 @@ The stored data reconstructs as a real class instance, not raw JSON. `dto.data` 
 
 ## What's Next
 
-You have a working agent bundle: it calls a supplier's API, validates the response through a decorator pipeline, and stores the result as a typed entity that survives the round-trip. But right now you're testing via CLI.
+You have a working agent bundle: an HTTP endpoint creates an entity, the workflow fetches from the supplier's API, the decorator pipeline validates and normalizes the response, and the result is stored as a typed entity that survives the round-trip. But right now you're testing via curl.
 
 In [Part 2: The Catalog GUI](./part-02-catalog-gui.md), you'll add a Next.js frontend with an intake form and a product browser — and the `SupplierProductV1` class you just wrote will be shared between the bundle and the GUI. Same class, same decorators, zero duplication.
 
