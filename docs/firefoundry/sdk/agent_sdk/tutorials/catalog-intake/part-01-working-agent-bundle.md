@@ -282,9 +282,9 @@ You never call `toJSON()` or `fromJSON()` yourself. The SDK handles the round-tr
 
 ## Expose the API Endpoint
 
-We have a workflow that fetches and validates, and an entity that stores the result. But how does a request from the outside world trigger this pipeline? That's the agent bundle's job.
+We have three pieces: a workflow that fetches and validates, a data class that defines the shape, and an entity that stores the result. But how does a request from the outside world trigger this pipeline, and how does the validated data end up in a `SupplierProductDraft`? That's the agent bundle's job.
 
-The agent bundle class exposes HTTP endpoints via `@ApiEndpoint`. Each endpoint creates an entity, runs the workflow, and returns the result. Here's the key snippet from `apps/catalog-bundle/src/agent-bundle.ts`:
+The agent bundle class exposes HTTP endpoints via `@ApiEndpoint`. Each endpoint orchestrates the full lifecycle: create a workflow, run it, take the validated result, and store it in a `SupplierProductDraft` entity. Here's the key snippet from `apps/catalog-bundle/src/agent-bundle.ts`:
 
 ```typescript
 export class CatalogIntakeAgentBundle extends FFAgentBundle<any> {
@@ -309,36 +309,58 @@ export class CatalogIntakeAgentBundle extends FFAgentBundle<any> {
   }) {
     const { product_id_to_fetch, supplier_api_url } = body;
 
-    // 1. Create the entity with parameters for the workflow
-    const entityDto = await this.entity_factory.create_entity_node({
+    // 1. Create the workflow entity with fetch parameters
+    const workflowDto = await this.entity_factory.create_entity_node({
       app_id: this.get_app_id(),
-      name: `api-ingest-${product_id_to_fetch}-${Date.now()}`,
+      name: `api-workflow-${product_id_to_fetch}-${Date.now()}`,
       specific_type_name: 'ApiIngestionWorkflow',
       general_type_name: 'SupplierProductDraft',
       data: { product_id_to_fetch, supplier_api_url },
     });
 
-    // 2. Run the workflow — it fetches from the API, validates, and stores
-    const runnable = await this.entity_factory.get_entity(entityDto.id);
-    const result = yield* await (runnable as any).start();
+    // 2. Run the workflow — .run() blocks until complete and returns the result.
+    //    We don't need progress streaming here, just the validated product.
+    const workflow = await this.entity_factory.get_entity(workflowDto.id) as RunnableEntity<any>;
+    const validated = await workflow.run();
 
-    // 3. Return the entity ID and validated product
+    // 3. Create the storage entity with the validated product.
+    //    SupplierProductDraft has dataClass: SupplierProductCanonical, so
+    //    any future get_dto() call will reconstruct a typed class instance.
+    const draftDto = await this.entity_factory.create_entity_node({
+      app_id: this.get_app_id(),
+      name: `product-${product_id_to_fetch}-${Date.now()}`,
+      specific_type_name: 'SupplierProductDraft',
+      general_type_name: 'SupplierProductDraft',
+      data: {
+        source_type: 'api',
+        status: 'draft',
+        validated_product: validated.toJSON(),
+      },
+    });
+
     return {
       success: true,
-      entity_id: entityDto.id,
-      validated_product: result?.toJSON?.() ?? result,
+      entity_id: draftDto.id,
+      workflow_id: workflowDto.id,
+      validated_product: validated.toJSON(),
     };
   }
 }
 ```
 
-This is the connection point. Follow the data flow:
+There are two entities here, and the separation is deliberate:
+
+- **The workflow entity** (`ApiIngestionWorkflow`) is the *process*. It holds the fetch parameters, runs the pipeline, and returns the validated result. Think of it as a function call that happens to be persisted.
+- **The draft entity** (`SupplierProductDraft`) is the *storage*. It holds the validated product data. Because `SupplierProductDraft` has `dataClass: SupplierProductCanonical`, any future `get_dto()` on this entity reconstructs a typed class instance — not raw JSON.
+
+Follow the data flow:
 
 1. **HTTP request** hits `POST /api/ingest-api` with `{ product_id_to_fetch: "FK-BLZ-001" }`
-2. **`create_entity_node`** creates a `SupplierProductDraft` entity in the graph. Its `data` contains the parameters — *what* to fetch, not the data itself.
-3. **`get_entity`** returns the entity as a runnable (because `specific_type_name` is `'ApiIngestionWorkflow'`, the constructors map resolves to the workflow class).
-4. **`start()`** runs `run_impl()` — the workflow fetches from the supplier API, validates through the decorator pipeline, and calls `update_data()` to store the validated result back on the entity.
-5. **`return result`** — the workflow's return value (a `SupplierProductV1` instance) flows back to the endpoint, which serializes it in the response.
+2. **Workflow entity created** — `create_entity_node` with `specific_type_name: 'ApiIngestionWorkflow'` stores the fetch parameters.
+3. **`get_entity`** returns the entity as a `RunnableEntity` (because the constructors map resolves `'ApiIngestionWorkflow'` to the workflow class).
+4. **`.run()`** executes `run_impl()` and blocks until complete. The workflow fetches from the supplier API, validates through the decorator pipeline, and returns the validated `SupplierProductV1` instance. We use `.run()` rather than `.start()` because we only need the final result, not progress streaming.
+5. **Draft entity created** — a `SupplierProductDraft` entity is created with `validated.toJSON()` as its data. This is the entity that the GUI, review queue, and other consumers will read.
+6. **Response** — returns both the draft entity ID (for future lookups) and the validated product.
 
 The `CatalogBundleConstructors` object (in `constructors.ts`) is what makes the mapping from type names to classes work:
 
