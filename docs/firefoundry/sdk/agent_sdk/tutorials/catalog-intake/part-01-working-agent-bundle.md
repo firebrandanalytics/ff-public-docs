@@ -214,13 +214,11 @@ export class ApiIngestionWorkflow extends RunnableEntity<any> {
     // Step 3: Validate the raw response through the decorator pipeline
     const validated = await validationFactory.create(SupplierProductV1, rawProduct);
 
-    // Step 4: Store the validated result
+    // Step 4: Store progress on the workflow entity (for auditability)
     await this.update_data({
       ...dto.data,
-      source_type: 'api',
-      status: 'draft',
       raw_api_response: rawProduct,
-      validated_product: validated.toJSON(),
+      validated_product: validated,
     });
 
     return validated;
@@ -235,7 +233,7 @@ A few things to notice:
 - **The entity carries parameters, not data.** `dto.data.product_id_to_fetch` tells the workflow *what* to fetch. The raw API response is fetched at runtime, validated, and stored alongside the original response for auditability.
 - **This is a `RunnableEntity`, not a bot.** Workflows are idempotent — re-running one produces the same result. The workflow fetches, validates, and stores in one atomic step.
 - **`validationFactory.create()`** runs the full decorator pipeline on the raw API response. If anything fails, it throws with structured errors for every invalid field (thanks to `@UseSinglePassValidation`).
-- **`validated.toJSON()`** serializes the class instance for storage. On read, `fromJSON()` reconstructs it. You never lose the type.
+- **The workflow returns the validated instance directly.** The caller (the `@ApiEndpoint`) is responsible for storing it in a `SupplierProductDraft` entity — the workflow doesn't need to know about storage concerns.
 - **`yield { type: 'PROGRESS' }`** emits progress events. Callers can observe the workflow's lifecycle without polling.
 
 The `fetchFromSupplierApi` method is a simple HTTP call in production. For local development, it falls back to reading from the mock data files in `data/api/`:
@@ -273,10 +271,10 @@ export class SupplierProductDraft extends EntityNode<any> {}
 
 That's the entire entity. Two things happen because of `dataClass`:
 
-1. **On write:** When a `SupplierProductCanonical` instance is stored, `@Serializable` fires `toJSON()`, producing a plain JSON object with a `__class` marker.
+1. **On write:** When you pass a `SupplierProductCanonical` instance as `data`, the SDK calls `toJSON()` automatically. The validated product goes into the `data` column; operational fields like `source_type` and `status` go into the separate `metadata` column.
 2. **On read:** When you call `entity.get_dto()`, the SDK sees the `dataClass` binding and calls `fromJSON()`. You get a real class instance back — not raw JSON.
 
-You never call `toJSON()` or `fromJSON()` yourself. The SDK handles the round-trip. The net effect: `dto.data` is always typed, everywhere, every time.
+You never call `toJSON()` or `fromJSON()` yourself. The SDK handles the round-trip. The `data` column holds *only* the validated product, and `metadata` holds everything else. The net effect: `dto.data` is always a typed class instance, everywhere, every time.
 
 ---
 
@@ -324,25 +322,22 @@ export class CatalogIntakeAgentBundle extends FFAgentBundle<any> {
     const validated = await workflow.run();
 
     // 3. Create the storage entity with the validated product.
-    //    SupplierProductDraft has dataClass: SupplierProductCanonical, so
-    //    any future get_dto() call will reconstruct a typed class instance.
+    //    data = the validated instance (dataClass handles serialization).
+    //    metadata = operational fields (source, status) kept separate.
     const draftDto = await this.entity_factory.create_entity_node({
       app_id: this.get_app_id(),
       name: `product-${product_id_to_fetch}-${Date.now()}`,
       specific_type_name: 'SupplierProductDraft',
       general_type_name: 'SupplierProductDraft',
-      data: {
-        source_type: 'api',
-        status: 'draft',
-        validated_product: validated.toJSON(),
-      },
+      data: validated,
+      metadata: { source_type: 'api', status: 'draft' },
     });
 
     return {
       success: true,
       entity_id: draftDto.id,
       workflow_id: workflowDto.id,
-      validated_product: validated.toJSON(),
+      validated_product: validated,
     };
   }
 }
@@ -359,7 +354,7 @@ Follow the data flow:
 2. **Workflow entity created** — `create_entity_node` with `specific_type_name: 'ApiIngestionWorkflow'` stores the fetch parameters.
 3. **`get_entity`** returns the entity as a `RunnableEntity` (because the constructors map resolves `'ApiIngestionWorkflow'` to the workflow class).
 4. **`.run()`** executes `run_impl()` and blocks until complete. The workflow fetches from the supplier API, validates through the decorator pipeline, and returns the validated `SupplierProductV1` instance. We use `.run()` rather than `.start()` because we only need the final result, not progress streaming.
-5. **Draft entity created** — a `SupplierProductDraft` entity is created with `validated.toJSON()` as its data. This is the entity that the GUI, review queue, and other consumers will read.
+5. **Draft entity created** — a `SupplierProductDraft` entity is created with the validated instance as `data` and operational fields (`source_type`, `status`) in `metadata`. Because `SupplierProductDraft` has `dataClass: SupplierProductCanonical`, the SDK handles serialization on write and reconstruction on read. You never call `toJSON()` or `fromJSON()` yourself.
 6. **Response** — returns both the draft entity ID (for future lookups) and the validated product.
 
 The `CatalogBundleConstructors` object (in `constructors.ts`) is what makes the mapping from type names to classes work:
