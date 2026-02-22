@@ -130,7 +130,7 @@ export { SupplierProductV1 } from './product.js';
 Back in the bundle, update the import to point at the shared package instead of a local file:
 
 ```typescript
-// apps/catalog-bundle/src/bots/CatalogIntakeBot.ts
+// apps/catalog-bundle/src/workflows/ApiIngestionWorkflow.ts
 import { SupplierProductV1 } from '@catalog-intake/shared-types';
 ```
 
@@ -214,48 +214,19 @@ catalog-intake/
 
 ### The Bundle Client
 
-The GUI needs to talk to the bundle's API endpoints (the `POST /api/ingest-manual` and `POST /api/ingest-api` routes from Part 1). Create a thin server-side client:
+The GUI needs to talk to the bundle's `@ApiEndpoint` routes from Part 1. The SDK provides `RemoteAppRunnerClient` for exactly this — it handles auth, error formatting, iterator lifecycle, and health checks. **Never bypass the SDK client with raw `fetch()` calls.** That's an anti-pattern that breaks the moment the bundle adds auth, changes its response envelope, or needs streaming.
 
 ```typescript
 // apps/catalog-gui/src/lib/bundleClient.ts
+import { RemoteAppRunnerClient } from '@firebrandanalytics/ff-agent-sdk/client';
+
 const BUNDLE_URL = process.env.BUNDLE_URL || 'http://localhost:3002';
 
-async function callBundle<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const url = `${BUNDLE_URL}/api/${endpoint}`;
-  const response = await fetch(url, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Bundle API error ${response.status}: ${text}`);
-  }
-
-  const data = await response.json();
-  return data.result ?? data;
-}
-
-export async function submitProduct(
-  supplierData: Record<string, unknown>,
-): Promise<{ success: boolean; entity_id?: string; errors?: any[] }> {
-  return callBundle('ingest-manual', {
-    method: 'POST',
-    body: JSON.stringify({ supplier_id: 'manual', raw_payload: supplierData }),
-  });
-}
-
-export async function getProduct(
-  entityId: string,
-): Promise<{ entity_id: string; data: Record<string, unknown> }> {
-  return callBundle(`ingest-api?entityId=${encodeURIComponent(entityId)}`, {
-    method: 'POST',
-    body: JSON.stringify({ action: 'get', entity_id: entityId }),
-  });
-}
+/** Singleton client instance — reused across all server-side calls. */
+export const bundleClient = new RemoteAppRunnerClient(BUNDLE_URL);
 ```
 
-Notice this client doesn't import the shared types at all -- it's just HTTP plumbing. The type safety comes from the components that consume the responses, as you'll see next.
+That's the entire client. Three lines. The `RemoteAppRunnerClient` knows how to call `@ApiEndpoint` routes, invoke entity methods, stream iterators, and check health. You'll use it in the Next.js API routes next.
 
 ---
 
@@ -263,16 +234,20 @@ Notice this client doesn't import the shared types at all -- it's just HTTP plum
 
 The intake form submits raw product data to the bundle for validation. The key insight: the form fields are derived directly from the `SupplierProductV1` class.
 
-Create an API route that proxies to the bundle (this keeps the bundle URL server-side and avoids CORS):
+Create an API route that proxies to the bundle through the SDK client:
 
 ```typescript
 // apps/catalog-gui/src/app/api/intake/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { submitProduct } from '@/lib/bundleClient';
+import { bundleClient } from '@/lib/bundleClient';
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const result = await submitProduct(body.supplier_data);
+  const result = await bundleClient.invoke_entity_method(
+    body.workflow_entity_id,
+    'ingest-manual',
+    { raw_payload: body.supplier_data },
+  );
   return NextResponse.json(result);
 }
 ```
@@ -332,7 +307,7 @@ async function handleSubmit(e: React.FormEvent) {
 }
 ```
 
-The response tells you whether validation passed or failed. If it failed, the bundle returns per-field errors (from Part 1's `CatalogIntakeBot`), so the form can highlight exactly which fields need fixing.
+The response tells you whether validation passed or failed. If it failed, the bundle returns per-field errors (from Part 1's `@UseSinglePassValidation`), so the form can highlight exactly which fields need fixing.
 
 Each form input maps to a validator field:
 
@@ -365,7 +340,7 @@ You might wonder why we send `base_cost` as a number from the form when the vali
 
 ## The Product Browser
 
-The product browser lists validated products from the entity graph. Add a list endpoint to the bundle (or use the existing `getProduct` endpoint to fetch by ID). For a simple browser, add a `GET /api/products` endpoint:
+The product browser lists validated products from the entity graph. Add a list endpoint to the bundle:
 
 ```typescript
 // In your agent bundle class
@@ -437,7 +412,7 @@ Every property access -- `product.product_name`, `product.base_cost`, `product.c
 
 ### Putting It Together
 
-Wire up an API route for the products list (same pattern as the intake proxy), fetch it in a `useEffect`, and render the cards:
+Wire up a products API route using the SDK client, fetch it in a `useEffect`, and render the cards:
 
 ```tsx
 export default function ProductsPage() {
