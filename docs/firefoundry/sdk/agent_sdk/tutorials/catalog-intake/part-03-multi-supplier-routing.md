@@ -17,20 +17,18 @@ PRODUCT_ID,PRODUCT_NAME,CATEGORY,BRAND,GENDER,BASE_COST,MSRP,COLORWAY,SIZES
 FK-BLZ-001,BLAZE RUNNER,RUNNING,FIREKICKS,MENS,$89.99,$159.99,BLACK/WHITE,"7,8,9,10,11,12,13"
 ```
 
-Four things break when you feed this to V1:
+Three things break when you feed this to V1:
 
 1. **ALL_CAPS field names.** V1 expects `product_name`, not `PRODUCT_NAME`. `@Copy()` finds nothing -- the field names don't match.
 2. **Dollar signs in prices.** `@CoerceType('number')` can handle `"89.99"` but chokes on `"$89.99"`. That's not a number, it's a string with a currency symbol.
-3. **Comma-separated sizes.** V1 expects `"7-13"` (a range). The CSV sends `"7,8,9,10,11,12,13"` (a list). The `@ValidatePattern` regex rejects it immediately.
-4. **Extra fields.** The CSV has `BRAND`, `GENDER`, and `COLORWAY` -- fields V1 doesn't define. They'll be silently dropped, losing data you actually want.
+3. **Extra fields.** The CSV has `BRAND`, `GENDER`, `COLORWAY`, and `SIZES` -- fields V1 doesn't define. V1 has `size_range` (not `SIZES`), and the other fields don't exist at all. They'll be silently dropped, losing data you actually want.
 
 If you try it anyway, the factory gives you this:
 
 ```
-ValidationError: 3 failures on SupplierProductValidator
+ValidationError: 2 failures on SupplierProductValidator
   - product_name: required (got undefined)
   - base_cost: expected number, got "$89.99"
-  - size_range: pattern mismatch — "7,8,9,10,11,12,13" does not match /^\d+(\.\d+)?-\d+(\.\d+)?$/
 ```
 
 Every field that V1 looks for by name comes back `undefined` because the source names don't match. The fields V1 does find by coincidence (`BASE_COST`) fail coercion because of the dollar sign. It's not a bug in V1 -- V1 is doing exactly what it was designed to do. The data just doesn't fit.
@@ -97,7 +95,7 @@ base_cost!: number;
 
 V1 uses `@Copy()` because the source field name already matches. V2 uses `@DerivedFrom()` because it doesn't. V1 uses `@CoerceType('number')` because the value is `"89.99"`. V2 uses `@CoerceParse('currency')` because the value is `"$89.99"`. Different decorators, same output type.
 
-Notice what V2 *doesn't* have: no `@ValidatePattern` for size ranges. The CSV sends comma-separated size lists (`"7,8,9,10,11,12,13"`), not ranges (`"7-13"`). V2 accepts the list format as-is. Each validator class owns the rules for its format. V1 and V2 don't have to agree on how sizes are represented -- they just both have a `sizes` (or `size_range`) field in the output.
+Notice that V1 and V2 handle sizes differently. V1 has a `size_range` field (a plain trimmed string like `"7-13"`). V2 has a `sizes` field mapped from `$.SIZES` (a comma-separated list like `"7,8,9,10,11,12,13"`). Each validator class owns the field names and rules for its format. V1 and V2 don't have to agree on how sizes are represented -- they each define the fields their supplier format actually provides.
 
 ---
 

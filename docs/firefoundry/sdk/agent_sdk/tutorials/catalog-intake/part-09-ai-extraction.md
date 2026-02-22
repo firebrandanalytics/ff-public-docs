@@ -369,3 +369,7 @@ The PDF never touches the validation pipeline directly. The extraction bot conve
 ## What's Next
 
 In [Part 10: Recovery & Production Hardening](./part-10-recovery-production.md), you'll add error recovery and production hardening -- `@Catch` for graceful degradation, `@AICatchRepair` for AI-powered repair suggestions, and patterns for making the entire pipeline resilient when real-world data inevitably breaks things.
+
+---
+
+**Previous:** [Part 8: Human Review Workflow](./part-08-human-review.md) | **Next:** [Part 10: Recovery & Production Hardening](./part-10-recovery-production.md)

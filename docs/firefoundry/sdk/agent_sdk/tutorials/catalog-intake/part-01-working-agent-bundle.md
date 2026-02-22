@@ -482,3 +482,7 @@ In [Part 2: The Catalog GUI](./part-02-catalog-gui.md), you'll add a Next.js fro
 ---
 
 Full source: `catalog-intake/apps/catalog-bundle/` in the [companion repository](https://github.com/firebrandanalytics/ff-demo-apps).
+
+---
+
+**Next:** [Part 2: The Catalog GUI](./part-02-catalog-gui.md)

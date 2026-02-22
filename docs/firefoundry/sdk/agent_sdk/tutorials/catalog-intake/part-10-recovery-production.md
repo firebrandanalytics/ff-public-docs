@@ -257,9 +257,9 @@ export class SupplierBValidator {
 }
 ```
 
-When to use which: single-pass for straightforward intake -- the supplier-specific validators from Parts 3 and 4 that just extract and normalize. Convergent for the main validator where business rules and `@ComputeFrom` create field dependencies. Single-pass is faster and more predictable; convergent handles complexity you can't linearize.
+When to use which: single-pass for straightforward intake -- the supplier-specific validators from Parts 3 and 4 that just extract and normalize. Convergent for the main validator where business rules and `@DerivedFrom` create field dependencies. Single-pass is faster and more predictable; convergent handles complexity you can't linearize.
 
-How do you know if you need convergent mode? If any field uses `@ComputeFrom`, `@DerivedFrom`, or `@CrossValidate` that references other fields, use convergent. If every field's decorators only look at that field's own value, single-pass is safe. When in doubt, leave it on convergent -- the overhead is small for most validators, and it's always correct.
+How do you know if you need convergent mode? If any field uses `@DerivedFrom` or `@CrossValidate` that references other fields, use convergent. If every field's decorators only look at that field's own value, single-pass is safe. When in doubt, leave it on convergent -- the overhead is small for most validators, and it's always correct.
 
 In practice, this maps cleanly to the architecture from Parts 3-4: supplier-specific validators (`SupplierAProduct`, `SupplierBProduct`, `SupplierCProduct`) do extraction and normalization -- single-pass is ideal. The main `SupplierProductValidator` with business rules, computed margins, and cross-field validation needs convergent. The discriminated union handles routing; each validator picks the engine mode that fits its complexity level.
 
@@ -299,3 +299,7 @@ Raw supplier data goes in -- messy, inconsistent, sometimes broken. Typed, valid
 - [Validation Library Reference](../../utils/validation/README.md) -- full decorator API
 - [News Analysis Tutorial](../news-analysis/README.md) -- different use case, same SDK patterns
 - [Report Generator Tutorial](../report-generator/README.md) -- advanced entity/bot/prompt stack
+
+---
+
+**Previous:** [Part 9: AI-Powered Extraction](./part-09-ai-extraction.md)

@@ -348,6 +348,4 @@ In [Part 7: Business Rules & Nested Variants](./part-07-rules-variants.md), you'
 
 ---
 
-**Next:** [Part 7: Business Rules & Nested Variants](./part-07-rules-variants.md)
-
-**Previous:** [Part 5: The Validation Trace](./part-05-validation-trace.md)
+**Previous:** [Part 5: The Validation Trace](./part-05-validation-trace.md) | **Next:** [Part 7: Business Rules & Nested Variants](./part-07-rules-variants.md)

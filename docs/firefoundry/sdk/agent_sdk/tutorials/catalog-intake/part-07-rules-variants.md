@@ -347,6 +347,4 @@ Your validation pipeline handles conditional rules, cross-field constraints, and
 
 ---
 
-**Next:** [Part 8: Human Review Workflow](./part-08-human-review.md)
-
-**Previous:** [Part 6: Catalog Matching & Context](./part-06-catalog-matching.md)
+**Previous:** [Part 6: Catalog Matching & Context](./part-06-catalog-matching.md) | **Next:** [Part 8: Human Review Workflow](./part-08-human-review.md)

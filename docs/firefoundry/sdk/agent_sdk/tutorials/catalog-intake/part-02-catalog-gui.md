@@ -514,3 +514,7 @@ This is the data class philosophy from the README in action: **the class is the 
 Your app now has a GUI, but every product goes through the same flat-JSON validator. Real suppliers don't send uniform data. One sends flat snake_case JSON. Another sends nested objects. A third sends ALL_CAPS CSV exports.
 
 In [Part 3: Multi-Supplier Routing](./part-03-multi-supplier-routing.md), you'll replace the single validator with a `@DiscriminatedUnion` that routes each supplier's format to a dedicated validation class -- and you'll see how the shared type package extends naturally to handle multiple input formats that all normalize to the same canonical shape.
+
+---
+
+**Previous:** [Part 1: A Working Agent Bundle](./part-01-working-agent-bundle.md) | **Next:** [Part 3: Multi-Supplier Routing](./part-03-multi-supplier-routing.md)

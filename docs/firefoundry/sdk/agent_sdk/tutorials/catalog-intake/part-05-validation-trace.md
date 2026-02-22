@@ -274,6 +274,4 @@ You can see exactly what the pipeline did to every field. But the category value
 
 ---
 
-**Next:** [Part 6: Catalog Matching & Context](./part-06-catalog-matching.md)
-
-**Previous:** [Part 4: Schema Versioning & Auto-Detection](./part-04-schema-versioning.md)
+**Previous:** [Part 4: Schema Versioning & Auto-Detection](./part-04-schema-versioning.md) | **Next:** [Part 6: Catalog Matching & Context](./part-06-catalog-matching.md)
