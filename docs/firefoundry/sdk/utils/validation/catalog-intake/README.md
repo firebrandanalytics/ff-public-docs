@@ -1,6 +1,6 @@
 # FireKicks Catalog Intake — Validation Library Tutorial
 
-A 10-part tutorial demonstrating the `@firebrandanalytics/shared-utils/validation` decorator library through a real-world supplier product catalog intake application built on the FireKicks dataset.
+An 11-part tutorial demonstrating the `@firebrandanalytics/shared-utils/validation` decorator library through a real-world supplier product catalog intake application built on the FireKicks dataset.
 
 ## What You'll Learn
 
@@ -28,6 +28,7 @@ Starting from basic string cleanup and building to AI-powered data extraction, t
 | [8](./part-08-engine-deep-dive.md) | Engine Deep Dive | `@UseSinglePassValidation`, `@UseConvergentValidation`, `@DependsOn` |
 | [9](./part-09-ai-extraction.md) | AI Extraction + Classification | `@AIExtract`, `@AIClassify`, `@AIJSONRepair` |
 | [10](./part-10-recovery-async.md) | Recovery + Async Validation | `@Catch`, `@AICatchRepair`, `@ValidateAsync` |
+| [11](./part-11-entity-graph-integration.md) | Entity Graph Integration | `@Serializable`, `fromJSON`, `@EntityDecorator({ dataClass })`, lambda discriminator |
 
 ## The Application
 
