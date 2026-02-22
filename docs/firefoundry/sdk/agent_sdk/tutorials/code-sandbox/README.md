@@ -1,80 +1,92 @@
-# Code Sandbox Tutorial
+# Building an AI Code Execution Agent
 
-Build a code generation and execution agent bundle using the CoderBot hierarchy and Code Sandbox Service. The agent accepts natural language prompts, generates TypeScript code via an LLM, executes it in a sandboxed environment, and returns the results.
-
-## What You'll Learn
-
-- Using the `GeneralCoderBot` variant for language-configurable code generation
-- Creating prompts that produce the two-block output format CoderBot expects (JSON metadata + code block)
-- Wiring entities to bots with `BotRunnableEntityMixin` and `@RegisterBot`
-- Configuring working memory paths for code storage before sandbox execution
-- Integrating with the Code Sandbox Service via `@firebrandanalytics/code-sandbox-client`
-- Building custom API endpoints with `@ApiEndpoint`
+A progressive tutorial that takes you from an empty project to a complete AI-powered code execution platform. Each part builds on the previous one, adding new capabilities while always resulting in a working, deployable application.
 
 ## What You'll Build
 
-An agent bundle with:
+Imagine your users asking questions in plain English -- *"What is the average order value by customer segment?"* -- and getting back precise, data-driven answers seconds later. Behind the scenes, an LLM writes Python code, executes it against a real database, and returns the result. No notebooks, no manual queries, no context-switching.
 
-- **CodeTaskEntity** -- stores the user prompt and orchestrates code generation + execution
-- **DemoCoderBot** -- a `GeneralCoderBot` that generates and executes TypeScript code
-- **CoderPrompt** -- instructs the LLM to produce JSON metadata and a TypeScript code block
+By the end of this series, you'll have a complete **AI Code Execution Agent** that:
+
+- Accepts natural language prompts from users via REST API or web GUI
+- Generates TypeScript or Python code using an LLM
+- Executes generated code in a secure, isolated sandbox
+- Queries databases through the Data Access Service (DAS)
+- Fetches database schema dynamically -- no hardcoded table definitions
+- Returns structured results to the user
+
+You define the *problem space* (what data is available, how to access it, what rules to follow). The agent handles whatever *problem* your users submit.
 
 ## Prerequisites
 
-- `ff-cli` installed and configured
-- Access to a FireFoundry cluster (or local dev environment with Code Sandbox Service)
+- [FireFoundry local development environment](../../../local-development/README.md) or access to a deployed FireFoundry cluster
+- [ff-cli installed and configured](../../../local-development/ff-cli-setup.md)
 - Node.js 20+
-- `pnpm` package manager
+- Basic TypeScript knowledge
+- Familiarity with [FireFoundry core concepts](../fire_foundry_core_concepts_glossary_agent_sdk.md) (recommended but not required)
 
-## Parts
+## Tutorial Parts
 
-| Part | Title | Topics |
-|------|-------|--------|
-| [Part 1](./part-01-setup.md) | Project Setup | Scaffolding with ff-cli, SDK dependency wiring, project structure |
-| [Part 2](./part-02-prompt.md) | The Prompt | CoderBot output format, PromptTemplateSectionNode, building the CoderPrompt |
-| [Part 3](./part-03-bot.md) | The Bot | GeneralCoderBot, CodeSandboxClient, @RegisterBot |
-| [Part 4](./part-04-entity-and-bundle.md) | Entity & Bundle | CodeTaskEntity, BotRunnableEntityMixin, agent bundle wiring, API endpoints |
-| [Part 5](./part-05-deploy-and-test.md) | Deploy & Test | Local cluster setup, deployment with ff-cli, testing with curl |
+| Part | Title | What You Build | Key Concepts |
+|------|-------|---------------|--------------|
+| [1](./part-01-first-code-execution.md) | Your First Code Execution | A working endpoint that generates and executes TypeScript from a prompt | GeneralCoderBot, profiles, entity-bot wiring, `@ApiEndpoint` |
+| [2](./part-02-data-science-and-domain-prompts.md) | Adding Data Science with Domain Prompts | A second endpoint that generates Python to query a database via DAS | Domain prompts, prompt framework, `PromptTemplateSectionNode`, DAS |
+| [3](./part-03-dynamic-schema.md) | Dynamic Schema from DAS | Bot that fetches live database schema and injects it into its prompt | DAS schema introspection, dynamic init, prompt group access |
+| [4](./part-04-web-gui.md) | Building a Web GUI | Browser-based interface for entering prompts and viewing results | Next.js, API route proxying, thin-proxy pattern |
+| [5](./part-05-deployment-and-testing.md) | Deployment, Testing & Troubleshooting | Full deployment with testing and diagnostics | `ff-sdk-cli`, `ff-eg-read`, `ff-telemetry-read`, troubleshooting |
+
+## How to Use This Tutorial
+
+**Sequential approach**: Each part builds directly on the previous one. Start at Part 1 and work through in order.
+
+**Testing at every step**: Every part ends with a deployable application. We use `ff-sdk-cli` throughout for testing without needing a GUI.
+
+## What is the Code Sandbox?
+
+The **Code Sandbox Service** is a FireFoundry platform service that provides secure, isolated code execution for AI agents. When an LLM generates code, the sandbox compiles it, runs it in an isolated environment, and returns structured results -- all without exposing raw credentials or allowing untrusted code to affect other services.
+
+Key capabilities:
+- **Isolated execution** -- each code run gets its own sandboxed environment
+- **Profile-based configuration** -- named profiles bundle runtime, harness, and data connections
+- **Data Access Service (DAS) integration** -- generated code can query databases through the DAS proxy without handling credentials directly
+- **TypeScript and Python runtimes** -- profiles specify the target language and execution harness
+
+For architecture and configuration details, see the [Code Sandbox Service documentation](../../platform/services/code-sandbox.md).
 
 ## Architecture Overview
 
+Here's how the final application is structured:
+
 ```
-User sends prompt (natural language)
+User enters prompt (natural language)
        |
        v
-  POST /api/execute
+  Web GUI  or  ff-sdk-cli
        |
        v
-CoderBundleAgentBundle
-       |
-       v
-CodeTaskEntity.run()  (via BotRunnableEntityMixin)
-       |
-       |-- Builds bot request with user prompt as input
-       |-- Looks up DemoCoderBot from registry
-       |
-       v
-DemoCoderBot (extends GeneralCoderBot)
-       |
-       |-- CoderPrompt → LLM call
-       |-- LLM returns: JSON metadata + TypeScript code block
-       |
-       v
-CoderBot postprocess_generator (9-stage pipeline)
-       |
-       |-- 1. Extract JSON metadata from ```json block
-       |-- 2. Extract code from ```typescript block
-       |-- 3. Validate code (variant-specific rules)
-       |-- 4. Prepend module imports
-       |-- 5. Resolve working memory paths
-       |-- 6. Store code in working memory
-       |-- 7. Execute in Code Sandbox
-       |-- 8. Save knowledge tidbits
-       |-- 9. Return result
-       |
-       v
-Execution Result
-  { description, result, stdout, metadata }
+  POST /api/execute  or  POST /api/analyze
+       |                       |
+       v                       v
+CodeTaskEntity           DataScienceTaskEntity
+       |                       |
+       v                       v
+DemoCoderBot             DemoDataScienceBot
+  (TypeScript)              (Python)
+       |                       |
+       |-- profile:            |-- profile:
+       |   finance-typescript  |   firekicks-datascience
+       |-- intrinsic prompt    |-- intrinsic prompt
+       |-- LLM generates code  |-- domain prompt (schema from DAS)
+       |                       |-- LLM generates code
+       v                       v
+Code Sandbox Service     Code Sandbox Service
+       |                       |
+       v                       v
+  TypeScript execution     Python execution
+  (isolated sandbox)       (DAS -> database queries)
+       |                       |
+       v                       v
+  Structured result        Structured result
 ```
 
 ## Source Code
@@ -83,10 +95,10 @@ The complete source code is available in the [ff-demo-apps](https://github.com/f
 
 ## Related
 
-- [News Analysis Tutorial](../news-analysis/README.md) -- beginner tutorial covering StructuredOutputBotMixin and entity relationships
-- [Illustrated Story Tutorial](../illustrated-story/README.md) -- tutorial covering multi-step workflows and image generation
-- [Bot Tutorial](../../core/bot_tutorial.md) -- comprehensive bot development guide
+- [Code Sandbox Service](../../platform/services/code-sandbox.md) -- platform service documentation
+- [Report Generator Tutorial](../report-generator/README.md) -- beginner tutorial covering entities, bots, structured output, and working memory
+- [Illustrated Story Tutorial](../illustrated-story/README.md) -- intermediate tutorial covering multi-bot pipelines and parallel execution
 
 ---
 
-**Ready to start?** Head to [Part 1: Project Setup](./part-01-setup.md).
+**Ready to start?** Head to [Part 1: Your First Code Execution](./part-01-first-code-execution.md).
