@@ -1,6 +1,6 @@
 # Building a CRM with FireFoundry
 
-A 6-part tutorial series that builds a complete **AI-powered CRM** — from entity graph modeling through a running agent bundle to a consumer GUI with authenticated users, email workflows, and parallel campaign execution. This tutorial features the most involved entity graph modeling exercise in the FireFoundry tutorial series, with 7 entity types, 8 edge types, and multiple behavioral patterns.
+A 6-part tutorial series that builds a complete **AI-powered CRM** — from entity graph modeling through a running agent bundle to a consumer GUI with authenticated users, email workflows, and parallel campaign execution. This tutorial features the most involved entity graph modeling exercise in the FireFoundry tutorial series, with 7 entity types, 7 edge types, and multiple behavioral patterns.
 
 ## What You'll Build
 

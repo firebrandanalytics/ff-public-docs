@@ -161,14 +161,15 @@ export class CrmApp extends FFExpressApp<FFEntityProvider, FFEntityDTOProvider> 
   }
 
   protected async healthCheck() {
+    const BUNDLE_URL = process.env.BUNDLE_URL || 'http://localhost:3000';
     try {
-      const bundle = getBundleClient();
-      const bundleHealth = await bundle.call_api_endpoint('health', { method: 'GET' });
+      const res = await fetch(`${BUNDLE_URL}/health`);
+      const bundleHealth = await res.json() as any;
       return {
         healthy: true,
         timestamp: new Date().toISOString(),
         details: {
-          bundle: (bundleHealth as any)?.status ?? 'unknown',
+          bundle: bundleHealth?.healthy ? 'healthy' : 'unknown',
         },
       };
     } catch {
@@ -256,7 +257,6 @@ import { ContactsController } from './controllers/ContactsController.js';
 import { TemplatesController } from './controllers/TemplatesController.js';
 import { DraftsController } from './controllers/DraftsController.js';
 import { CampaignsController } from './controllers/CampaignsController.js';
-import { EmailController } from './controllers/EmailController.js';
 import { getBundleClient } from './bundle-client.js';
 
 export class CrmRouteManager extends FFRouteManager<FFEntityProvider, FFEntityDTOProvider> {
@@ -269,7 +269,7 @@ export class CrmRouteManager extends FFRouteManager<FFEntityProvider, FFEntityDT
   ) {
     super(app, entityProvider, entityDtoProvider, userProvider, requireAuth, {
       mode: 'nextjs-export',
-      publicPath: 'public',
+      publicPath: '../crm-gui/out',
     });
 
     const client = getBundleClient();
@@ -279,16 +279,14 @@ export class CrmRouteManager extends FFRouteManager<FFEntityProvider, FFEntityDT
       new TemplatesController(client, requireAuth),
       new DraftsController(client, requireAuth),
       new CampaignsController(client, requireAuth),
-      new EmailController(requireAuth),
     );
   }
 }
 ```
 
 **Key points:**
-- `{ mode: 'nextjs-export', publicPath: 'public' }` — in production, the Express server serves the Next.js static export
+- `{ mode: 'nextjs-export', publicPath: '../crm-gui/out' }` — in production, the Express server serves the Next.js static export
 - Each controller receives the `RemoteAgentBundleClient` and a `requireAuth` flag
-- The `EmailController` doesn't need the bundle client — it talks to the notification service directly
 
 ### The Controller Pattern: Injecting Actor Identity
 
@@ -368,51 +366,10 @@ The remaining controllers are simpler — each has one or two endpoints that fol
 |-----------|------|-----------|-------|
 | `ContactsController` | `/contacts` | GET `/`, POST `/`, `/note`, `/interaction`, `/summarize` | Most complex — 5 endpoints |
 | `TemplatesController` | `/templates` | POST `/generate`, `/approve` | HITL approval flow |
-| `DraftsController` | `/drafts` | POST `/personalize` | Single endpoint |
-| `CampaignsController` | `/campaigns` | POST `/` | Single endpoint |
-| `EmailController` | `/email` | POST `/send` | Talks to notification service, not bundle |
+| `DraftsController` | `/drafts` | POST `/personalize`, `/personalize-and-send` | Preview and send workflows |
+| `CampaignsController` | `/campaigns` | POST `/`, `/execute` | Create and execute campaigns |
 
-### EmailController: A Different Pattern
-
-The email controller doesn't proxy to the bundle — it calls the notification service directly and injects sender identity:
-
-```typescript
-// src/controllers/EmailController.ts
-import { BaseController } from '@firebrandanalytics/app_backend_accelerator';
-import { callNotificationService } from '../bundle-client.js';
-
-export class EmailController extends BaseController {
-  // ...
-
-  private getActorEmail(req: Request): string {
-    if (this.requireAuth) {
-      const user = (req.session as any)?.passport?.user;
-      return user?.email || user?.id || DEV_ACTOR_ID;
-    }
-    return DEV_ACTOR_ID;
-  }
-
-  private async send(req: Request, res: Response) {
-    const actorEmail = this.getActorEmail(req);
-    const body = { ...req.body };
-
-    // Always set the sender from the authenticated session
-    if (!body.from) {
-      body.from = actorEmail;
-    }
-
-    // Record who sent it in metadata
-    body.metadata = { ...body.metadata, sent_by: actorEmail };
-
-    const result = await callNotificationService('/api/v1/email/send', body);
-    res.json(result);
-  }
-}
-```
-
-Notice two things:
-1. **`from` field** — set from the session, not from the client request
-2. **`sent_by` metadata** — recorded alongside the email for audit purposes
+> **Note:** There is no `EmailController` — email delivery happens inside the agent bundle as part of entity graph workflows. The BFF proxies the `personalize-and-send` and `campaigns/execute` endpoints, which trigger the bundle to generate AI content and call the notification service directly. See [Part 5](./part-05-email-workflows.md) for details.
 
 ---
 
@@ -669,7 +626,7 @@ The accelerator handles the rest — login redirect, callback, token validation,
 
 ## Summary
 
-You've built a complete 3-tier CRM application:
+You've built a 3-tier CRM application:
 
 | Layer | App | Port | Role |
 |-------|-----|------|------|
@@ -696,8 +653,4 @@ The complete source code is available in the [ff-demo-apps](https://github.com/f
 
 ---
 
-**Congratulations!** You've completed the full CRM tutorial series:
-1. **Domain Modeling** — 7 entity types with graph relationships
-2. **Agent Bundle** — 4 AI bots with 9 API endpoints
-3. **Consumer GUI** — 4-tab React dashboard
-4. **BFF & Authentication** — Express backend with OIDC and actor identity
+**Next up:** [Part 5](./part-05-email-workflows.md) connects the bundle to the notification service so that AI-generated emails are sent as part of entity graph workflows. Then [Part 6](./part-06-campaign-execution.md) scales this up to parallel campaign execution.

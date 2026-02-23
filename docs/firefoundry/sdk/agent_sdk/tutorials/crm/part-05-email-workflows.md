@@ -110,35 +110,62 @@ async personalizeAndSend(data: {
   // 4. Run EmailPersonalizerBot via BotRunnableEntityMixin
   const personalization = await draft.run();
 
-  // 5. Send via notification service
+  // 5. Update draft with personalized content
   const draftDto = await draft.get_dto();
-  const notifResponse = await fetch(`${NOTIF_URL}/send/email`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      to: [contactDto.data.email],
-      subject: personalization.subject,
-      html: personalization.body_html,
-      from: data.actor_id,
-      idempotencyKey: `draft-${draftDto.id}`,
-      metadata: {
-        draft_id: draftDto.id,
-        contact_id: data.contact_id,
-        template_id: data.template_id,
-      },
-    }),
+  await draft.update_data({
+    ...draftDto.data,
+    subject: personalization.subject,
+    body_html: personalization.body_html,
+    personalization_notes: personalization.personalization_notes,
+    status: 'sending',
   });
 
-  // 6. Update draft status and return
-  const status = notifResponse.ok ? 'sent' : 'send_failed';
-  await draft.update_data({ ...draftDto.data, status });
+  // 6. Send via notification service (with timeout + stable idempotency key)
+  const idempotencyKey = `send-${data.template_id}-${data.contact_id}-${data.actor_id}`;
+  const sendController = new AbortController();
+  const sendTimeout = setTimeout(() => sendController.abort(), 30_000);
+  let notifResponse: Response;
+  try {
+    notifResponse = await fetch(`${NOTIF_URL}/send/email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: sendController.signal,
+      body: JSON.stringify({
+        to: [contactDto.data.email],
+        subject: personalization.subject,
+        html: personalization.body_html,
+        from: data.actor_id,
+        idempotencyKey,
+        metadata: {
+          draft_id: draftDto.id,
+          contact_id: data.contact_id,
+          template_id: data.template_id,
+        },
+      }),
+    });
+  } finally {
+    clearTimeout(sendTimeout);
+  }
 
-  return { draft_id: draftDto.id, status, ...draftDto.data };
+  // 7. Update draft status — re-read DTO to avoid overwriting personalized content
+  if (!notifResponse.ok) {
+    const currentDto = await draft.get_dto();
+    await draft.update_data({ ...currentDto.data, status: 'send_failed' });
+    return { draft_id: draftDto.id, status: 'send_failed' };
+  }
+
+  const sentDto = await draft.get_dto();
+  await draft.update_data({ ...sentDto.data, status: 'sent' });
+
+  const finalDto = await draft.get_dto();
+  return { draft_id: finalDto.id, status: 'sent', ...finalDto.data };
 }
 ```
 
 **Key design decisions:**
-- The `idempotencyKey` prevents duplicate sends if the request is retried
+- The `idempotencyKey` is keyed on the stable tuple `(template_id, contact_id, actor_id)` so that retries and double-clicks don't produce duplicate sends
+- The `AbortController` with a 30-second timeout prevents the bundle from hanging if the notification service is unreachable
+- On send failure, we re-read the DTO before updating status to avoid overwriting personalized content with stale pre-personalization data
 - The `customization` parameter lets users guide the AI without providing actual email content
 - The existing `personalizeDraft` endpoint stays as a "preview only" option — personalize without sending
 
