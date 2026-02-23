@@ -1,0 +1,495 @@
+# Part 2: The Catalog GUI
+
+In Part 1 you built an agent bundle that validates supplier data through a decorator pipeline and stores typed entities in the graph. But you've been testing from the CLI. In this part you'll add a Next.js frontend with two pages -- an intake form and a product browser -- and wire them to the bundle through a shared type package.
+
+The big idea here isn't the GUI itself. It's the **shared type package**. The same validation class that runs in the bundle also defines the types the GUI uses. One definition, two consumers, zero drift.
+
+> **Prerequisite:** Complete [Part 1: A Working Agent Bundle](./part-01-working-agent-bundle.md) first. The bundle must be deployed and reachable.
+
+---
+
+## The Shared Type Package
+
+This is the most important concept in this entire part -- arguably in the whole tutorial. So let's start here before we touch any GUI code.
+
+In Part 1, `SupplierProductV1` lived inside `apps/catalog-bundle/`. That works fine when the bundle is the only consumer. But the moment a frontend needs to know what a product looks like, you have a choice:
+
+1. **Copy the type.** Define a `ProductDTO` in the GUI that mirrors the validator fields. Hope someone remembers to update both when a field changes.
+2. **Share the type.** Move the validator to a shared package. Both the bundle and the GUI import from the same source.
+
+Option 2 is what we're doing. Create a `packages/shared-types/` directory and move the validator there.
+
+### Wiring the Workspace
+
+The monorepo workspace needs to know about the `packages/` directory. Your `pnpm-workspace.yaml` at the project root should include it:
+
+```yaml
+packages:
+  - 'apps/*'
+  - 'packages/*'
+```
+
+The shared-types package itself is minimal:
+
+```json
+{
+  "name": "@catalog-intake/shared-types",
+  "version": "1.0.0",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@firebrandanalytics/shared-utils": "workspace:*"
+  }
+}
+```
+
+The `main` and `types` both point at the TypeScript source. In a monorepo with `transpilePackages` configured (we'll do that in the GUI's Next config), there's no need for a separate build step -- Next.js compiles it on the fly.
+
+Now both consumers declare the dependency:
+
+```json
+// apps/catalog-bundle/package.json
+{
+  "dependencies": {
+    "@catalog-intake/shared-types": "workspace:*"
+  }
+}
+
+// apps/catalog-gui/package.json
+{
+  "dependencies": {
+    "@catalog-intake/shared-types": "workspace:*"
+  }
+}
+```
+
+Run `pnpm install` from the project root and the workspace links are live.
+
+### The Validator in Shared-Types
+
+Move your `SupplierProductV1` from the bundle into `packages/shared-types/src/product.ts`. It's the same class from Part 1 -- decorators and all:
+
+```typescript
+// packages/shared-types/src/product.ts
+import {
+  Serializable,
+  CoerceTrim,
+  CoerceCase,
+  CoerceType,
+  ValidateRequired,
+  ValidateRange,
+  ValidatePattern,
+} from '@firebrandanalytics/shared-utils/validation';
+
+@Serializable()
+export class SupplierProductV1 {
+  @CoerceTrim()
+  @CoerceCase('title')
+  @ValidateRequired()
+  product_name!: string;
+
+  @CoerceTrim()
+  @CoerceCase('lower')
+  @ValidateRequired()
+  category!: string;
+
+  @CoerceTrim()
+  @CoerceCase('lower')
+  subcategory!: string;
+
+  @CoerceTrim()
+  @CoerceCase('lower')
+  brand_line!: string;
+
+  @CoerceType('number')
+  @ValidateRequired()
+  @ValidateRange(0.01)
+  base_cost!: number;
+
+  @CoerceType('number')
+  @ValidateRequired()
+  @ValidateRange(0.01)
+  msrp!: number;
+
+  @CoerceTrim()
+  color!: string;
+
+  @CoerceTrim()
+  @ValidatePattern(/^\d+(\.\d+)?-\d+(\.\d+)?$/)
+  size_range!: string;
+}
+```
+
+Export it from the package barrel:
+
+```typescript
+// packages/shared-types/src/index.ts
+export { SupplierProductV1 } from './product.js';
+```
+
+Back in the bundle, update the import to point at the shared package instead of a local file:
+
+```typescript
+// apps/catalog-bundle/src/workflows/ApiIngestionWorkflow.ts
+import { SupplierProductV1 } from '@catalog-intake/shared-types';
+```
+
+Same class, same decorators, new home. The bundle's behavior doesn't change at all.
+
+---
+
+## Why This Matters
+
+Let's make the payoff concrete. Today, your validator has these fields:
+
+```
+product_name, category, subcategory, brand_line,
+base_cost, msrp, color, size_range
+```
+
+Next week, the business asks you to add a `material` field. You open `packages/shared-types/src/product.ts` and add:
+
+```typescript
+@CoerceTrim()
+@CoerceCase('lower')
+material!: string;
+```
+
+Here's what happens:
+
+- **The bundle** validates and normalizes `material` on the next deployment. The `ValidationFactory` picks up the new field automatically because it reads the decorator metadata from the class.
+- **The GUI** gets a TypeScript compile error anywhere it renders product data without handling `material`. The intake form won't compile until you add a `material` input. The product browser won't compile until you display it.
+- **The entity graph** stores `material` alongside the other fields, because `@Serializable` includes it in the JSON round-trip.
+
+One change, three consumers, zero places where the field silently goes missing.
+
+Now picture the alternative: a `ProductDTO` interface in the GUI that was copy-pasted from the validator six months ago. Someone adds `material` to the validator. The bundle validates it. The entity stores it. The GUI compiles without errors -- because its `ProductDTO` doesn't know about `material`. The data is there but invisible. You find out months later when someone asks "why don't we show material in the catalog?"
+
+The shared type package makes that scenario impossible.
+
+---
+
+## Scaffold the GUI
+
+Add a Next.js application to the monorepo:
+
+```bash
+cd apps
+npx create-next-app@latest catalog-gui --typescript --tailwind --app --src-dir
+cd ..
+```
+
+Accept the defaults. The scaffolding gives you a working Next.js 14 app with the App Router and Tailwind CSS already configured.
+
+Two things to wire up. First, tell Next.js to transpile the shared-types package (since it's raw TypeScript):
+
+```javascript
+// apps/catalog-gui/next.config.mjs
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  output: 'standalone',
+  transpilePackages: ['@catalog-intake/shared-types'],
+};
+export default nextConfig;
+```
+
+Second, add the shared-types dependency (shown above) and run `pnpm install`.
+
+Your project structure now looks like this:
+
+```
+catalog-intake/
+  apps/
+    catalog-bundle/         # Agent bundle from Part 1
+    catalog-gui/            # Next.js GUI (new)
+      src/app/
+        intake/             # API ingestion trigger page
+        products/           # Product browser page
+      src/lib/
+        bundleClient.ts     # Server-side bundle client
+  packages/
+    shared-types/           # Shared validator class
+  pnpm-workspace.yaml
+```
+
+### The Bundle Client
+
+The GUI needs to talk to the bundle's `@ApiEndpoint` routes from Part 1. The SDK provides `RemoteAppRunnerClient` for exactly this — it handles auth, error formatting, iterator lifecycle, and health checks. **Never bypass the SDK client with raw `fetch()` calls.** That's an anti-pattern that breaks the moment the bundle adds auth, changes its response envelope, or needs streaming.
+
+```typescript
+// apps/catalog-gui/src/lib/bundleClient.ts
+import { RemoteAppRunnerClient } from '@firebrandanalytics/ff-agent-sdk/client';
+
+const BUNDLE_URL = process.env.BUNDLE_URL || 'http://localhost:3002';
+
+/** Singleton client instance — reused across all server-side calls. */
+export const bundleClient = new RemoteAppRunnerClient(BUNDLE_URL);
+```
+
+That's the entire client. Three lines. The `RemoteAppRunnerClient` knows how to call `@ApiEndpoint` routes, invoke entity methods, stream iterators, and check health. You'll use it in the Next.js API routes next.
+
+---
+
+## The Intake Form
+
+In Part 1, you tested API ingestion with curl: `POST /api/ingest-api` with a product ID. The intake form is the GUI equivalent -- enter a product ID, click "Fetch & Validate", and the bundle fetches from the supplier's API, validates through the decorator pipeline, and stores the result.
+
+> **Note:** This form triggers the `ApiIngestionWorkflow` from Part 1. We're not entering product data manually -- we're telling the bundle *which product to fetch*. A full manual entry form comes in [Part 8](./part-08-human-review.md).
+
+Create an API route that proxies to the bundle through the SDK client. This calls the `ingest-api` endpoint we built in Part 1:
+
+```typescript
+// apps/catalog-gui/src/app/api/intake/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { bundleClient } from '@/lib/bundleClient';
+
+export async function POST(request: NextRequest) {
+  const body = await request.json();
+  // Call the bundle's ingest-api endpoint — same as our curl test from Part 1
+  const result = await bundleClient.call_api_endpoint('ingest-api', {
+    method: 'POST',
+    body: {
+      product_id_to_fetch: body.product_id,
+      supplier_api_url: body.supplier_api_url,
+    },
+  });
+  return NextResponse.json(result);
+}
+```
+
+Now the form page. It's simple -- just a product ID input and an optional API URL override:
+
+```tsx
+// apps/catalog-gui/src/app/intake/page.tsx
+'use client';
+
+import { useState } from 'react';
+
+export default function IntakePage() {
+  const [productId, setProductId] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    setResult(null);
+
+    const res = await fetch('/api/intake', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_id: productId }),
+    });
+
+    const data = await res.json();
+
+    if (data.success) {
+      setResult(data);
+    } else {
+      setError(data.error || 'Ingestion failed');
+    }
+
+    setSubmitting(false);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4 max-w-md">
+      <h1 className="text-2xl font-bold">API Ingestion</h1>
+      <p className="text-gray-600">
+        Enter a product ID to fetch from the supplier API.
+        The bundle validates and normalizes the response.
+      </p>
+      <input
+        type="text"
+        value={productId}
+        onChange={(e) => setProductId(e.target.value)}
+        placeholder="e.g. FK-BLZ-001"
+        className="border rounded px-3 py-2 w-full"
+      />
+      <button
+        type="submit"
+        disabled={submitting || !productId}
+        className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
+      >
+        {submitting ? 'Fetching...' : 'Fetch & Validate'}
+      </button>
+      {result && (
+        <div className="bg-green-50 border border-green-200 rounded p-3 text-sm">
+          <p className="font-medium text-green-800">Product validated and stored</p>
+          <p className="text-green-600">Entity ID: {result.entity_id}</p>
+          <pre className="mt-2 text-xs overflow-auto">
+            {JSON.stringify(result.validated_product, null, 2)}
+          </pre>
+        </div>
+      )}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded p-3 text-sm text-red-800">
+          {error}
+        </div>
+      )}
+    </form>
+  );
+}
+```
+
+The response shows the validated product -- the same normalized output we saw from curl in Part 1, now displayed in the browser. You can see exactly how the decorators cleaned up the supplier's messy data.
+
+---
+
+## The Product Browser
+
+The product browser lists validated products from the entity graph. Add a list endpoint to the bundle:
+
+```typescript
+// In your agent bundle class
+@ApiEndpoint({ method: 'GET', route: 'products' })
+async listProducts() {
+  const entities = await this.entity_factory.query_entities({
+    specific_type_name: 'SupplierProductDraft',
+    status: 'Validated',
+  });
+
+  return {
+    products: entities.map((e: any) => ({
+      entity_id: e.id,
+      ...e.data,
+    })),
+  };
+}
+```
+
+On the GUI side, the product browser fetches this list and renders each product. Here's the key part -- how the GUI reads typed entities:
+
+```tsx
+// apps/catalog-gui/src/app/products/page.tsx
+'use client';
+
+import { useState, useEffect } from 'react';
+import type { SupplierProductV1 } from '@catalog-intake/shared-types';
+
+interface ProductEntry {
+  entity_id: string;
+  // Extend the validator type -- every field the validator declares
+  // is available here as a typed property.
+  product: SupplierProductV1;
+}
+```
+
+Because `ProductEntry.product` is typed as `SupplierProductV1`, accessing `product.product_name` or `product.base_cost` is fully type-checked. No `any` casts. No optional chaining on fields you know exist. If the validator adds `material`, the product browser can access `product.material` immediately -- and TypeScript will tell you it's a `string`.
+
+The rendering itself is straightforward:
+
+```tsx
+function ProductCard({ product }: { product: SupplierProductV1; entityId: string }) {
+  return (
+    <div className="border rounded-lg p-4">
+      <h3 className="text-lg font-semibold">{product.product_name}</h3>
+      <div className="grid grid-cols-3 gap-4 text-sm mt-2">
+        <div>
+          <span className="text-gray-500">Category</span>
+          <p>{product.category}</p>
+        </div>
+        <div>
+          <span className="text-gray-500">Base Cost</span>
+          <p>${product.base_cost.toFixed(2)}</p>
+        </div>
+        <div>
+          <span className="text-gray-500">MSRP</span>
+          <p>${product.msrp.toFixed(2)}</p>
+        </div>
+      </div>
+      <p className="text-sm text-gray-500 mt-2">
+        {product.color} | Sizes: {product.size_range}
+      </p>
+    </div>
+  );
+}
+```
+
+Every property access -- `product.product_name`, `product.base_cost`, `product.color` -- is type-safe because the type comes from the shared validator class. You don't need to define a separate `DisplayProduct` interface and hope it matches what the bundle actually returns.
+
+### Putting It Together
+
+Wire up a products API route using the SDK client, fetch it in a `useEffect`, and render the cards:
+
+```tsx
+export default function ProductsPage() {
+  const [products, setProducts] = useState<ProductEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/products')
+      .then((res) => res.json())
+      .then((data) => setProducts(data.products || []))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <p>Loading products...</p>;
+  if (products.length === 0) return <p>No products yet. Submit one from the intake form.</p>;
+
+  return (
+    <div className="space-y-4">
+      <h1 className="text-2xl font-bold">Product Browser</h1>
+      <p className="text-gray-600">{products.length} validated products</p>
+      {products.map((p) => (
+        <ProductCard key={p.entity_id} product={p.product} entityId={p.entity_id} />
+      ))}
+    </div>
+  );
+}
+```
+
+---
+
+## Testing the Flow
+
+Start both services:
+
+```bash
+# Terminal 1 -- Agent Bundle
+cd apps/catalog-bundle
+ff-cli agent-bundle dev
+
+# Terminal 2 -- Catalog GUI
+cd apps/catalog-gui
+echo 'BUNDLE_URL=http://localhost:3002' > .env.local
+pnpm dev
+```
+
+Open `http://localhost:3000` and walk through the full cycle:
+
+1. **Navigate to `/intake`** -- enter a product ID like `FK-BLZ-001`. The bundle fetches from the supplier's API (or loads from mock data in local dev), validates through the decorator pipeline, and stores the result.
+2. **See the result** -- the response panel shows the normalized product. `"  blaze runner  "` became `"Blaze Runner"`. `"89.99"` (string) became `89.99` (number). `"RUNNING"` became `"running"`.
+3. **Navigate to `/products`** -- the product appears in the browser with all fields properly typed and displayed.
+
+The key observation: the validator class ran in the bundle to clean the data, and the same class definition typed the GUI components that display it. The bundle's validation pipeline and the browser's display columns derive from the same shared type.
+
+---
+
+## The Three Roles of a Shared Validator
+
+Let's zoom out and name the pattern explicitly. The `SupplierProductV1` class serves three roles simultaneously:
+
+| Role | Where | What It Does |
+|------|-------|-------------|
+| **Validation pipeline** | Agent bundle | `ValidationFactory.create()` runs decorators to coerce, trim, and validate raw input |
+| **TypeScript type** | GUI components | Form state, product display, and API responses are all typed against the validator's fields |
+| **Serialization contract** | Entity graph | `@Serializable` ensures `toJSON()` and `fromJSON()` round-trip the class instance through storage |
+
+One class definition. Three consumers. When the class changes, all three see it. The bundle validates the new field. The GUI gets a compile error until it handles the new field. The entity graph stores and reconstructs it automatically.
+
+This is the data class philosophy from the README in action: **the class is the contract, the validator, and the serialization format -- all at once.**
+
+---
+
+## What's Next
+
+Your app now has a GUI, but every product goes through the same flat-JSON validator. Real suppliers don't send uniform data. One sends flat snake_case JSON. Another sends nested objects. A third sends ALL_CAPS CSV exports.
+
+In [Part 3: Multi-Supplier Routing](./part-03-multi-supplier-routing.md), you'll replace the single validator with a `@DiscriminatedUnion` that routes each supplier's format to a dedicated validation class -- and you'll see how the shared type package extends naturally to handle multiple input formats that all normalize to the same canonical shape.
+
+---
+
+**Previous:** [Part 1: A Working Agent Bundle](./part-01-working-agent-bundle.md) | **Next:** [Part 3: Multi-Supplier Routing](./part-03-multi-supplier-routing.md)
