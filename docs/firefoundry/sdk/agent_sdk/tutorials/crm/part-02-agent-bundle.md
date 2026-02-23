@@ -434,28 +434,27 @@ import {
 } from '@firebrandanalytics/ff-agent-sdk';
 import { CRMConstructors } from './constructors.js';
 
-// These come from your firefoundry.json files (created by ff-cli)
-const APPLICATION_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';  // root firefoundry.json
-const AGENT_BUNDLE_ID = 'b4d8f2a3-1e5c-6b7d-8f9a-2c3d4e5f6a78'; // bundle firefoundry.json
+// This comes from your firefoundry.json (created by ff-cli)
+const APP_ID = 'b4d8f2a3-1e5c-6b7d-8f9a-2c3d4e5f6a78';
 
 export class CRMAgentBundle extends FFAgentBundle<any> {
   constructor() {
     super(
       {
-        id: AGENT_BUNDLE_ID,             // Unique ID for THIS agent bundle
-        application_id: APPLICATION_ID,   // Parent application that owns the bundle
+        id: APP_ID,
+        application_id: APP_ID,
         name: 'CRMBundle',
         type: 'agent_bundle',
         description: 'CRM demo with email campaigns and AI-powered personalization',
       },
       CRMConstructors,
-      createEntityClient(AGENT_BUNDLE_ID) as any  // Entity client scoped to the bundle
+      createEntityClient(APP_ID) as any
     );
   }
 }
 ```
 
-> **Application ID vs Agent Bundle ID:** An application (created by `ff-cli apps create`) can contain multiple agent bundles. The `application_id` identifies the parent application; `id` identifies this specific bundle. They should be different UUIDs. Using a single ID for both is a common mistake (AP-SDK-015).
+> **Application ID vs Agent Bundle ID:** In production, an application can contain multiple agent bundles with distinct IDs. For this demo we use a single `APP_ID` for simplicity. In a multi-bundle setup, you'd use separate UUIDs for `id` (the bundle) and `application_id` (the parent application).
 
 ### The Constructors Registry
 
@@ -780,11 +779,13 @@ async summarizeContact(data: { contact_id: string }) {
 
 ### Pattern 6: Multi-Entity Coordination
 
-The personalize-and-send flow touches three entity types:
+The draft personalization flow touches three entity types:
 
 ```
-Template → personalize with Contact data → create Draft → send via Notification Service
+Template → personalize with Contact data → create Draft (preview)
 ```
+
+> **Note:** This pattern creates a preview draft only. [Part 5](./part-05-email-workflows.md) extends it with a `personalize-and-send` endpoint that also delivers the email via the notification service.
 
 ```typescript
 @ApiEndpoint({ method: 'POST', route: 'drafts/personalize' })

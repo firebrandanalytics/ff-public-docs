@@ -438,7 +438,7 @@ Common issues at this stage:
 You've designed and implemented a 7-entity CRM domain model with:
 
 - **3 behavioral categories**: data-only, domain methods, AI-runnable
-- **8 edge types** defining the relationship schema
+- **7 edge types** defining the relationship schema
 - **HITL approval** on the highest-blast-radius entity (templates)
 - **Two runnable entities** (`NoteEntity`, `EmailDraftEntity`) ready for bot integration
 - **ContactEntity as the hub** with 4 outgoing edge types
