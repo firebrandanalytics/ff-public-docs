@@ -32,6 +32,7 @@ Extended Services provide specialized capabilities that enhance agent functional
 Supporting Services include services under active development that extend platform capabilities. These are functional but may undergo API changes as features are refined.
 
 **Supporting Services:**
+- **Notification Service** - Cloud-agnostic email and SMS delivery with pluggable provider adapters (Beta)
 - **Document Processing Python Worker** - Advanced ML-based document processing (Planning)
 - **Web Search Service** - Provider-agnostic web search with Bing integration (Beta)
 
@@ -45,6 +46,7 @@ Supporting Services include services under active development that extend platfo
 | **Entity Service** | 0.3.0-beta.0 | Beta | Entity graph management with vector semantic search | Extended | REST |
 | **Data Access Service** | 0.1.0 | Beta | Multi-database SQL access with AST query translation and ACL | Extended | gRPC + REST |
 | **Document Processing** | 0.1.10 | Beta | Document extraction, OCR, generation, transformation | Extended | REST |
+| **Notification Service** | 0.1.1 | Beta | Cloud-agnostic email and SMS delivery with pluggable providers | Supporting | REST |
 | **Doc Proc Python Worker** | 0.1.0 | Planning | Advanced ML-based document processing backends | Supporting | gRPC |
 | **Web Search Service** | 0.1.0 | Beta | Provider-agnostic web search with Bing integration | Supporting | REST |
 | **Virtual Worker Manager** | 0.1.0 | Beta | CLI coding agent orchestration with managed sessions and persistent workspaces | Extended | REST |
