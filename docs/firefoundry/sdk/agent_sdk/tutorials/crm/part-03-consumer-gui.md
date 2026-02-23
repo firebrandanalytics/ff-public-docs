@@ -1,11 +1,10 @@
 # Part 3: Consumer GUI — Next.js Frontend
 
-In [Part 2](./part-02-agent-bundle.md) you built a running CRM agent bundle with 4 AI bots and 9 API endpoints. Now we'll build a Next.js frontend that consumes those APIs, giving sales reps a visual interface for managing contacts, generating templates, personalizing drafts, sending emails, and orchestrating campaigns.
+In [Part 2](./part-02-agent-bundle.md) you built a running CRM agent bundle with 4 AI bots and 9 API endpoints. Now we'll build a Next.js frontend that consumes those APIs, giving sales reps a visual interface for managing contacts, generating templates, previewing personalized drafts, and creating campaigns.
 
 **What you'll learn:**
 - Structuring a Next.js consumer app in the same monorepo as the agent bundle
 - Building a typed API client layer that maps to bundle endpoints
-- Integrating with an external notification service for email delivery
 - UI patterns for AI-powered workflows (loading states, enrichment results, HITL approval)
 
 > **Note:** This part builds a working GUI that calls the bundle directly from the browser — good enough for local development and verifying your bundle works. [Part 4](./part-04-bff-and-authentication.md) upgrades this to a production architecture with a server-side BFF proxy and OIDC login.
@@ -20,26 +19,24 @@ In [Part 2](./part-02-agent-bundle.md) you built a running CRM agent bundle with
 ┌──────────────────────────────────┐
 │   CRM GUI (Next.js + React 19)  │
 │   Port 3002                      │
-└────────────┬──────────┬──────────┘
-             │          │
-  Bundle API │          │ Notification API
-             ▼          ▼
-┌──────────────────┐  ┌──────────────────┐
-│ CRM Agent Bundle │  │ Notification Svc │
-│ :3000            │  │ :8085            │
-│ /api/contacts    │  │ /send/email      │
-│ /api/templates/* │  │ /health          │
-│ /api/drafts/*    │  └──────────────────┘
+└────────────┬─────────────────────┘
+             │
+  Bundle API │
+             ▼
+┌──────────────────┐
+│ CRM Agent Bundle │
+│ :3000            │
+│ /api/contacts    │
+│ /api/templates/* │
+│ /api/drafts/*    │
 │ /api/campaigns   │
 │ /health          │
 └──────────────────┘
 ```
 
-The GUI talks to two services:
-1. **CRM Agent Bundle** (port 3000) — all entity and bot operations
-2. **Notification Service** (port 8085) — email delivery
+The GUI talks to one service — the **CRM Agent Bundle** (port 3000). All entity operations, AI workflows, and email delivery go through the bundle. The notification service is called from the bundle, never from the GUI (see [Part 5](./part-05-email-workflows.md)).
 
-Both URLs are configurable via environment variables.
+The bundle URL is configurable via environment variable.
 
 ---
 
@@ -90,7 +87,6 @@ The API client is the bridge between the GUI and the backend services. It mirror
 ```typescript
 // src/lib/api.ts
 const BUNDLE_URL = process.env.NEXT_PUBLIC_BUNDLE_URL || 'http://localhost:3000';
-const NOTIF_URL = process.env.NEXT_PUBLIC_NOTIF_URL || 'http://localhost:8085';
 
 async function request<T>(base: string, path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(`${base}${path}`, {
@@ -183,27 +179,13 @@ export async function createCampaign(data: {
     method: 'POST', body: JSON.stringify(data),
   });
 }
-
-// ── Notification API ────────────────────────────────────────
-
-export async function sendEmail(data: {
-  to: string[]; subject: string; html: string;
-  from?: string; idempotencyKey?: string; metadata?: Record<string, string>;
-}) {
-  return request<any>(NOTIF_URL, '/send/email', {
-    method: 'POST', body: JSON.stringify(data),
-  });
-}
-
-export async function getNotifHealth() {
-  return request<any>(NOTIF_URL, '/health');
-}
 ```
 
 **Key design decisions:**
-- `NEXT_PUBLIC_` prefix makes the URLs available in client-side code
+- `NEXT_PUBLIC_` prefix makes the bundle URL available in client-side code
 - The generic `request<T>` helper handles JSON content-type, error extraction, and typing
 - Each function matches exactly one `@ApiEndpoint` in the bundle — same route, same body shape
+- There is no `sendEmail` function — email delivery happens inside the bundle as part of workflows (see [Part 5](./part-05-email-workflows.md))
 
 ---
 
@@ -306,7 +288,7 @@ function TemplatesTab() {
 
 ### Tab 3: Personalize & Send
 
-Bridges the agent bundle and notification service:
+Previews AI-personalized email drafts:
 
 ```typescript
 function PersonalizeTab() {
@@ -321,24 +303,11 @@ function PersonalizeTab() {
     setDraft(result);
   }
 
-  async function handleSend() {
-    // Send via notification service, NOT the bundle
-    const result = await api.sendEmail({
-      to: [draft.contact_email],
-      subject: draft.subject,
-      html: draft.body_html,
-      idempotencyKey: `draft-${draft.draft_id}`,
-      metadata: { draft_id: draft.draft_id, contact_id: draft.contact_id },
-    });
-    setSendResult(result);
-  }
+  // Display the personalized subject and body_html for review
 }
 ```
 
-**Two-service coordination:**
-- Personalization goes through the **bundle** (which runs the `EmailPersonalizerBot`)
-- Email delivery goes through the **notification service** (which handles SMTP/ACS/SendGrid)
-- The `idempotencyKey` prevents duplicate sends if the user clicks "Send" twice
+At this stage, the tab only **previews** personalized drafts — the `personalizeDraft` endpoint runs the `EmailPersonalizerBot` and returns the AI-generated content without sending. [Part 5](./part-05-email-workflows.md) adds a "Personalize & Send" button that triggers the bundle's `personalize-and-send` workflow to generate and send in one step.
 
 ### Tab 4: Campaigns
 
@@ -391,17 +360,14 @@ const config: Config = {
 
 ## Running the Full Stack
 
-You'll need three services running simultaneously:
+You'll need two services running simultaneously:
 
 ```bash
 # Terminal 1: Agent bundle (port 3000)
 cd apps/crm-bundle
 PORT=3000 pnpm dev
 
-# Terminal 2: Notification service (port 8085)
-# (See the notification service setup guide)
-
-# Terminal 3: GUI (port 3002)
+# Terminal 2: GUI (port 3002)
 cd apps/crm-gui
 pnpm dev
 ```
@@ -414,20 +380,20 @@ Open `http://localhost:3002` in your browser.
 2. Create a contact in the Contacts tab
 3. Add a note with AI enrichment enabled — should see structured insights
 4. Generate a template in the Templates tab — review the AI output and approve
-5. Switch to Personalize & Send — enter the template ID and contact ID, personalize, then send
-6. Check the notification service logs to confirm email delivery
+5. Switch to Personalize & Send — enter the template ID and contact ID, click "Preview Draft"
+6. Verify the AI-personalized subject and body appear in the preview
 
 ---
 
 ## Summary
 
-You've built a working CRM frontend that calls the agent bundle directly from the browser. This is fine for local development, but a production app needs:
+You've built a working CRM frontend that calls the agent bundle directly from the browser. The GUI **triggers workflows** but never composes or sends emails — that happens inside the bundle. This is fine for local development, but a production app needs:
 
 - **Server-side credentials** — API keys and bundle URLs should never be in browser code
 - **User authentication** — the hardcoded `ACTOR_ID` should come from a real login session
 - **Request proxying** — a Backend-for-Frontend layer that handles CORS, error normalization, and service discovery
 
-[Part 4](./part-04-bff-and-authentication.md) adds all of this: an Express BFF layer using `@firebrandanalytics/app_backend_accelerator`, OIDC login, and session-based actor identity.
+[Part 4](./part-04-bff-and-authentication.md) adds all of this: an Express BFF layer using `@firebrandanalytics/app_backend_accelerator`, OIDC login, and session-based actor identity. Then [Part 5](./part-05-email-workflows.md) connects the bundle to the notification service for email delivery, and [Part 6](./part-06-campaign-execution.md) adds parallel campaign execution.
 
 ### Source Code
 

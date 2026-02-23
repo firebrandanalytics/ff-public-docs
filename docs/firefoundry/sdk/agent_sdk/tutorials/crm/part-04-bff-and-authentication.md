@@ -1,6 +1,6 @@
 # Part 4: BFF Layer & OIDC Authentication
 
-In [Part 3](./part-03-consumer-gui.md) you built a Next.js frontend that calls the agent bundle directly from the browser — fine for local development, but not for production. In this final part, you'll add an **Express backend** between the GUI and the bundle that handles:
+In [Part 3](./part-03-consumer-gui.md) you built a Next.js frontend that calls the agent bundle directly from the browser — fine for local development, but not for production. In this part, you'll add an **Express backend** between the GUI and the bundle that handles:
 
 - **OIDC login** via `@firebrandanalytics/app_backend_accelerator`
 - **Session-based identity** — every API call carries the logged-in user's identity
@@ -31,12 +31,11 @@ In [Part 3](./part-03-consumer-gui.md) you built a Next.js frontend that calls t
 │   Port 3001                      │
 │   OIDC session · actor_id       │
 │   RemoteAgentBundleClient       │
-└────────────┬──────────┬─────────┘
-             │          │
-  Bundle API │          │ Notification API
-             ▼          ▼
+└────────────┬─────────────────────┘
+             │ Bundle API
+             ▼
 ┌──────────────────┐  ┌──────────────────┐
-│ CRM Agent Bundle │  │ Notification Svc │
+│ CRM Agent Bundle │─→│ Notification Svc │
 │ :3000            │  │ :8085            │
 └──────────────────┘  └──────────────────┘
 ```
@@ -45,7 +44,8 @@ In Part 3, the browser talked to the bundle directly. Now the browser only talks
 1. Authenticates the user via OIDC (when `AUTH_PROVIDER` is set)
 2. Extracts the user's email from the session
 3. Injects `actor_id` into every request before forwarding to the bundle
-4. Proxies notification service calls with the sender identity
+
+> **Note:** The notification service is called from the bundle during email workflows (Part 5), not from the BFF. The GUI triggers workflows; it never sends emails directly.
 
 ---
 
