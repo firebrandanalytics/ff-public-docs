@@ -1,12 +1,10 @@
 # Notification Service — Reference
 
-Complete API reference for the Notification Service. All endpoints accept and return JSON unless otherwise noted.
+Complete API reference for the Notification Service. All endpoints accept and return JSON.
 
-## REST API
+## Send Endpoints
 
-### Send Endpoints
-
-#### POST /send/email
+### POST /send/email
 
 Send an email through the active email provider.
 
@@ -14,7 +12,7 @@ Send an email through the active email provider.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `idempotencyKey` | string | Yes | Client-provided deduplication key (max 256 chars) |
+| `idempotencyKey` | string | Yes | Deduplication key (max 256 chars) |
 | `to` | string[] | Yes | Recipient email addresses (1-50) |
 | `subject` | string | Yes | Email subject line |
 | `html` | string | No | HTML body (at least one of `html`/`text` required) |
@@ -28,7 +26,7 @@ Send an email through the active email provider.
 | `attachments[].contentType` | string | Yes | MIME type |
 | `attachments[].contentBase64` | string | Yes | Base64-encoded file content |
 | `correlationId` | string | No | Caller-supplied trace/correlation ID |
-| `metadata` | object | No | Arbitrary key-value pairs for caller use |
+| `metadata` | object | No | Arbitrary key-value pairs stored with the notification |
 
 **Responses:**
 
@@ -56,7 +54,7 @@ curl -X POST http://localhost:8080/send/email \
 
 ---
 
-#### POST /send/sms
+### POST /send/sms
 
 Send an SMS through the active SMS provider.
 
@@ -64,12 +62,12 @@ Send an SMS through the active SMS provider.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `idempotencyKey` | string | Yes | Client-provided deduplication key (max 256 chars) |
+| `idempotencyKey` | string | Yes | Deduplication key (max 256 chars) |
 | `to` | string | Yes | Recipient phone number in E.164 format (e.g., `+15551234567`) |
 | `content` | string | Yes | Message text (1-1600 characters) |
 | `from` | string | No | Sender number override (defaults to provider config) |
 | `correlationId` | string | No | Caller-supplied trace/correlation ID |
-| `metadata` | object | No | Arbitrary key-value pairs for caller use |
+| `metadata` | object | No | Arbitrary key-value pairs stored with the notification |
 
 **Responses:**
 
@@ -83,9 +81,9 @@ Send an SMS through the active SMS provider.
 
 ---
 
-### Notification Status
+## Notification Status
 
-#### GET /notifications/{id}
+### GET /notifications/{id}
 
 Retrieve the full details of a sent notification.
 
@@ -104,11 +102,11 @@ Retrieve the full details of a sent notification.
 
 ---
 
-### Admin Endpoints
+## Admin Endpoints
 
-These endpoints manage provider configurations. In production deployments, they are protected by Kong gateway API key authentication.
+These endpoints manage provider configurations. In production, they are protected by API key authentication.
 
-#### GET /admin/providers
+### GET /admin/providers
 
 List all configured providers across all channels.
 
@@ -116,9 +114,9 @@ List all configured providers across all channels.
 
 ---
 
-#### POST /admin/providers
+### POST /admin/providers
 
-Create a new provider configuration. The provider is created in an inactive state.
+Create a new provider configuration. Providers are created inactive.
 
 **Request Body:**
 
@@ -127,21 +125,21 @@ Create a new provider configuration. The provider is created in an inactive stat
 | `channel` | string | Yes | `email`, `sms`, or `push` |
 | `providerType` | string | Yes | `acs`, `sendgrid`, or `twilio` |
 | `config` | object | Yes | Non-sensitive provider settings |
-| `secretEnvVars` | object | Yes | Maps logical names to env var names |
+| `secretEnvVars` | object | Yes | Maps logical credential names to environment variable names |
 
 **Provider-specific `config` fields:**
 
-| Provider Type | Channel | Config Fields |
-|---------------|---------|---------------|
-| `acs` | email | `senderAddress` (required) — Verified ACS sender address |
-| `acs` | sms | `senderNumber` — ACS phone number |
+| Provider | Channel | Config Fields |
+|----------|---------|---------------|
+| `acs` | email | `senderAddress` (required) — Verified sender address |
+| `acs` | sms | `senderNumber` — Provisioned phone number |
 | `sendgrid` | email | `senderAddress`, `senderName` |
 | `twilio` | sms | `senderNumber`, `messagingServiceSid` |
 
 **Provider-specific `secretEnvVars` keys:**
 
-| Provider Type | Required Keys | Description |
-|---------------|---------------|-------------|
+| Provider | Required Keys | Description |
+|----------|---------------|-------------|
 | `acs` | `connectionString` | ACS resource connection string |
 | `sendgrid` | `apiKey` | SendGrid API key |
 | `twilio` | `accountSid`, `authToken` | Twilio credentials |
@@ -152,13 +150,13 @@ Create a new provider configuration. The provider is created in an inactive stat
 |------|-----------|------|
 | 201 | Created | `ProviderConfig` |
 | 400 | Validation error | `ErrorResponse` |
-| 409 | Duplicate channel+providerType | `ErrorResponse` |
+| 409 | Duplicate channel + provider type | `ErrorResponse` |
 
 ---
 
-#### PUT /admin/providers/{id}
+### PUT /admin/providers/{id}
 
-Update an existing provider configuration. Clears the adapter cache.
+Update an existing provider configuration. Changes take effect on the next send request.
 
 **Request Body:** Any subset of `config` and `secretEnvVars`.
 
@@ -171,9 +169,9 @@ Update an existing provider configuration. Clears the adapter cache.
 
 ---
 
-#### DELETE /admin/providers/{id}
+### DELETE /admin/providers/{id}
 
-Delete a provider configuration. Clears the adapter cache.
+Delete a provider configuration.
 
 **Responses:**
 
@@ -184,9 +182,9 @@ Delete a provider configuration. Clears the adapter cache.
 
 ---
 
-#### POST /admin/providers/{id}/activate
+### POST /admin/providers/{id}/activate
 
-Activate a provider for its channel. This atomically deactivates any other provider on the same channel (within a database transaction) and activates this one. Clears the adapter cache.
+Activate a provider for its channel. Any other active provider on the same channel is atomically deactivated. Changes take effect on the next send request.
 
 **Responses:**
 
@@ -197,9 +195,9 @@ Activate a provider for its channel. This atomically deactivates any other provi
 
 ---
 
-#### POST /admin/providers/{id}/validate
+### POST /admin/providers/{id}/validate
 
-Check that the provider's required environment variables are set and that the cloud SDK can initialize successfully. Does not send a test message.
+Check that the provider's required environment variables are set and the cloud provider can be reached. Does not send a test message.
 
 **Response:**
 
@@ -221,17 +219,17 @@ Check that the provider's required environment variables are set and that the cl
 
 ---
 
-### Platform Endpoints
+## Platform Endpoints
 
-#### GET /health
+### GET /health
 
-Liveness probe. Returns 200 if the process is running.
+Liveness probe. Returns 200 if the service is running.
 
 ```json
 {"status": "healthy", "timestamp": "2026-02-23T02:25:25.233Z"}
 ```
 
-#### GET /ready
+### GET /ready
 
 Readiness probe. Returns 200 if the service can accept traffic, 503 if not.
 
@@ -239,9 +237,9 @@ Readiness probe. Returns 200 if the service can accept traffic, 503 if not.
 {"status": "ready", "timestamp": "2026-02-23T02:25:25.233Z"}
 ```
 
-#### GET /status
+### GET /status
 
-Detailed service status including version, uptime, and channel information.
+Service status including version, uptime, and channel information.
 
 ```json
 {
@@ -266,8 +264,8 @@ Returned by `POST /send/email` and `POST /send/sms`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | UUID | Internal notification ID |
-| `providerMessageId` | string | Provider-assigned message ID (for webhook reconciliation) |
+| `id` | UUID | Notification ID |
+| `providerMessageId` | string | Provider-assigned message ID |
 | `status` | string | `accepted`, `sending`, `sent`, `delivered`, `bounced`, or `failed` |
 | `channel` | string | `email` or `sms` |
 | `provider` | string | Provider name (e.g., `acs`) |
@@ -276,11 +274,11 @@ Returned by `POST /send/email` and `POST /send/sms`.
 
 ### NotificationDetail
 
-Returned by `GET /notifications/{id}`. Extends `SendResult` with:
+Returned by `GET /notifications/{id}`. Includes all `SendResult` fields plus:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `idempotencyKey` | string | Client-provided dedup key |
+| `idempotencyKey` | string | The deduplication key |
 | `correlationId` | string | Caller-supplied trace ID (if provided) |
 | `metadata` | object | Caller-supplied metadata (if provided) |
 | `createdAt` | string | ISO 8601 creation timestamp |
@@ -297,19 +295,17 @@ Returned by admin endpoints.
 | `providerType` | string | `acs`, `sendgrid`, or `twilio` |
 | `isActive` | boolean | Whether this provider is active for its channel |
 | `config` | object | Non-sensitive provider settings |
-| `secretEnvVars` | object | Env var name mappings |
+| `secretEnvVars` | object | Environment variable name mappings |
 | `createdAt` | string | ISO 8601 creation timestamp |
 | `updatedAt` | string | ISO 8601 last update timestamp |
 
 ### ErrorResponse
 
-Returned on error.
-
 | Field | Type | Description |
 |-------|------|-------------|
-| `error` | string | Error code (see Error Codes below) |
+| `error` | string | Error code (see below) |
 | `message` | string | Human-readable error description |
-| `details` | object[] | Field-level validation errors (for `VALIDATION_ERROR`) |
+| `details` | object[] | Field-level validation errors (for `VALIDATION_ERROR` only) |
 
 ---
 
@@ -317,119 +313,20 @@ Returned on error.
 
 | Code | HTTP Status | Description |
 |------|-------------|-------------|
-| `VALIDATION_ERROR` | 400 | Request body failed Zod schema validation |
+| `VALIDATION_ERROR` | 400 | Request body validation failed |
 | `NOT_FOUND` | 404 | Resource not found |
 | `CHANNEL_DISABLED` | 422 | No active provider configured for the requested channel |
 | `DUPLICATE_REQUEST` | 200 | Idempotency key already exists (returns existing result) |
 | `AUTHENTICATION_FAILED` | 502 | Provider credentials invalid or expired |
 | `RATE_LIMITED` | 502 | Provider is throttling requests |
-| `INVALID_RECIPIENT` | 502 | Provider rejected the recipient address/number |
-| `PROVIDER_ERROR` | 502 | Unclassified provider SDK error |
+| `INVALID_RECIPIENT` | 502 | Provider rejected the recipient address or number |
+| `PROVIDER_ERROR` | 502 | Unclassified provider error |
 | `MISSING_CREDENTIALS` | 500 | Required environment variable is not set |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
-
----
-
-## Environment Variables
-
-### Service Configuration
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `8080` | HTTP server port |
-| `NODE_ENV` | `development` | `development`, `production`, or `test` |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
-| `SERVICE_NAME` | `ff-services-notification` | Service name for logging |
-
-### Database
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PG_HOST` | — | Direct PostgreSQL host (e.g., `localhost`) |
-| `PG_SERVER` | — | Azure PG server name (auto-appends `.postgres.database.azure.com`) |
-| `PG_PORT` | `5432` | PostgreSQL port |
-| `PG_DATABASE` | `ff_int_dev_clone` | Database name |
-| `PG_PASSWORD` | — | Password for `fireread` user |
-| `PG_INSERT_PASSWORD` | — | Password for `fireinsert` user (falls back to `PG_PASSWORD`) |
-| `PG_SSL_DISABLED` | — | Set to `true` to disable SSL (local development only) |
-
-One of `PG_HOST` or `PG_SERVER` is required. SSL is enabled by default; `rejectUnauthorized` is `true` in production, `false` in development.
-
-### Logging
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | — | Required by `@firebrandanalytics/shared-utils` logger |
-
-### Provider Credentials
-
-These are user-defined env var names configured via the admin API. The service doesn't hardcode any specific credential variable names. Example:
-
-| Variable | Description |
-|----------|-------------|
-| `ACS_CONNECTION_STRING` | Azure Communication Services connection string |
-
----
-
-## Database Schema
-
-### Schema: `notification`
-
-#### Table: `provider_configs`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | UUID | Primary key (auto-generated) |
-| `channel` | VARCHAR(20) | `email`, `sms`, or `push` |
-| `provider_type` | VARCHAR(50) | `acs`, `sendgrid`, `twilio` |
-| `is_active` | BOOLEAN | Active flag (one active per channel enforced by partial unique index) |
-| `config` | JSONB | Non-sensitive settings |
-| `secret_env_vars` | JSONB | Env var name mappings |
-| `created_at` | TIMESTAMPTZ | Row creation time |
-| `updated_at` | TIMESTAMPTZ | Last update time (auto-refreshed by trigger) |
-
-**Constraints:**
-- `uq_provider_configs_channel_provider` — Unique on `(channel, provider_type)`
-- `uq_active_provider_per_channel` — Partial unique index on `(channel) WHERE is_active = true`
-
-#### Table: `send_log`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | UUID | Primary key (auto-generated) |
-| `idempotency_key` | VARCHAR(256) | Unique — client deduplication key |
-| `channel` | VARCHAR(20) | Channel used |
-| `provider` | VARCHAR(50) | Provider used |
-| `status` | VARCHAR(20) | Current status |
-| `provider_message_id` | VARCHAR(512) | Provider-assigned ID (for webhooks) |
-| `correlation_id` | VARCHAR(256) | Caller-supplied trace ID |
-| `metadata` | JSONB | Caller-supplied metadata |
-| `request` | JSONB | Original request (attachments stripped) |
-| `response` | JSONB | Provider response |
-| `error` | TEXT | Error detail |
-| `created_at` | TIMESTAMPTZ | Row creation time |
-| `updated_at` | TIMESTAMPTZ | Last update time |
-
-**Indexes:**
-- `idempotency_key` — Unique (from constraint)
-- `idx_send_log_provider_message_id` — Partial on `provider_message_id IS NOT NULL`
-- `idx_send_log_status` — For monitoring queries
-- `idx_send_log_created_at` — For time-range queries and retention
-
----
-
-## Version Information
-
-- **Current Version**: 0.1.1
-- **Node.js**: 20+
-- **Runtime**: TypeScript (ESM)
-- **Framework**: Express 5
-- **Test Framework**: Vitest + Supertest
-- **Database**: PostgreSQL 14+
 
 ## Related
 
 - [Concepts](./concepts.md) — Core abstractions and mental models
 - [Getting Started](./getting-started.md) — Step-by-step tutorial
-- [Operations](./operations.md) — Admin workflows and troubleshooting
-- [Overview](./README.md) — Service overview and architecture
+- [Operations](./operations.md) — Provider management and troubleshooting
+- [Overview](./README.md) — Service overview
