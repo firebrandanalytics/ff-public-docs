@@ -8,6 +8,8 @@ In [Part 2](./part-02-agent-bundle.md) you built a running CRM agent bundle with
 - Integrating with an external notification service for email delivery
 - UI patterns for AI-powered workflows (loading states, enrichment results, HITL approval)
 
+> **Note:** This part builds a working GUI that calls the bundle directly from the browser — good enough for local development and verifying your bundle works. [Part 4](./part-04-bff-and-authentication.md) upgrades this to a production architecture with a server-side BFF proxy and OIDC login.
+
 **What you'll build:** A 4-tab CRM dashboard: Contacts, Templates, Personalize & Send, Campaigns.
 
 ---
@@ -419,46 +421,14 @@ Open `http://localhost:3002` in your browser.
 
 ## Summary
 
-You've now built a complete CRM application spanning three parts:
+You've built a working CRM frontend that calls the agent bundle directly from the browser. This is fine for local development, but a production app needs:
 
-| Part | What You Built | Key Patterns |
-|------|---------------|-------------|
-| [Part 1](./part-01-domain-modeling.md) | 7-entity domain model | Graph modeling, behavioral classification, HITL, edge design |
-| [Part 2](./part-02-agent-bundle.md) | Agent bundle with 4 bots, 9 endpoints | `BotRunnableEntityMixin`, `StructuredOutputBotMixin`, prompt framework, `@ApiEndpoint` |
-| Part 3 (this) | Next.js consumer GUI | API client layer, two-service integration, AI workflow UI |
+- **Server-side credentials** — API keys and bundle URLs should never be in browser code
+- **User authentication** — the hardcoded `ACTOR_ID` should come from a real login session
+- **Request proxying** — a Backend-for-Frontend layer that handles CORS, error normalization, and service discovery
 
-### What's Next?
-
-- **Deployment**: Package both the bundle and GUI as Docker containers and deploy via `ff-cli`
-- **Workflow Orchestration**: Use the [Workflow Guide](../../feature_guides/workflow_orchestration_guide.md) for complex multi-step campaigns with progress streaming
-- **Parallelism**: Use the [Parallelism Guide](../../feature_guides/advanced_parallelism.md) for bulk personalization across hundreds of contacts
-- **Vector Search**: Use [Vector Similarity](../../feature_guides/vector-similarity-quickstart.md) for semantic contact matching ("find contacts similar to this one")
+[Part 4](./part-04-bff-and-authentication.md) adds all of this: an Express BFF layer using `@firebrandanalytics/app_backend_accelerator`, OIDC login, and session-based actor identity.
 
 ### Source Code
 
 The complete source code is available in the [ff-demo-apps](https://github.com/firebrandanalytics/ff-demo-apps) repository under `crm/`.
-
-```
-crm/
-├── apps/
-│   ├── crm-bundle/
-│   │   └── src/
-│   │       ├── agent-bundle.ts
-│   │       ├── constructors.ts
-│   │       ├── index.ts
-│   │       ├── schemas.ts
-│   │       ├── entities/    (7 files)
-│   │       ├── bots/        (4 files)
-│   │       └── prompts/     (4 files)
-│   └── crm-gui/
-│       └── src/
-│           ├── app/
-│           │   ├── layout.tsx
-│           │   ├── page.tsx
-│           │   └── globals.css
-│           └── lib/
-│               └── api.ts
-└── packages/
-    └── shared-types/
-        └── src/index.ts
-```
