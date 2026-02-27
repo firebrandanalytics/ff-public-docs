@@ -21,10 +21,11 @@ Let's start with the simplest possible prompt: a static set of instructions.
 Every prompt is strongly typed using the `PromptTypeHelper`. It defines the shape of your prompt's inputs and arguments. For now, our prompt will take a `string` (the code to be reviewed) and have no special arguments.
 
 ```typescript
-import { PromptTypeHelper } from '@firebrandanalytics/ff-agent-sdk';
+import type { PromptTypeHelper } from '@firebrandanalytics/ff-agent-sdk/prompts';
 
 // I: The main input type. For us, this is the code to be reviewed.
 // ARGS: The arguments for customizing the prompt. We'll start with none.
+// ARGS must have a `{ static, request }` shape (PromptArgsType).
 type CodeReviewPTH = PromptTypeHelper<
   string, // Input type
   { static: {}; request: {} } // Arguments type
@@ -35,12 +36,12 @@ type CodeReviewPTH = PromptTypeHelper<
 Next, we'll create our prompt class. It extends the base `Prompt` and uses our PTH for type safety.
 
 ```typescript
-import { Prompt, PromptTemplateNode, PromptTemplateSectionNode } from '@firebrandanalytics/ff-agent-sdk';
+import { Prompt, PromptTemplateNode, PromptTemplateSectionNode } from '@firebrandanalytics/ff-agent-sdk/prompts';
 
 export class CodeReviewAssistantPrompt extends Prompt<CodeReviewPTH> {
   constructor() {
-    // 'system' sets the role for this prompt in the LLM conversation.
-    super('system', {});
+    // The Prompt constructor takes a config object with `role` and `static_args`.
+    super({ role: 'system', static_args: {} });
     this.add_section(this.get_Context_Section());
   }
 
@@ -114,8 +115,8 @@ Now we can use these arguments within our nodes. We do this by passing a functio
 ```typescript
 export class CodeReviewAssistantPrompt extends Prompt<CodeReviewPTH> {
   constructor(staticArgs: CodeReviewPTH['args']['static']) {
-    // Pass static args to the super constructor.
-    super('system', staticArgs);
+    // Pass static args to the super constructor via the config object.
+    super({ role: 'system', static_args: staticArgs });
     this.add_section(this.get_Context_Section());
   }
 
@@ -176,7 +177,7 @@ A numbered list is a great way to provide clear, distinct rules.
 ```typescript
 // Inside the CodeReviewAssistantPrompt class...
   constructor(staticArgs: CodeReviewPTH['args']['static']) {
-    super('system', staticArgs);
+    super({ role: 'system', static_args: staticArgs });
     this.add_section(this.get_Context_Section());
     this.add_section(this.get_Rules_Section()); // Add the new section
   }
@@ -210,7 +211,7 @@ Showing examples is one of the most effective ways to guide an LLM. The `CodeBox
 ```typescript
 // Inside the CodeReviewAssistantPrompt class...
   constructor(staticArgs: CodeReviewPTH['args']['static']) {
-    super('system', staticArgs);
+    super({ role: 'system', static_args: staticArgs });
     this.add_section(this.get_Context_Section());
     this.add_section(this.get_Rules_Section());
     this.add_section(this.get_Examples_Section()); // Add the new section
@@ -250,7 +251,7 @@ We use the popular Zod library to define our schemas. The `withSchemaMetadata` f
 
 ```typescript
 import { z } from 'zod';
-import { withSchemaMetadata } from '@firebrandanalytics/ff-agent-sdk';
+import { withSchemaMetadata } from '@firebrandanalytics/ff-agent-sdk/prompts';
 
 const ReviewCommentSchema = withSchemaMetadata(
   z.object({
@@ -341,7 +342,7 @@ type CodeReviewPTH = PromptTypeHelper<
 >;
 
 // 2. Use the IfElseNode in the "Rules" section
-import { PromptTemplateIfElseNode } from '@firebrandanalytics/ff-agent-sdk';
+import { PromptTemplateIfElseNode } from '@firebrandanalytics/ff-agent-sdk/prompts';
 
 // Inside get_Rules_Section, add this to the children of the PromptTemplateListNode
 // ...
@@ -375,7 +376,7 @@ type CodeReviewPTH = PromptTypeHelper<
 >;
 
 // 2. Add a new section using ForEachNode
-import { PromptTemplateForEachNode } from '@firebrandanalytics/ff-agent-sdk';
+import { PromptTemplateForEachNode } from '@firebrandanalytics/ff-agent-sdk/prompts';
 
 // Inside the CodeReviewAssistantPrompt class...
   get_Pitfalls_Section(): PromptTemplateNode<CodeReviewPTH> {
@@ -403,18 +404,32 @@ If we render with `args: { common_pitfalls: ['Magic numbers', 'Lack of comments'
 
 ---
 
-## Chapter 6: Putting It All Together with `PromptGroup`
+## Chapter 6: Putting It All Together with `PromptGroup` and `StructuredPromptGroup`
 
 A complete LLM interaction requires both our detailed system prompt and the actual user input (the code to be reviewed). A `PromptGroup` assembles these pieces in the correct order.
 
+### Using `PromptGroup` Directly
+
 ```typescript
-import { PromptGroup, PromptInputText } from '@firebrandanalytics/ff-agent-sdk';
+import {
+  Prompt,
+  PromptGroup,
+  PromptTemplateTextNode,
+} from '@firebrandanalytics/ff-agent-sdk/prompts';
 
 function assemblePromptGroup() {
   const systemPrompt = new CodeReviewAssistantPrompt({ programming_language: 'TypeScript' });
-  
-  // PromptInputText is a simple placeholder for the main user input.
-  const userInputPrompt = new PromptInputText<CodeReviewPTH>({});
+
+  // Build a user-input prompt that forwards the request's input text.
+  const userInputPrompt = new Prompt<CodeReviewPTH>({
+    role: 'user',
+    static_args: {} as CodeReviewPTH['args']['static'],
+  });
+  userInputPrompt.add_section(
+    new PromptTemplateTextNode<CodeReviewPTH>({
+      content: (request) => request.input as string,
+    })
+  );
 
   const promptGroup = new PromptGroup<CodeReviewPTH>([
     { name: 'system_instructions', prompt: systemPrompt },
@@ -459,6 +474,45 @@ renderFullPrompt();
 ]
 ```
 We now have a complete, multi-part prompt, structured perfectly for an API call to a large language model.
+
+### Using `StructuredPromptGroup` (Recommended for Bots)
+
+When building prompts for use with `MixinBot`, use `StructuredPromptGroup` instead of a bare `PromptGroup`. It organizes prompts into named phases (`base`, `input`, `extensions`, etc.) that the bot framework understands:
+
+```typescript
+import {
+  Prompt,
+  PromptGroup,
+  PromptTemplateTextNode,
+  StructuredPromptGroup,
+} from '@firebrandanalytics/ff-agent-sdk/prompts';
+
+function assembleStructuredPromptGroup() {
+  const systemPrompt = new CodeReviewAssistantPrompt({ programming_language: 'TypeScript' });
+
+  const userInputPrompt = new Prompt<CodeReviewPTH>({
+    role: 'user',
+    static_args: {} as CodeReviewPTH['args']['static'],
+  });
+  userInputPrompt.add_section(
+    new PromptTemplateTextNode<CodeReviewPTH>({
+      content: (request) => request.input as string,
+    })
+  );
+
+  // StructuredPromptGroup separates base (system) and input (user) phases.
+  return new StructuredPromptGroup<CodeReviewPTH>({
+    base: new PromptGroup<CodeReviewPTH>([
+      { name: 'system_instructions', prompt: systemPrompt },
+    ]),
+    input: new PromptGroup<CodeReviewPTH>([
+      { name: 'user_input', prompt: userInputPrompt },
+    ]),
+  });
+}
+```
+
+This `StructuredPromptGroup` is what you pass to `MixinBotConfig.base_prompt_group` when building a bot — see the **[Writing Bots Guide]** for the full pattern.
 
 ---
 
