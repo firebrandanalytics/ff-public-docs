@@ -1,3 +1,5 @@
+> **DEPRECATED** — See the [current tutorial](../../../agent_sdk/tutorials/catalog-intake/README.md).
+
 # Part 4: Nested Variants -- Validating Arrays of Objects
 
 ## The Problem: Variants Live Inside the Payload

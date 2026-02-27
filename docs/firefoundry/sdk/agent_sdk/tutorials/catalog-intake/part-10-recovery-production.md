@@ -157,7 +157,7 @@ Async validators are the right tool for uniqueness checks, foreign key validatio
 In production, batch your async checks. Validating 500 SKUs with 500 individual queries is slow. A single bulk query is better:
 
 ```typescript
-// In your bot's validate method, before per-field validation
+// In your workflow, before per-field validation
 const existingSkus = await catalogService.bulkCheckSkus(batch.map(p => p.sku));
 
 // Then use the pre-fetched set in the async validator
@@ -296,7 +296,7 @@ Raw supplier data goes in -- messy, inconsistent, sometimes broken. Typed, valid
 
 ## Further Reading
 
-- [Validation Library Reference](../../utils/validation/README.md) -- full decorator API
+- [Validation Library Reference](../../../utils/validation/README.md) -- full decorator API
 - [News Analysis Tutorial](../news-analysis/README.md) -- different use case, same SDK patterns
 - [Report Generator Tutorial](../report-generator/README.md) -- advanced entity/bot/prompt stack
 

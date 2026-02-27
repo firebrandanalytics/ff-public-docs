@@ -180,7 +180,7 @@ Use the score to bucket matches into tiers:
 | 0.7 - 0.9 | Medium | Flag for review. Plausible but uncertain. |
 | < 0.7 | Low | Rejected by `threshold`. No reliable match. |
 
-Extract these from the trace in your bot logic:
+Extract these from the trace in your workflow logic:
 
 ```typescript
 const trace = factory.getLastTrace();

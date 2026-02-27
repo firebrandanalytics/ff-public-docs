@@ -1,3 +1,5 @@
+> **DEPRECATED** — See the [current tutorial](../../../agent_sdk/tutorials/catalog-intake/README.md).
+
 # Part 6: Conditionals + Object Rules
 
 Apply validation rules that adapt based on product type, enforce cross-field relationships, and define business rules that span multiple properties.

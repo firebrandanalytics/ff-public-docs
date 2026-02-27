@@ -140,7 +140,7 @@ An API payload with `"supplier_schema": "v1_api"` routes to V1. A CSV-derived pa
 
 There's a subtlety worth noting: the `SupplierProductDraft` class itself only has one field -- `supplier_schema`. It doesn't redeclare `product_name`, `base_cost`, or any other product fields. Those live on the branch classes (V1 and V2). The draft class is purely a routing layer. The factory reads the discriminator, picks the branch, and the branch class defines the full output shape.
 
-This means the bot works with the branch class instance directly. After `factory.create()` returns, you have a `SupplierProductV1` or `SupplierProductV2` -- complete with all fields validated and coerced. The `SupplierProductDraft` wrapper is gone.
+This means the workflow works with the branch class instance directly. After `factory.create()` returns, you have a `SupplierProductV1` or `SupplierProductV2` -- complete with all fields validated and coerced. The `SupplierProductDraft` wrapper is gone.
 
 ---
 
@@ -298,10 +298,10 @@ You now have two supplier formats flowing through one pipeline:
 - **`SupplierProductV1`** handles API payloads with flat snake_case fields
 - **`SupplierProductV2`** handles CSV data with ALL_CAPS fields, currency strings, and comma-separated sizes
 - **`SupplierProductDraft`** is the discriminated union that routes to the right validator based on `supplier_schema`
-- **The bot doesn't change** -- it still calls `factory.create()` and gets a canonical product
+- **The workflow doesn't change** -- it still calls `factory.create()` and gets a canonical product
 - **The GUI** now supports CSV file upload, shows format badges, and displays raw-vs-canonical comparisons
 
-Adding a third supplier means writing one new class and adding one line to the union's `map`. No changes to V1, V2, the bot, or the GUI.
+Adding a third supplier means writing one new class and adding one line to the union's `map`. No changes to V1, V2, the agent bundle, or the GUI.
 
 ---
 

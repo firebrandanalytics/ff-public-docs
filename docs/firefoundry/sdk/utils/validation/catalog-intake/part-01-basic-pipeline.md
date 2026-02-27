@@ -1,3 +1,5 @@
+> **DEPRECATED** — See the [current tutorial](../../../agent_sdk/tutorials/catalog-intake/README.md).
+
 # Part 1: Core Coercion + Validation
 
 Build your first supplier product validator using the five most essential decorators.

@@ -1,3 +1,5 @@
+> **DEPRECATED** — See the [current tutorial](../../../agent_sdk/tutorials/catalog-intake/README.md).
+
 # Part 9: AI Extraction + Classification
 
 Use AI-powered decorators to extract structured product data from unstructured supplier descriptions, classify categories from free text, and repair malformed JSON payloads.

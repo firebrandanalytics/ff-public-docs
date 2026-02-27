@@ -1,3 +1,5 @@
+> **DEPRECATED** — See the [current tutorial](../../../agent_sdk/tutorials/catalog-intake/README.md).
+
 # Part 5: Fuzzy Matching + Runtime Context
 
 Match supplier values against the FireKicks catalog using fuzzy string matching, synonyms, and runtime-loaded canonical sets.

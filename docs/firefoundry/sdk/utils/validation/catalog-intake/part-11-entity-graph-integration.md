@@ -1,3 +1,5 @@
+> **DEPRECATED** — See the [current tutorial](../../../agent_sdk/tutorials/catalog-intake/README.md).
+
 # Part 11: Entity Graph Integration — Typed Data That Survives the Round-Trip
 
 Wire your validated classes into the FireFoundry entity graph so that `dto.data` comes back as a real class instance — not raw JSON.

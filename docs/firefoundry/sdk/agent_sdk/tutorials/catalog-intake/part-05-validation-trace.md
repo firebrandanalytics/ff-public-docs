@@ -180,7 +180,7 @@ The `raw_product_name` staging property captures the unmodified value. It's avai
 
 The trace is transient by default -- it lives in memory until you retrieve it. To make it useful for debugging later, store it alongside the validated product in the entity graph.
 
-In the bot's workflow, after validation succeeds:
+In the workflow, after validation succeeds:
 
 ```typescript
 const validated = await this.factory.create(
@@ -191,7 +191,7 @@ const trace = this.factory.getLastTrace();
 
 await this.update_data({
   ...dto.data,
-  validated_product: validated.toJSON(),
+  validated_product: validated,
   validation_trace: trace,
 });
 ```
@@ -203,7 +203,7 @@ You can also store the raw input alongside the trace for a complete picture:
 ```typescript
 await this.update_data({
   ...dto.data,
-  validated_product: validated.toJSON(),
+  validated_product: validated,
   validation_trace: trace,
   raw_input: raw_payload,
 });

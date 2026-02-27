@@ -70,19 +70,29 @@ Run `pnpm install` from the project root and the workspace links are live.
 Move your `SupplierProductV1` from the bundle into `packages/shared-types/src/product.ts`. It's the same class from Part 1 -- decorators and all:
 
 ```typescript
-// packages/shared-types/src/product.ts
+// packages/shared-types/src/validators/SupplierProductV1.ts
 import {
   Serializable,
+  Discriminator,
+  UseSinglePassValidation,
   CoerceTrim,
   CoerceCase,
   CoerceType,
   ValidateRequired,
   ValidateRange,
-  ValidatePattern,
 } from '@firebrandanalytics/shared-utils/validation';
 
 @Serializable()
+@UseSinglePassValidation()
 export class SupplierProductV1 {
+  @Discriminator('v1_api')
+  supplier_schema!: string;
+
+  @CoerceTrim()
+  @CoerceCase('lower')
+  @ValidateRequired()
+  product_id!: string;
+
   @CoerceTrim()
   @CoerceCase('title')
   @ValidateRequired()
@@ -93,13 +103,7 @@ export class SupplierProductV1 {
   @ValidateRequired()
   category!: string;
 
-  @CoerceTrim()
-  @CoerceCase('lower')
-  subcategory!: string;
-
-  @CoerceTrim()
-  @CoerceCase('lower')
-  brand_line!: string;
+  // ... (abbreviated — see companion repo for full class)
 
   @CoerceType('number')
   @ValidateRequired()
@@ -115,7 +119,6 @@ export class SupplierProductV1 {
   color!: string;
 
   @CoerceTrim()
-  @ValidatePattern(/^\d+(\.\d+)?-\d+(\.\d+)?$/)
   size_range!: string;
 }
 ```
@@ -124,7 +127,7 @@ Export it from the package barrel:
 
 ```typescript
 // packages/shared-types/src/index.ts
-export { SupplierProductV1 } from './product.js';
+export { SupplierProductV1 } from './validators/index.js';
 ```
 
 Back in the bundle, update the import to point at the shared package instead of a local file:

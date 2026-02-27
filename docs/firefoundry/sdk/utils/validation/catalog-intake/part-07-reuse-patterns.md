@@ -1,3 +1,5 @@
+> **DEPRECATED** — See the [current tutorial](../../../agent_sdk/tutorials/catalog-intake/README.md).
+
 # Part 7: Reuse Patterns
 
 Extract repeated decorator stacks into reusable styles, apply class-level defaults, and auto-manage fields — eliminating boilerplate without losing clarity.

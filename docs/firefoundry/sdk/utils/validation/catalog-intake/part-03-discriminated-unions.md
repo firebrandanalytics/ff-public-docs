@@ -1,3 +1,5 @@
+> **DEPRECATED** — See the [current tutorial](../../../agent_sdk/tutorials/catalog-intake/README.md).
+
 # Part 3: Discriminated Unions -- One Pipeline, Many Supplier Schemas
 
 ## The Problem: Every Supplier Speaks a Different Language
