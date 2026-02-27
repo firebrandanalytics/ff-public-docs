@@ -28,6 +28,10 @@ Each guide assumes familiarity with the basic Entity-Bot-Prompt architecture cov
 
 - **[Virtual Worker SDK](virtual-worker-sdk.md)** - Session-first API for interacting with VWM-managed AI coding agents (Claude Code, Codex, Gemini). Covers standalone usage, entity integration with VWSessionEntity, streaming, file operations, crash recovery, and working memory bridging.
 
+### Conversational AI
+
+- **[Chat History](../guides/chat-history.md)** - Give bots access to full conversation history from the entity graph using `ChatHistoryBotMixin`. Covers the default `simple_chat` mapping, custom entity model mappings, token budget management, and combining with other mixins.
+
 ### Advanced Capabilities
 
 - **[Vector Similarity](vector-similarity-quickstart.md)** - Add semantic search capabilities to your entities with pre-computed embeddings, similarity matching, and the new gRPC broker integration for embedding generation.

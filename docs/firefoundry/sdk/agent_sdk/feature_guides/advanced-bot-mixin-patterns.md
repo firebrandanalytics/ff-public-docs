@@ -42,7 +42,10 @@ class MyBot extends ComposeMixins(
 | **StructuredOutputBotMixin** | Zod schema validation | When you need guaranteed structured output |
 | **DataValidationBotMixin** | AI-powered data correction | When data needs intelligent fixing |
 | **FeedbackBotMixin** | Process feedback iterations | When implementing feedback loops |
-| **WorkingMemoryBotMixin** | Access working memory | When you need persistent context |
+| **WorkingMemoryBotMixin** | Access working memory files | When you need file/blob context in prompts |
+| **ChatHistoryBotMixin** | Inject conversation history | When building multi-turn conversational bots |
+
+For a dedicated guide to `ChatHistoryBotMixin` — including custom entity models, token budget management, and `ChatHistoryPromptGroup` — see [Chat History](../guides/chat-history.md).
 
 ### Composition Order
 

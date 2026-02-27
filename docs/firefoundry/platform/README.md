@@ -24,7 +24,7 @@ FireFoundry provides 8 specialized microservices organized by maturity:
 
 ### Tier 1 - Core Runtime (GA)
 - **[Broker Service](./services/ff-broker.md)** - AI model routing and orchestration
-- **[Context Service](./services/context-service.md)** - Working memory and blob storage
+- **[Context Service](./services/context-service/README.md)** - Working memory and blob storage
 - **[Code Sandbox](./services/code-sandbox.md)** - Secure code execution
 
 ### Tier 2 - Extended Services (Beta)

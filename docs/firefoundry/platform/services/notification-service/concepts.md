@@ -1,125 +1,78 @@
 # Notification Service — Concepts
 
-This document explains the core abstractions and mental models behind the Notification Service. Read this before the getting-started guide if you want to understand *why* the service is designed the way it is.
+Core abstractions and mental models for working with the Notification Service.
 
 ## Channels
 
-A **channel** is a communication medium: `email`, `sms`, or `push`. Channels are the stable abstraction boundary in the service. The REST API, database schema, and internal interfaces are all organized by channel.
+A **channel** is a communication medium: `email`, `sms`, or `push`. The REST API and configuration are organized by channel.
 
-Each channel has exactly one **active provider** at any time. When you activate a provider for a channel, the service atomically deactivates any other provider on that same channel. This means consumers never need to specify *which* provider to use — they just say "send an email" and the service routes to whatever is active.
+Each channel has exactly one **active provider** at any time. When you activate a provider for a channel, any previously active provider on that channel is automatically deactivated. Consumers never specify which provider to use — they just say "send an email" and the service routes to whatever is active.
 
 ```
 Channel           Active Provider
 ─────────         ───────────────
 email      ──▶    ACS Email
 sms        ──▶    ACS SMS
-push       ──▶    (none — Phase 2)
+push       ──▶    (none — planned)
 ```
 
-## Provider Adapters
+## Providers
 
-A **provider adapter** implements the channel interface for a specific cloud service. Each adapter translates the normalized notification request into the provider's SDK format and maps the provider's response back to a standard `SendResult`.
+A **provider** is a cloud service that handles actual message delivery for a channel. The Notification Service ships with Azure Communication Services (ACS) support for email and SMS. The architecture supports adding providers like SendGrid, Twilio, or AWS SES/SNS without changing the API.
 
-Currently shipped adapters:
+Currently available providers:
 
-| Adapter | Channel | Provider | SDK |
-|---------|---------|----------|-----|
-| `AcsEmailAdapter` | email | Azure Communication Services | `@azure/communication-email` |
-| `AcsSmsAdapter` | sms | Azure Communication Services | `@azure/communication-sms` |
+| Provider | Channels | Description |
+|----------|----------|-------------|
+| ACS | email, sms | Azure Communication Services |
 
-The adapter architecture is designed for extension. Adding a new provider (e.g., SendGrid for email) requires:
+### Switching Providers
 
-1. Implementing `IEmailProvider` or `ISmsProvider`
-2. Registering the adapter factory in the Channel Dispatcher
-3. Creating a provider config via the admin API
+Switching providers is a configuration change, not a code change:
 
-No changes to the REST API, database schema, or existing consumers.
+1. Create a new provider config via the admin API
+2. Validate that the credentials work
+3. Activate it — the previous provider is atomically deactivated
 
-### Adapter Lifecycle
-
-```
-Admin creates provider config
-        │
-        ▼
-Consumer sends first request for that channel
-        │
-        ▼
-Channel Dispatcher fetches active provider config from DB
-        │
-        ▼
-Adapter factory creates adapter instance (constructor validates credentials)
-        │
-        ▼
-Adapter is cached in memory (cleared on provider activation/deactivation)
-        │
-        ▼
-Subsequent requests reuse cached adapter (no DB lookup)
-```
-
-Adapters are cached per-channel. The cache is cleared whenever a provider is activated, deactivated, updated, or deleted through the admin API.
+All subsequent sends use the new provider. No consumer changes needed.
 
 ## Credential Model
 
-The Notification Service never stores actual secrets in the database. Instead, it uses an **env var reference** pattern:
+The Notification Service separates credential configuration from credential storage:
 
-```
-┌─────────────────────────────────────────────┐
-│ Database (provider_configs table)            │
-│                                             │
-│   secretEnvVars: {                          │
-│     "connectionString": "ACS_CONN_STRING"   │  ← env var NAME, not the value
-│   }                                         │
-└──────────────────────┬──────────────────────┘
-                       │
-                       ▼ at runtime
-┌─────────────────────────────────────────────┐
-│ Adapter Constructor                         │
-│                                             │
-│   const value = process.env["ACS_CONN_STRING"]  │  ← resolves actual secret
-│   new EmailClient(value)                    │
-└─────────────────────────────────────────────┘
-```
+- The **admin API** stores the *name* of the environment variable that holds each secret (e.g., `"connectionString": "ACS_CONNECTION_STRING"`)
+- The **runtime environment** holds the actual secret values (via Kubernetes Secrets, Helm values, or environment configuration)
 
-This approach means:
-- The admin API can configure *which* env var to use without touching secrets
-- Secrets live in Kubernetes Secrets, Helm values, or `.env` files — never in the database
-- Rotating a credential means updating the environment variable; no DB migration needed
-- The validate endpoint (`POST /admin/providers/:id/validate`) checks that required env vars are actually set
+This means:
+- Secrets never appear in API responses or database records
+- You can rotate credentials by updating the environment variable — no service reconfiguration needed
+- The `validate` endpoint confirms that required environment variables are present and credentials work
 
 ### Provider Config Structure
 
-Each provider config has two JSON fields:
+Each provider config has two configuration objects:
 
 | Field | Contains | Example |
 |-------|----------|---------|
 | `config` | Non-sensitive settings | `{"senderAddress": "noreply@example.azurecomm.net"}` |
-| `secretEnvVars` | Env var name mappings | `{"connectionString": "ACS_CONNECTION_STRING"}` |
+| `secretEnvVars` | Environment variable name mappings | `{"connectionString": "ACS_CONNECTION_STRING"}` |
 
-The `config` field is safe to display in dashboards. The `secretEnvVars` field maps logical credential names to environment variable names that hold the actual secrets.
+The `config` field is safe to display in dashboards. The `secretEnvVars` field maps logical names to environment variable names — it does not contain actual secrets.
 
 ## Idempotency
 
-Every send request requires a client-provided `idempotencyKey`. This key is the client's guarantee of exactly-once delivery semantics.
+Every send request requires a client-provided `idempotencyKey`. This guarantees exactly-once delivery: if the same key is sent twice, the second request returns the original result without resending.
 
 ### How It Works
 
-The service uses a **database-level** idempotency mechanism:
+- First request with a given key: the message is sent and the result is recorded
+- Subsequent requests with the same key: the stored result is returned immediately (HTTP 200 instead of 202)
 
-```sql
-INSERT INTO notification.send_log (id, idempotency_key, ...)
-VALUES ($1, $2, ...)
-ON CONFLICT (idempotency_key) DO NOTHING
-RETURNING *
-```
-
-- If the insert succeeds (new key), the notification is dispatched to the provider
-- If the insert finds a conflict (duplicate key), the existing row is returned without sending again
-
-This is **race-safe**: even if two concurrent requests arrive with the same key, the database unique constraint guarantees only one insert succeeds. The other gets back the existing result.
+This is safe under concurrency — even if two requests with the same key arrive simultaneously, only one message is sent.
 
 ### Choosing Idempotency Keys
 
-Good idempotency keys are deterministic and scoped to the business action:
+Good keys are deterministic and scoped to the business action:
 
 | Pattern | Example | Why |
 |---------|---------|-----|
@@ -127,7 +80,7 @@ Good idempotency keys are deterministic and scoped to the business action:
 | `{workflow}-{step}-{run}` | `invoice-notify-run-abc` | Prevents duplicate invoice notifications |
 | `{caller}-{timestamp}-{hash}` | `bot-17-2024-01-15-a3f2` | Scoped to a specific bot invocation |
 
-Bad patterns: UUIDs (always unique, defeats the purpose), empty strings, or overly broad keys.
+Avoid random UUIDs as idempotency keys — they're always unique, which defeats the purpose.
 
 ## Send Result and Status Model
 
@@ -144,58 +97,38 @@ Every send request returns a `SendResult`:
 }
 ```
 
-### Status Transitions
+### Status Values
 
-```
-accepted ──▶ sent     (provider confirmed acceptance)
-         ──▶ failed   (provider rejected or timeout)
+| Status | Meaning |
+|--------|---------|
+| `accepted` | Request received, send in progress |
+| `sent` | Provider accepted the message for delivery |
+| `failed` | Send attempt failed (see `error` field) |
+| `delivered` | Recipient confirmed delivery (planned — via provider webhooks) |
+| `bounced` | Message bounced (planned — via provider webhooks) |
 
-Phase 2 additions:
-sent     ──▶ delivered (webhook confirmation)
-         ──▶ bounced   (webhook bounce notification)
-```
+### HTTP Response Codes
 
-| Status | Meaning | When |
-|--------|---------|------|
-| `accepted` | Request received, send in progress | Immediately after insert |
-| `sent` | Provider accepted the message | After successful provider API call |
-| `failed` | Send attempt failed | Provider error, timeout, or invalid recipient |
-| `delivered` | Recipient confirmed delivery | Phase 2: via provider webhook |
-| `bounced` | Message bounced | Phase 2: via provider webhook |
-
-The HTTP response code reflects the outcome:
 - `202 Accepted` — New notification dispatched
-- `200 OK` — Duplicate idempotency key, returning existing result
+- `200 OK` — Duplicate idempotency key; returning existing result
 
 ## Error Classification
 
 Provider-specific errors are normalized into a standard set of error codes:
 
-| Code | Meaning | Typical Cause |
-|------|---------|---------------|
-| `VALIDATION_ERROR` | Bad request body | Missing required fields, invalid format |
-| `CHANNEL_DISABLED` | No active provider | Channel has no activated provider config |
-| `AUTHENTICATION_FAILED` | Provider auth error | Wrong connection string or expired credentials |
-| `RATE_LIMITED` | Provider throttling | Too many requests to provider |
-| `INVALID_RECIPIENT` | Bad address/number | Malformed email or phone number |
-| `PROVIDER_ERROR` | Unclassified failure | Provider SDK error not matching above categories |
-| `MISSING_CREDENTIALS` | Env var not set | `secretEnvVars` references an unset env var |
-
-## Channel Dispatcher
-
-The Channel Dispatcher is the internal routing engine. It:
-
-1. Resolves the active provider for the requested channel
-2. Creates (or retrieves cached) adapter instances
-3. Handles idempotency via the send log
-4. Delegates to the adapter for actual delivery
-5. Updates the send log with the result
-
-The dispatcher caches adapter instances in memory. The cache is keyed by channel and cleared when any provider config changes via the admin API.
+| Code | Meaning |
+|------|---------|
+| `VALIDATION_ERROR` | Request body failed validation (missing fields, invalid format) |
+| `CHANNEL_DISABLED` | No active provider configured for the requested channel |
+| `AUTHENTICATION_FAILED` | Provider credentials invalid or expired |
+| `RATE_LIMITED` | Provider is throttling requests |
+| `INVALID_RECIPIENT` | Provider rejected the recipient address or phone number |
+| `PROVIDER_ERROR` | Unclassified provider failure |
+| `MISSING_CREDENTIALS` | Required environment variable is not set |
 
 ## Related
 
-- [Getting Started](./getting-started.md) — Step-by-step tutorial
+- [Getting Started](./getting-started.md) — Send your first email
 - [Reference](./reference.md) — Complete API reference
-- [Operations](./operations.md) — Admin workflows and troubleshooting
-- [Overview](./README.md) — Service overview and architecture
+- [Operations](./operations.md) — Provider management and troubleshooting
+- [Overview](./README.md) — Service overview
