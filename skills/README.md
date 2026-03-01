@@ -12,6 +12,16 @@ AI assistant skills that help developers work with the FireFoundry platform. The
 | **ff-local-dev** | Setting up your local FireFoundry development environment from scratch |
 | **ff-agent-sdk** | Writing TypeScript code with the FireFoundry Agent SDK (entities, bots, workflows) |
 
+### Development Workflows
+
+| Skill | Description |
+|-------|-------------|
+| **ff-create-bundle** | Scaffold and implement a FireFoundry agent bundle (SDK v4) |
+| **ff-add-bot** | Add a bot with prompt templates to an existing agent bundle (SDK v4) |
+| **ff-add-entity** | Add a domain entity to an existing agent bundle (SDK v4) |
+| **ff-deploy-local** | Build, deploy, and verify an agent bundle on local minikube |
+| **ff-setup-cluster** | Bootstrap a local FireFoundry cluster from scratch |
+
 ### Debugging
 
 | Skill | Description |
@@ -48,6 +58,11 @@ mkdir -p ~/.claude/skills
 cp -r ff-cli ~/.claude/skills/
 cp -r ff-local-dev ~/.claude/skills/
 cp -r ff-agent-sdk ~/.claude/skills/
+cp -r ff-create-bundle ~/.claude/skills/
+cp -r ff-add-bot ~/.claude/skills/
+cp -r ff-add-entity ~/.claude/skills/
+cp -r ff-deploy-local ~/.claude/skills/
+cp -r ff-setup-cluster ~/.claude/skills/
 cp -r ff-eg-read ~/.claude/skills/
 cp -r ff-diagnostics ~/.claude/skills/
 cp -r ff-telemetry-read ~/.claude/skills/

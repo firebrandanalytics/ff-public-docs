@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILLS=(ff-cli ff-local-dev ff-agent-sdk ff-eg-read ff-diagnostics ff-telemetry-read)
+SKILLS=(ff-cli ff-local-dev ff-agent-sdk ff-create-bundle ff-add-bot ff-add-entity ff-deploy-local ff-setup-cluster ff-eg-read ff-diagnostics ff-telemetry-read)
 
 CLAUDE_ONLY=false
 CURSOR_ONLY=false
