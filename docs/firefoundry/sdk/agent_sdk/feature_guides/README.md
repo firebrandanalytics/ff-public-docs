@@ -32,6 +32,12 @@ Each guide assumes familiarity with the basic Entity-Bot-Prompt architecture cov
 
 - **[Chat History](../guides/chat-history.md)** - Give bots access to full conversation history from the entity graph using `ChatHistoryBotMixin`. Covers the default `simple_chat` mapping, custom entity model mappings, token budget management, and combining with other mixins.
 
+### Data Validation
+
+- **[Data Validation Overview](data-validation-overview.md)** - Architectural overview of the decorator-based validation library: coercion, normalization, AI transformation, conditional logic, and two execution engines. Start here to understand which decorator category to use and how the library integrates with bots and entities.
+
+- **[Validation Integration Patterns](validation-integration-patterns.md)** - Practical patterns for using the validation library within agent bundles, including post-processing bot output, entity input normalization, and AI-powered correction.
+
 ### Advanced Capabilities
 
 - **[Vector Similarity](vector-similarity-quickstart.md)** - Add semantic search capabilities to your entities with pre-computed embeddings, similarity matching, and the new gRPC broker integration for embedding generation.
