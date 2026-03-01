@@ -60,7 +60,7 @@ This class is three things at once:
 
 The class is the single source of truth. The agent bundle validates with it. The frontend renders with it. The database stores and reconstructs it. When a field changes, you change the decorator -- not a dozen files.
 
-This is what FireFoundry's [validation library](../../utils/validation/README.md) provides: a decorator-based system for defining data classes that validate, coerce, serialize, and reconstruct themselves. The decorators handle the boring parts (trimming strings, parsing currencies, fuzzy-matching against catalogs) so your application code works with clean, typed, trustworthy data.
+This is what FireFoundry's [validation library](../../../utils/validation/README.md) provides: a decorator-based system for defining data classes that validate, coerce, serialize, and reconstruct themselves. The decorators handle the boring parts (trimming strings, parsing currencies, fuzzy-matching against catalogs) so your application code works with clean, typed, trustworthy data.
 
 ## What This Tutorial Is
 
@@ -152,7 +152,7 @@ The complete source code is available in the [ff-demo-apps-validation](https://g
 
 ## Further Reading
 
-- [Validation Library Reference](../../utils/validation/README.md) -- full decorator API reference, engine modes, and advanced patterns
+- [Validation Library Reference](../../../utils/validation/README.md) -- full decorator API reference, engine modes, and advanced patterns
 - [News Analysis Tutorial](../news-analysis/README.md) -- web search + AI analysis agent bundle with GUI
 - [Report Generator Tutorial](../report-generator/README.md) -- advanced entity/bot/prompt stack
 

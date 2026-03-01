@@ -1,3 +1,5 @@
+> **DEPRECATED** — See the [current tutorial](../../../agent_sdk/tutorials/catalog-intake/README.md).
+
 # Part 8: Engine Deep Dive
 
 Understand how the validation engine resolves property dependencies, when to choose convergent vs. single-pass execution, and how to diagnose problems using `supplier_validation_runs`.

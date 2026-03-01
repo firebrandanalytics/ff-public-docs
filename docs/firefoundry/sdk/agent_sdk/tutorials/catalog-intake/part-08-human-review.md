@@ -47,7 +47,7 @@ export class ManualEntryWorkflow extends RunnableEntity<any> {
       ...dto.data,
       source_type: 'manual',
       status: 'draft',
-      validated_product: (validated as any).toJSON(),
+      validated_product: validated,
       validation_trace: validationFactory.getLastTrace?.() ?? null,
     });
 
@@ -410,7 +410,7 @@ Every product follows this flow. The validation pipeline is the single source of
 
 ## What's Next
 
-In [Part 9: AI-Powered Extraction](./part-09-ai-extraction.md), we'll add the third supplier -- one that sends PDF catalogs instead of structured data. You'll use `@AIExtract` and `@AIClassify` decorators to pull typed product fields out of unstructured text.
+In [Part 9: AI-Powered Extraction](./part-09-ai-extraction.md), we'll add the third supplier -- one that sends PDF catalogs instead of structured data. You'll use a remote extraction bot to produce structured JSON from the PDF, then `@AIClassify` and `@AITransform` decorators to improve the extracted fields within the validation pipeline.
 
 ---
 

@@ -1,3 +1,5 @@
+> **DEPRECATED** — See the [current tutorial](../../../agent_sdk/tutorials/catalog-intake/README.md).
+
 # Part 10: Recovery + Async Validation
 
 Build resilient validation pipelines with graceful error recovery, AI-powered repair, and asynchronous validation against live services.

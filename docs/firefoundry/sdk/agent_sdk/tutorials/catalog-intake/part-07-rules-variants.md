@@ -1,6 +1,6 @@
 # Part 7: Business Rules & Nested Variants
 
-Hiking shoes come in half sizes -- 7, 7.5, 8, 8.5. Basketball shoes are whole sizes only -- 8, 9, 10. Casual shoes have W-width variants. A single `@ValidatePattern` on `size_format` can't handle all three. You need conditional validation that branches based on category, cross-field rules that catch negative margins before they hit the database, and nested variant arrays where each size/color/SKU combination gets its own validation. That's what this part adds.
+Hiking shoes come in half sizes -- 7, 7.5, 8, 8.5. Basketball shoes are whole sizes only -- 8, 9, 10. Casual shoes have W-width variants. A single `@ValidatePattern` on `size_range` can't handle all three. You need conditional validation that branches based on category, cross-field rules that catch negative margins before they hit the database, and nested variant arrays where each size/color/SKU combination gets its own validation. That's what this part adds.
 
 **Starting point:** Completed code from [Part 6: Catalog Matching & Context](./part-06-catalog-matching.md). You should have a working pipeline with `@CoerceFromSet` fuzzy matching, `CatalogContext`, and DAS integration.
 
@@ -10,7 +10,7 @@ Hiking shoes come in half sizes -- 7, 7.5, 8, 8.5. Basketball shoes are whole si
 
 Open the product browser and look at a few validated products. The individual fields all pass their checks, but the data still has problems that single-field decorators can't catch:
 
-1. **Wrong size format.** A supplier submits `size_format: "7-13"` for a hiking shoe. Valid format, but hiking shoes need half sizes like `"7-13 (half)"`. Basketball shoes need whole sizes only. The correct pattern depends on the category.
+1. **Wrong size format.** A supplier submits `size_range: "7-13"` for a hiking shoe. Valid format, but hiking shoes need half sizes like `"7-13 (half)"`. Basketball shoes need whole sizes only. The correct pattern depends on the category.
 
 2. **Negative margins.** `base_cost: 89.99` and `msrp: 79.99` both pass their own numeric validations. But the business loses money on every sale. You need a rule that compares two fields.
 
@@ -34,10 +34,10 @@ The `@If` / `@Else` / `@EndIf` decorators let you branch the validation pipeline
 @EndIf()
 @Copy()
 @CoerceTrim()
-size_format!: string;
+size_range!: string;
 ```
 
-When `category` resolves to `'hiking'`, only the half-size pattern runs. For everything else, the `@Else` branch enforces whole numbers. The engine automatically resolves `category` before evaluating `size_format` -- you don't need to manage field ordering.
+When `category` resolves to `'hiking'`, only the half-size pattern runs. For everything else, the `@Else` branch enforces whole numbers. The engine automatically resolves `category` before evaluating `size_range` -- you don't need to manage field ordering.
 
 ### Predicate conditions
 

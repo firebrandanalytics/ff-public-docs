@@ -161,7 +161,7 @@ export class PdfExtractionWorkflow extends Workflow {
     const validated = [];
     for (const product of extracted) {
       const result = await factory.create(SupplierProductV3, product);
-      validated.push(result.toJSON());
+      validated.push(result);
     }
 
     // AI-extracted products default to 'review' -- they need human eyes

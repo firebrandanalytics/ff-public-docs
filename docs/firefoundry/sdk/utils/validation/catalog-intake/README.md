@@ -1,4 +1,12 @@
-# FireKicks Catalog Intake — Validation Library Tutorial
+> **DEPRECATED** — This 11-part outline has been superseded by the
+> [Catalog Intake Tutorial](../../../agent_sdk/tutorials/catalog-intake/README.md)
+> under `sdk/agent_sdk/tutorials/catalog-intake/`. The new 10-part tutorial
+> covers every validation library feature demonstrated here, integrated into a
+> working agent bundle with a Next.js GUI and entity graph storage. Use the new
+> tutorial for all new readers. This outline is preserved for historical
+> reference only.
+
+# FireKicks Catalog Intake — Validation Library Tutorial (Archived)
 
 An 11-part tutorial demonstrating the `@firebrandanalytics/shared-utils/validation` decorator library through a real-world supplier product catalog intake application built on the FireKicks dataset.
 

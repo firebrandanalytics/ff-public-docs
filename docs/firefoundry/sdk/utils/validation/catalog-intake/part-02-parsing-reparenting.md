@@ -1,3 +1,5 @@
+> **DEPRECATED** — See the [current tutorial](../../../agent_sdk/tutorials/catalog-intake/README.md).
+
 # Part 2: Parsing + Reparenting
 
 Handle multiple supplier formats by parsing currency strings, extracting values from nested payloads, and enforcing field patterns.

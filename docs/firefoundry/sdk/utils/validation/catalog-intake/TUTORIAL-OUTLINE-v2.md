@@ -1,4 +1,7 @@
-# Catalog Intake Tutorial — Restructured Outline (v2)
+> **DEPRECATED** — This outline has been superseded by the
+> [Catalog Intake Tutorial](../../../agent_sdk/tutorials/catalog-intake/README.md).
+
+# Catalog Intake Tutorial — Restructured Outline (v2, Archived)
 
 > **Audience:** Developer building their first FireFoundry agent bundle with a real GUI.
 >

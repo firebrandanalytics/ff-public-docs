@@ -1,4 +1,6 @@
-# Catalog Intake — Architecture & Design
+> **DEPRECATED** — See the [current tutorial](../../../agent_sdk/tutorials/catalog-intake/README.md).
+
+# Catalog Intake — Architecture & Design (Archived)
 
 This document describes the architecture, data model, and tutorial progression for the FireKicks Catalog Intake demo application.
 
