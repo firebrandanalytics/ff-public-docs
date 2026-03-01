@@ -302,4 +302,4 @@ Raw supplier data goes in -- messy, inconsistent, sometimes broken. Typed, valid
 
 ---
 
-**Previous:** [Part 9: AI-Powered Extraction](./part-09-ai-extraction.md)
+**Previous:** [Part 9: AI-Powered Extraction](./part-09-ai-extraction.md) | **Next:** [Part 12: Data Wrangling Service Integration](./part-12-data-wrangling.md)

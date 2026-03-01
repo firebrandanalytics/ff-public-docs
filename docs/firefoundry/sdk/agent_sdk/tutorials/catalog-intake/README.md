@@ -125,6 +125,7 @@ A shared type package (`shared-types`) with:
 | [8](./part-08-human-review.md) | Human Review Workflow | Entity states, approval flow, inline editing, review queue GUI |
 | [9](./part-09-ai-extraction.md) | AI-Powered Extraction | `@AITransform`, `@AIClassify`, remote bot, two AI modalities |
 | [10](./part-10-recovery-production.md) | Recovery & Production Hardening | `@Catch`, `@AICatchRepair`, `@ValidateAsync`, `@UseStyle`, engine modes |
+| [12](./part-12-data-wrangling.md) | Data Wrangling Service Integration | `WrangleSpec`, `compileWrangleSpec()`, declarative column rules, fuzzy matching, three usage modes |
 
 ## Architecture Overview
 
