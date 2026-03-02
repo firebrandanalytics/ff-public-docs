@@ -496,17 +496,17 @@ Detailed documentation for each service:
 ### Tier 1: Core Runtime Services
 - [FF Broker](./ff-broker/README.md) - AI model routing and orchestration with industrial-scale subsystems
 - [Context Service](./context-service/README.md) - Working memory, blob storage, and chat history
-- [Code Sandbox](./code-sandbox.md) - Secure code execution environment
+- [Code Sandbox](./code-sandbox/README.md) - Secure code execution environment
 
 ### Tier 2: Extended Services
 - [Data Access Service](./data-access/README.md) - Multi-database SQL access with AST queries, staged federation, and scratch pad
-- [Entity Service](./entity-service.md) - Entity graph with vector search
-- [Document Processing Service](./doc-proc-service.md) - Document operations
+- [Entity Service](./entity-service/README.md) - Entity graph with vector search
+- [Document Processing Service](./doc-proc-service/README.md) - Document operations
 - [Virtual Worker Manager](./virtual-workers/README.md) - CLI coding agent orchestration with managed sessions
 
 ### Tier 3: Supporting Services
 - [Document Processing Python Worker](./doc-proc-pyworker.md) - ML-based processing
-- [Web Search Service](./web-search.md) - Provider-agnostic web search with Bing
+- [Web Search Service](./web-search/README.md) - Provider-agnostic web search with Bing
 
 ## Monitoring and Observability
 
