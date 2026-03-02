@@ -166,4 +166,4 @@ ff-eg-admin stats | jq '.graphs[] | "\(.name): \(.node_count) nodes, \(.edge_cou
 
 - [ff-eg-read](ff-eg-read.md) — Read-only entity graph queries
 - [ff-eg-write](ff-eg-write.md) — Entity graph write operations (create, update, archive)
-- [Entity Service](../../platform/services/entity-service.md) — Platform service documentation
+- [Entity Service](../../platform/services/entity-service/README.md) — Platform service documentation
