@@ -22,13 +22,18 @@ FireFoundry provides a set of CLI tools for interacting with the platform during
 | Tool | Purpose | Docs |
 |------|---------|------|
 | [ff-wm-read](ff-wm-read.md) | Retrieve records, blobs, manifests, and chat history | Read-only |
+| [ff-wm-write](ff-wm-write.md) | Create records and upload blobs to working memory | Write access |
+
+### Telemetry & Observability
+
+| Tool | Purpose | Docs |
+|------|---------|------|
+| [ff-telemetry-read](ff-telemetry-read.md) | Query broker requests, LLM calls, tool invocations, and request traces | Read-only |
 
 ### Additional Tools (documentation coming soon)
 
 | Tool | Purpose |
 |------|---------|
-| ff-wm-write | Write records and upload blobs to working memory |
-| ff-telemetry-read | Query broker requests, LLM calls, and request traces |
 | ff-brk | Send chat completion requests to the broker service |
 | ff-da | Query databases and inspect schemas through the Data Access Service |
 | ff-eg-admin | Admin operations for hard deletes and graph diagnostics |
@@ -41,7 +46,9 @@ All tools are published as npm packages under the `@firebrandanalytics` scope:
 npm install -g @firebrandanalytics/ff-eg-read
 npm install -g @firebrandanalytics/ff-eg-write
 npm install -g @firebrandanalytics/ff-wm-read
+npm install -g @firebrandanalytics/ff-wm-write
 npm install -g @firebrandanalytics/ff-sdk-cli
+npm install -g @firebrandanalytics/ff-telemetry-read
 ```
 
 ## Configuration
@@ -52,9 +59,15 @@ All tools auto-configure from environment variables or a `.env` file in the curr
 |----------|---------|---------|
 | `FF_EG_URL` | Entity Graph service URL | ff-eg-read, ff-eg-write |
 | `FF_WM_URL` | Working Memory service URL | ff-wm-read |
+| `FF_GATEWAY` | Kong gateway URL | ff-wm-write |
+| `FF_API_KEY` | Kong API key for authentication | ff-wm-write |
+| `FF_NAMESPACE` | Kubernetes namespace | ff-wm-write |
 | `FF_SDK_URL` | Agent Bundle server URL | ff-sdk-cli |
 | `FF_SDK_API_KEY` | API key for agent bundle auth | ff-sdk-cli |
 | `FF_AGENT_BUNDLE_ID` | Agent bundle ID for scoped queries | ff-eg-read |
+| `PG_HOST` / `PG_SERVER` | PostgreSQL host for telemetry database | ff-telemetry-read |
+| `PG_PASSWORD` | PostgreSQL password | ff-telemetry-read |
+| `PG_DATABASE` | PostgreSQL database name | ff-telemetry-read |
 
 For local development with `ff-cli`, these variables are typically set in the `.env` file created by `ff-cli ops deploy`.
 
