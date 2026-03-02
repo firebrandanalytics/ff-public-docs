@@ -196,7 +196,7 @@ export class ReportBundleAgentBundle extends FFAgentBundle<any> {
 
     // 1. Create the workflow entity
     const entity = await this.entity_factory.create_entity_node({
-      app_id: this.get_app_id(),
+      app_id: APP_ID,
       name: `report-${Date.now()}`,
       specific_type_name: 'ReportReviewWorkflowEntity',
       general_type_name: 'ReportReviewWorkflowEntity',
@@ -259,7 +259,7 @@ export class ReportBundleAgentBundle extends FFAgentBundle<any> {
 - The method creates the entity, stores the uploaded document in working memory via `WorkingMemoryProvider`, updates the entity's data with the working memory ID, and starts the workflow iterator in the background.
 - The response returns immediately with the `entity_id`. Clients poll the status endpoint to track progress.
 
-Note the `app_id: this.get_app_id()` -- this associates the entity with this agent bundle so it can be found and managed later.
+Note the `app_id: APP_ID` -- this uses the constant defined at the top of the file to associate the entity with this agent bundle so it can be found and managed later.
 
 ### Working Memory in the Bundle
 
@@ -402,7 +402,7 @@ export class ReportBundleAgentBundle extends FFAgentBundle<any> {
 
     // 1. Create the workflow entity
     const entity = await this.entity_factory.create_entity_node({
-      app_id: this.get_app_id(),
+      app_id: APP_ID,
       name: `report-${Date.now()}`,
       specific_type_name: 'ReportReviewWorkflowEntity',
       general_type_name: 'ReportReviewWorkflowEntity',
