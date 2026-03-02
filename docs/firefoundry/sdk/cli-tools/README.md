@@ -24,30 +24,43 @@ FireFoundry provides a set of CLI tools for interacting with the platform during
 | [ff-wm-read](ff-wm-read.md) | Retrieve records, blobs, manifests, and chat history | Read-only |
 | [ff-wm-write](ff-wm-write.md) | Create records and upload blobs to working memory | Write access |
 
+### Broker & LLM
+
+| Tool | Purpose | Docs |
+|------|---------|------|
+| [ff-brk](ff-brk.md) | Send chat completion requests to the broker service, test model pools | CLI reference |
+
+### Data Access
+
+| Tool | Purpose | Docs |
+|------|---------|------|
+| [ff-da](ff-da.md) | Query databases, inspect schemas, access dictionary/ontology/process metadata | CLI reference |
+
 ### Telemetry & Observability
 
 | Tool | Purpose | Docs |
 |------|---------|------|
 | [ff-telemetry-read](ff-telemetry-read.md) | Query broker requests, LLM calls, tool invocations, and request traces | Read-only |
 
-### Additional Tools (documentation coming soon)
+### Admin
 
-| Tool | Purpose |
-|------|---------|
-| ff-brk | Send chat completion requests to the broker service |
-| ff-da | Query databases and inspect schemas through the Data Access Service |
-| ff-eg-admin | Admin operations for hard deletes and graph diagnostics |
+| Tool | Purpose | Docs |
+|------|---------|------|
+| [ff-eg-admin](ff-eg-admin.md) | Hard-delete nodes/edges and graph diagnostics (requires admin API key) | Admin access |
 
 ## Installation
 
 All tools are published as npm packages under the `@firebrandanalytics` scope:
 
 ```bash
+npm install -g @firebrandanalytics/ff-sdk-cli
 npm install -g @firebrandanalytics/ff-eg-read
 npm install -g @firebrandanalytics/ff-eg-write
+npm install -g @firebrandanalytics/ff-eg-admin
 npm install -g @firebrandanalytics/ff-wm-read
 npm install -g @firebrandanalytics/ff-wm-write
-npm install -g @firebrandanalytics/ff-sdk-cli
+npm install -g @firebrandanalytics/ff-brk
+npm install -g @firebrandanalytics/ff-da
 npm install -g @firebrandanalytics/ff-telemetry-read
 ```
 
@@ -65,6 +78,10 @@ All tools auto-configure from environment variables or a `.env` file in the curr
 | `FF_SDK_URL` | Agent Bundle server URL | ff-sdk-cli |
 | `FF_SDK_API_KEY` | API key for agent bundle auth | ff-sdk-cli |
 | `FF_AGENT_BUNDLE_ID` | Agent bundle ID for scoped queries | ff-eg-read |
+| `FF_BROKER_HOST` | Broker service host | ff-brk |
+| `FF_BROKER_PORT` | Broker service gRPC port | ff-brk |
+| `FF_DATA_SERVICE_URL` | Data Access Service URL | ff-da |
+| `FF_EG_ADMIN_API_KEY` | Admin API key for entity graph | ff-eg-admin |
 | `PG_HOST` / `PG_SERVER` | PostgreSQL host for telemetry database | ff-telemetry-read |
 | `PG_PASSWORD` | PostgreSQL password | ff-telemetry-read |
 | `PG_DATABASE` | PostgreSQL database name | ff-telemetry-read |
