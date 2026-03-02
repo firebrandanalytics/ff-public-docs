@@ -18,9 +18,29 @@ ff-wm-read --help
 
 The tool auto-configures from environment variables or a `.env` file in the current working directory.
 
-| Variable | Purpose |
-|----------|---------|
-| `FF_WM_URL` | Working Memory service URL |
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `FF_WM_URL` | Working Memory service URL | `http://localhost:8080` |
+
+### Port-Forward Setup
+
+For remote Working Memory in Kubernetes:
+
+```bash
+kubectl port-forward -n ff-dev svc/ff-working-memory 8080:8080
+```
+
+## Quick Reference
+
+| Command | Purpose |
+|---------|---------|
+| `record get <id>` | Get a single record by ID |
+| `record list <entity-id>` | List all records for an entity |
+| `blob list <entity-id>` | List all blobs for an entity |
+| `blob get <key>` | Get blob content by storage key |
+| `blob content <wm-id>` | Get blob content by working memory ID |
+| `manifest <root-id>` | Get working memory manifest for a root node |
+| `chat-history <node-id>` | Get conversation logs for a node |
 
 ## Command Reference
 

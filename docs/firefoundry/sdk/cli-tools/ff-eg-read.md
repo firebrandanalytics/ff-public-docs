@@ -18,10 +18,44 @@ ff-eg-read node get --help
 
 The tool auto-configures from environment variables or a `.env` file in the current working directory.
 
-| Variable | Purpose |
-|----------|---------|
-| `FF_EG_URL` | Entity Graph service URL |
-| `FF_AGENT_BUNDLE_ID` | Agent bundle ID (for scoped searches) |
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `FF_EG_URL` | Entity Graph service URL | `http://localhost:8080` |
+| `FF_AGENT_BUNDLE_ID` | Agent bundle ID (for scoped searches) | |
+
+### Port-Forward Setup
+
+For remote Entity Graph in Kubernetes:
+
+```bash
+kubectl port-forward -n ff-dev svc/ff-entity-graph 8080:8080
+```
+
+## Quick Reference
+
+| Command | Purpose |
+|---------|---------|
+| `node get <id>` | Get a single node by ID |
+| `node get-batch <ids...>` | Get multiple nodes in one request |
+| `node get-by-name <name>` | Look up a node by name |
+| `node io <id>` | Get input/output data for a runnable |
+| `node progress <id>` | Get execution progress envelopes |
+| `node edges <id>` | Get all edges for a node |
+| `node edges-from <id>` | Get outgoing edges only |
+| `node edges-to <id>` | Get incoming edges only |
+| `node with-edges <id>` | Get node with all its edges |
+| `node connected <id> <type>` | Get connected nodes by edge type |
+| `node connected-udf <id> <type>` | Deep traversal to max depth |
+| `search nodes` | Global search across all bundles |
+| `search nodes-scoped` | Search within your agent bundle |
+| `search data` | Search by JSONB data |
+| `search reverse-connected <type> <id>` | Find parent nodes by edge type |
+| `search jsonpath <id> <type>` | JSONPath search on connected entities |
+| `count` | Count nodes matching conditions |
+| `exists <id>` | Check if a node exists |
+| `edge-types` | List distinct edge type names |
+| `vector similar <id>` | Find similar nodes by embedding |
+| `vector search-embedding` | Search by raw embedding vector |
 
 ## Command Reference
 
@@ -397,4 +431,4 @@ ff-eg-read node progress <caller-entity-id>
 - [ff-eg-write](ff-eg-write.md) — Write operations (create, update, delete)
 - [ff-sdk-cli](ff-sdk-cli.md) — Invoke entity methods on running agent bundles
 - [ff-wm-read](ff-wm-read.md) — Read working memory (files, records)
-- [Entity Service](../../platform/services/entity-service.md) — Platform service documentation
+- [Entity Service](../../platform/services/entity-service/README.md) — Platform service documentation

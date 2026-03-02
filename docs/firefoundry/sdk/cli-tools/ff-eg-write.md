@@ -21,10 +21,31 @@ ff-eg-write node --help
 
 The tool auto-configures from environment variables or a `.env` file in the current working directory.
 
-| Variable | Purpose |
-|----------|---------|
-| `FF_EG_URL` | Entity Graph service URL |
-| `FF_AGENT_BUNDLE_ID` | Agent bundle ID |
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `FF_EG_URL` | Entity Graph service URL | `http://localhost:8080` |
+| `FF_AGENT_BUNDLE_ID` | Agent bundle ID | |
+
+### Port-Forward Setup
+
+For remote Entity Graph in Kubernetes:
+
+```bash
+kubectl port-forward -n ff-dev svc/ff-entity-graph 8080:8080
+```
+
+## Quick Reference
+
+| Command | Purpose |
+|---------|---------|
+| `node create` | Create a new entity |
+| `node update <id>` | Update entity properties |
+| `node delete <id>` | Delete an entity |
+| `node set-status <id> <status>` | Change entity status |
+| `edge create <from> <to> <type>` | Create a relationship between entities |
+| `edge delete <from> <to> <type>` | Delete a relationship |
+| `recovery reset-runnable <id>` | Reset a stuck runnable entity |
+| `recovery clear-progress <id>` | Clear progress envelopes |
 
 ## Command Reference
 
@@ -192,4 +213,4 @@ ff-eg-read node get <entity-id> | jq '{status}'
 
 - [ff-eg-read](ff-eg-read.md) — Read operations (always read before writing)
 - [ff-sdk-cli](ff-sdk-cli.md) — Invoke entity methods on running agent bundles
-- [Entity Service](../../platform/services/entity-service.md) — Platform service documentation
+- [Entity Service](../../platform/services/entity-service/README.md) — Platform service documentation
