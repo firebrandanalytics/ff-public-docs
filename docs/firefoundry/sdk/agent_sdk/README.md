@@ -121,6 +121,8 @@ The XML DSL system provides four domain-specific languages that let you define p
 ## Reference Guides
 
 - **[Core Decorators Reference](guides/core-decorators-reference.md)** - Complete reference for all SDK decorators (`@EntityMixin`, `@RegisterBot`, `@ApiEndpoint`, and more)
+- **[Entity Lifecycle & Patterns](guides/entity-lifecycle-patterns.md)** - Mixin composition, lifecycle hooks, control flow helpers, and common entity patterns
+- **[Prompt Patterns Cookbook](guides/prompt-patterns-cookbook.md)** - Practical recipes for building prompts: conditionals, schemas, iteration, working memory, and more
 
 ---
 
