@@ -22,13 +22,16 @@ FireFoundry treats **entities** as persistent business objects in a graph, **bot
 
 ### For Beginners
 
-**1. Understand the Concepts** (15 minutes)
+**1. Quick-Start** (30 minutes)
+- **[SDK Quick-Start Guide](guides/sdk-quickstart.md)** - Scaffold, build, and deploy your first agent bundle end-to-end
+
+**2. Understand the Concepts** (15 minutes)
 - **[Core Concepts & Glossary](fire_foundry_core_concepts_glossary_agent_sdk.md)** - Mental models and terminology
 
-**2. Build Your First Application** (2-3 hours)
+**3. Build a Complete Application** (2-3 hours)
 - **[Getting Started Tutorial](agent_sdk_getting_started.md)** - Complete walkthrough building a News Article Impact Analyzer
 
-**3. Learn the Fundamentals** (4-6 hours)
+**4. Learn the Fundamentals** (4-6 hours)
 - **[Prompting Tutorial](core/prompting_tutorial.md)** - Learn the prompting framework
 - **[Bot Tutorial](core/bot_tutorial.md)** - Learn to build AI-powered bots
 - **[Agent Bundle Tutorial](core/agent_bundle_tutorial.md)** - Learn to structure and deploy applications
@@ -202,7 +205,7 @@ Practical how-to guides for specific capabilities. Use as needed for your use ca
 ## Quick Decision Tree
 
 **I'm completely new to FireFoundry**
-→ Start with [Getting Started Tutorial](agent_sdk_getting_started.md)
+→ Start with [SDK Quick-Start Guide](guides/sdk-quickstart.md), then [Getting Started Tutorial](agent_sdk_getting_started.md)
 
 **I want quick reference material**
 → Check [Core Concepts & Glossary](fire_foundry_core_concepts_glossary_agent_sdk.md)
