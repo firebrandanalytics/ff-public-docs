@@ -118,6 +118,12 @@ The XML DSL system provides four domain-specific languages that let you define p
 
 ---
 
+## Reference Guides
+
+- **[Core Decorators Reference](guides/core-decorators-reference.md)** - Complete reference for all SDK decorators (`@EntityMixin`, `@RegisterBot`, `@ApiEndpoint`, and more)
+
+---
+
 ## Feature Guides
 
 Learn specific capabilities and patterns for advanced use cases:
