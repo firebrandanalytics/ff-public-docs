@@ -124,6 +124,11 @@ The XML DSL system provides four domain-specific languages that let you define p
 - **[Entity Lifecycle & Patterns](guides/entity-lifecycle-patterns.md)** - Mixin composition, lifecycle hooks, control flow helpers, and common entity patterns
 - **[Prompt Patterns Cookbook](guides/prompt-patterns-cookbook.md)** - Practical recipes for building prompts: conditionals, schemas, iteration, working memory, and more
 
+## Production Guides
+
+- **[Testing Guide](guides/testing-guide.md)** - Unit testing bots and prompts, integration testing entities and workflows, mock factories, and test organization
+- **[Error Handling & Resilience](guides/error-handling-resilience.md)** - Bot retries, custom error handlers, workflow error propagation, validation errors, and defensive patterns
+
 ---
 
 ## Feature Guides
@@ -229,6 +234,12 @@ Practical how-to guides for specific capabilities. Use as needed for your use ca
 
 **I want to define bundles in XML instead of TypeScript**
 → Start with [XML DSL Getting Started](dsl/getting-started-tutorial.md)
+
+**I need to test my agent bundle**
+→ Read the [Testing Guide](guides/testing-guide.md)
+
+**My bot or workflow is failing and I need to handle errors**
+→ Read [Error Handling & Resilience](guides/error-handling-resilience.md)
 
 **I'm migrating from v2.x**
 → Check [v2.x → v3.0 Migration Guide](MIGRATION_v2_to_v3.md)
