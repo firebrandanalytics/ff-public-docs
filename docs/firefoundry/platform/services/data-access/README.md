@@ -56,6 +56,7 @@ The data dictionary (Layer 2) is particularly important for AI: it provides desc
 - **Admin API**: REST endpoints for connection CRUD, credential rotation, view management, annotation management, variable/mapping management, ontology management, and process management
 - **Dictionary Query API**: Non-admin read-only access to data dictionary with tag inclusion/exclusion, semantic type, and classification filters
 - **Named Entity Resolution (NER)**: Value stores with fuzzy matching engine — resolves user terms ("Microsoft") to database values ("MICROSOFT CORP") with ranked candidates, personalized scopes, and a learning loop
+- **Data Wrangling**: Go-native validation and transformation pipeline — WrangleSpec JSON definitions, column-level rules (type coercion, trim, case, currency parsing, fuzzy matching, pattern validation), built-in templates, spec storage, and CSV upload+wrangle in one step
 - **CSV Upload & Export**: Upload CSV files into scratch pads for ad-hoc analysis; export any query result or scratch pad table as CSV
 - **Audit API**: Query execution history with filtering by connection, identity, time range, slow queries, and error status
 - **Audit Logging**: All operations logged with identity, connection, SQL hash, and duration
@@ -136,6 +137,7 @@ Specialized databases with their own adapters:
 
 ## Guides & References
 
+- **[Data Wrangling](./wrangling.md)** — WrangleSpec format, column rules, built-in templates, API endpoints, scratch pad integration, and pipeline patterns
 - **[Regex Pattern Library](./regex-patterns.md)** — Curated, cross-database regex patterns for use with the AST `regex_match` expression: email, phone, financial, date/time, identifiers, URLs, and data quality checks
 
 ## Related
