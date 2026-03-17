@@ -920,6 +920,22 @@ Returns `201 Created` with the new provenance record. The table name is auto-gen
 | `managed_identity` | Azure/GCP managed identity |
 | `none` | No credentials (SQLite) |
 
+### Data Wrangling
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/admin/wrangle` | Process rows with inline WrangleSpec |
+| POST | `/admin/wrangle/scratch/{identity}` | Read from scratch pad, wrangle, write clean results to output table |
+| POST | `/admin/wrangle/csv` | Upload CSV + wrangle (multipart; spec via `spec`, `spec_id`, or `template`) |
+| GET | `/admin/wrangle/specs` | List stored specs (includes available template IDs) |
+| POST | `/admin/wrangle/specs` | Save/update a stored spec |
+| GET | `/admin/wrangle/specs/{id}` | Get a stored spec by ID |
+| DELETE | `/admin/wrangle/specs/{id}` | Delete a stored spec |
+| GET | `/admin/wrangle/templates` | List built-in templates |
+| GET | `/admin/wrangle/templates/{id}` | Get a built-in template spec |
+
+See [Data Wrangling Guide](./wrangling.md) for WrangleSpec format, column rules, templates, and usage examples.
+
 ### Health Endpoints
 
 | Endpoint | Auth | Description |
