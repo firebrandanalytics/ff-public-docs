@@ -128,6 +128,9 @@ The XML DSL system provides four domain-specific languages that let you define p
 
 - **[Testing Guide](guides/testing-guide.md)** - Unit testing bots and prompts, integration testing entities and workflows, mock factories, and test organization
 - **[Error Handling & Resilience](guides/error-handling-resilience.md)** - Bot retries, custom error handlers, workflow error propagation, validation errors, and defensive patterns
+- **[Deployment & Configuration](guides/deployment-configuration.md)** - `firefoundry.json` configuration, environment variables, Docker builds, Helm deployment, health checks, and resource tuning
+- **[Performance & Optimization](guides/performance-optimization.md)** - Prompt optimization, concurrency tuning, caching strategies, entity graph efficiency, and model pool selection
+- **[Monitoring & Debugging](guides/monitoring-debugging.md)** - Structured logging, entity status monitoring, telemetry analysis, diagnostic CLI tools, and failure debugging
 
 ---
 
@@ -240,6 +243,15 @@ Practical how-to guides for specific capabilities. Use as needed for your use ca
 
 **My bot or workflow is failing and I need to handle errors**
 → Read [Error Handling & Resilience](guides/error-handling-resilience.md)
+
+**I need to deploy my bundle to production**
+→ Read [Deployment & Configuration](guides/deployment-configuration.md)
+
+**My bundle is slow and I need to optimize it**
+→ Read [Performance & Optimization](guides/performance-optimization.md)
+
+**Something is broken in production and I need to debug it**
+→ Read [Monitoring & Debugging](guides/monitoring-debugging.md)
 
 **I'm migrating from v2.x**
 → Check [v2.x → v3.0 Migration Guide](MIGRATION_v2_to_v3.md)
