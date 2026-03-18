@@ -329,13 +329,33 @@ The registry enables:
 - **Type validation** — Only registered types can be created
 - **Edge validation** — `allowedConnections` is checked against registered types
 
-### Bot Registration is Global
+### The ComponentRegistry (Unified Singleton)
 
-Unlike entities (which are per-bundle), bots registered with `@RegisterBot` go into a global registry. Any entity in the bundle can reference any registered bot.
+All components funnel into the `ComponentRegistry` singleton, which manages six component kinds:
+
+| Kind | Registration Method | Description |
+|------|-------------------|-------------|
+| `entity` | Constructor map, `@EntityMixin` | Entity class constructors |
+| `bot` | `@RegisterBot`, imperative | Bot instances or factories |
+| `prompt` | `@RegisterPrompt`, imperative | Prompt instances or factories |
+| `bot-mixin` | XML DSL | Bot mixin extensions |
+| `agentml-program` | XML DSL | AgentML workflow programs |
+| `tool-handler` | XML DSL | Tool call handlers |
+
+**Three registration paths:**
+
+1. **Decorators** (preferred) — `@RegisterBot`, `@RegisterPrompt`, `@RegisterPromptGroup` register at class-definition time
+2. **Constructor map** (entities) — passed to `FFAgentBundle` constructor, registered in the constructor
+3. **XML DSL** — `botml`, `promptml`, `bundleml`, `agentml` loaders register with `source: 'xml'`. XML registrations can override code registrations.
+
+**Lookup at runtime:**
+- Bots: `ComponentRegistry.getInstance().getBotOrThrow(name)`
+- Prompts: `ComponentRegistry.getInstance().getPromptOrThrow(name)`
+- Entities: `EntityFactory` checks static constructors, then `ComponentRegistry`, then falls back to a generic "Class" constructor
 
 ### Prompt Registration is via Bots
 
-Prompts don't have their own registry — they're passed to bots via `PromptGroup` in the bot constructor.
+Prompts don't have their own registry by default — they're passed to bots via `PromptGroup` in the bot constructor. However, prompts can also be registered independently via `@RegisterPrompt` for reuse across multiple bots.
 
 ---
 

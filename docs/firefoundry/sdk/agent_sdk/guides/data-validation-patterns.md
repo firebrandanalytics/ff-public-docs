@@ -57,18 +57,32 @@ The most basic validator — reject `undefined`, `null`, and empty strings:
 import { ValidateRequired, CoerceTrim } from '@firebrandanalytics/shared-utils/validation';
 
 class OrderSubmission {
-  @CoerceTrim()
   @ValidateRequired()
+  @CoerceTrim()
   customer_name: string;
 
   @ValidateRequired()
   order_date: string;
 
-  @CoerceType('number')
   @ValidateRequired()
+  @CoerceType('number')
   total: number;
   // Note: 0 passes @ValidateRequired (it's not null/undefined)
 }
+```
+
+**Important:** `@ValidateRequired` is the only decorator that runs with `preCoercion: true` — it checks the raw value *before* any coercion runs. This means it should typically be placed first in the decorator stack, and it will reject `null`/`undefined`/`""` before coercion gets a chance to convert them (e.g., before `@CoerceType('number')` turns `null` into `0`).
+
+```typescript
+// ✅ Correct: @ValidateRequired runs pre-coercion, catches null before it becomes 0
+@ValidateRequired()
+@CoerceType('number')
+quantity: number;
+
+// ⚠️ Different behavior: coercion runs first, null → 0, then Required passes (0 is not null)
+@CoerceType('number', { coerceNullish: true })
+@ValidateRequired()
+quantity: number;
 ```
 
 ### Required with Custom Message
@@ -270,6 +284,39 @@ class InvoiceTotals {
   total: number;
 }
 ```
+
+### @ObjectRule for Class-Level Validation
+
+`@ObjectRule` runs *after* all property-level validations complete. Use it for business rules that span the entire object:
+
+```typescript
+import { ObjectRule } from '@firebrandanalytics/shared-utils/validation';
+
+@ObjectRule(
+  (instance) => {
+    const margin = (instance.msrp - instance.cost) / instance.msrp;
+    if (margin < 0.1) {
+      return `Margin (${(margin * 100).toFixed(1)}%) must be at least 10%`;
+    }
+    return true;
+  },
+  'Minimum margin check'
+)
+class ProductPricing {
+  @CoerceType('number')
+  cost: number;
+
+  @CoerceType('number')
+  msrp: number;
+
+  @CoerceType('number')
+  sale_price: number;
+}
+```
+
+**`@CrossValidate` vs `@ObjectRule`:**
+- `@CrossValidate` is a *property-level* decorator — it validates one property in the context of others
+- `@ObjectRule` is a *class-level* decorator — it validates the entire object after all properties are processed
 
 ---
 

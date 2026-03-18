@@ -66,10 +66,32 @@ class OrderLine {
 | `'number'` | `"3.14"` | `3.14` |
 | `'number'` | `true` | `1` |
 | `'number'` | `"five"` | `NaN` (use `@CoerceFromSet` for word-to-number) |
-| `'boolean'` | `"true"`, `"yes"`, `"1"`, `1` | `true` |
-| `'boolean'` | `"false"`, `"no"`, `"0"`, `0` | `false` |
+| `'boolean'` | `"true"`, `"yes"`, `"1"`, `1` | `true` (standard mode) |
+| `'boolean'` | `"false"`, `"no"`, `"0"`, `0` | `false` (standard mode) |
+| `'boolean'` | `null`, `undefined` | `false` (when `coerceNullish: true`) |
 | `'string'` | `42` | `"42"` |
-| `'string'` | `null` | `""` |
+| `'string'` | `null` | `""` (when `coerceNullish: true`) |
+| `'url'` | `"https://example.com"` | `URL` object |
+| `'bigint'` | `"123"` | `123n` |
+| `'regexp'` | `"/pattern/gi"` | `RegExp` object |
+
+**Boolean strictness modes:**
+
+```typescript
+// Standard mode (default): accepts yes/no/on/off/y/n/t/f/1/0
+@CoerceType('boolean')
+is_active: boolean;
+
+// Strict mode: only true/false/1/0
+@CoerceType('boolean', { booleanStrictness: 'strict' })
+is_enabled: boolean;
+
+// Custom mapping: domain-specific boolean values
+@CoerceType('boolean', {
+  customMap: (v: string) => v === 'enabled' ? true : v === 'disabled' ? false : undefined
+})
+is_feature_on: boolean;
+```
 
 ### Numeric Rounding with @CoerceRound
 
@@ -78,16 +100,28 @@ Control decimal precision after type coercion:
 ```typescript
 class PricingData {
   @CoerceType('number')
-  @CoerceRound(2)
+  @CoerceRound({ precision: 2 })
   price: number;
   // "19.999" → 19.999 → 20.00
 
   @CoerceType('number')
-  @CoerceRound(0)
+  @CoerceRound({ precision: 0 })
   quantity: number;
   // "7.8" → 7.8 → 8
+
+  @CoerceType('number')
+  @CoerceRound({ toNearest: 5, mode: 'ceil' })
+  shipping_weight: number;
+  // 12 → 15 (rounds up to nearest 5)
+
+  @CoerceType('number')
+  @CoerceRound({ precision: 0, mode: 'floor' })
+  whole_units: number;
+  // 7.9 → 7 (always rounds down)
 }
 ```
+
+**Options:** `precision` (decimal places), `mode` (`'round'` | `'floor'` | `'ceil'`), `toNearest` (round to nearest multiple).
 
 ### Date Coercion
 
@@ -148,10 +182,18 @@ class ProductRecord {
   @CoerceCase('title')
   display_name: string;
   // "john doe" → "John Doe"
+
+  @CoerceCase('snake')
+  api_field: string;
+  // "myFieldName" → "my_field_name"
+
+  @CoerceCase('kebab')
+  css_class: string;
+  // "myClassName" → "my-class-name"
 }
 ```
 
-**Available cases:** `'lower'`, `'upper'`, `'title'`
+**Available cases:** `'lower'`, `'upper'`, `'title'`, `'camel'`, `'pascal'`, `'snake'`, `'kebab'`, `'constant'`
 
 ### Combined Normalization with NormalizeText
 
