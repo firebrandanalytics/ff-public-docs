@@ -46,7 +46,7 @@ kubectl port-forward -n ff-dev svc/ff-working-memory 8080:8080
 
 ### record — Structured Data Records
 
-Working memory records store structured data (JSON or plain text) attached to entities.
+Working memory records store structured data (JSON or plain text) attached to entities. Records are the primary mechanism for persisting bot outputs, configuration, and intermediate processing results.
 
 #### record get
 
@@ -62,8 +62,14 @@ Content and metadata fields use safe JSON parsing — if the content isn't valid
 # Get a specific record
 ff-wm-read record get "wm-record-uuid"
 
-# Extract the content
+# Extract the content field
 ff-wm-read record get "wm-record-uuid" | jq '.content'
+
+# Get content and metadata together
+ff-wm-read record get "wm-record-uuid" | jq '{name: .name, content: .content, metadata: .metadata}'
+
+# Pretty-print JSON content
+ff-wm-read record get "wm-record-uuid" | jq '.content' -r | jq .
 ```
 
 #### record list
@@ -78,13 +84,19 @@ ff-wm-read record list <entity-node-id>
 # List all records
 ff-wm-read record list "entity-uuid"
 
-# Extract record names
-ff-wm-read record list "entity-uuid" | jq '.records[].name'
+# Extract record names and types
+ff-wm-read record list "entity-uuid" | jq '.records[] | {name, memory_type}'
+
+# Count records
+ff-wm-read record list "entity-uuid" | jq '.records | length'
+
+# Find records by name pattern
+ff-wm-read record list "entity-uuid" | jq '.records[] | select(.name | test("output|result"; "i"))'
 ```
 
 ### blob — Binary Files
 
-Blob storage holds binary files (PDFs, images, CSVs, etc.) attached to entities.
+Blob storage holds binary files (PDFs, images, CSVs, etc.) attached to entities. Blobs can be retrieved by their storage key or working memory record ID.
 
 #### blob list
 
@@ -95,8 +107,17 @@ ff-wm-read blob list <entity-node-id>
 ```
 
 ```bash
+# List all blobs
 ff-wm-read blob list "entity-uuid"
+
+# Show names and content types
 ff-wm-read blob list "entity-uuid" | jq '.[] | {name, content_type}'
+
+# Find PDFs only
+ff-wm-read blob list "entity-uuid" | jq '.[] | select(.content_type == "application/pdf")'
+
+# Count blobs
+ff-wm-read blob list "entity-uuid" | jq 'length'
 ```
 
 #### blob get
@@ -107,18 +128,18 @@ Get blob content by its storage key.
 ff-wm-read blob get <key> [options]
 ```
 
-| Option | Purpose |
-|--------|---------|
-| `-o, --output-file <path>` | Write binary content to a file |
-| `-r, --raw` | Output text content directly (errors if binary) |
+| Option | Alias | Purpose |
+|--------|-------|---------|
+| `--output-file <path>` | `-o` | Write binary content to a file |
+| `--raw` | `-r` | Output text content directly (errors if binary) |
 
-Output behavior:
+Output behavior depends on the flags used:
 
-| Mode | Output |
-|------|--------|
-| Default (no flags) | Base64-encoded JSON to stdout |
-| `--raw` | Text content direct to stdout (errors if content is binary) |
-| `--output-file` | Binary content written to file |
+| Mode | Output | Best For |
+|------|--------|----------|
+| Default (no flags) | Base64-encoded JSON to stdout | Any content type, safe default |
+| `--raw` | Text content direct to stdout | Code, JSON, markdown, XML |
+| `--output-file` | Binary content written to file | PDFs, images, archives |
 
 Text content types detected for `--raw`:
 - `text/*` (text/plain, text/markdown, text/html, etc.)
@@ -137,11 +158,14 @@ ff-wm-read blob get "blob-key" --output-file ./downloaded.png
 
 # Pipe JSON blob through jq
 ff-wm-read blob get "blob-key" --raw | jq .
+
+# Save markdown content to file via redirect
+ff-wm-read blob get "blob-key" --raw > ./output.md
 ```
 
 #### blob content
 
-Get blob content by its working memory record ID (alternative to using the storage key).
+Get blob content by its working memory record ID (alternative to using the storage key). Useful when you have the WM record ID from a manifest or record list.
 
 ```bash
 ff-wm-read blob content <working-memory-id> [options]
@@ -155,11 +179,14 @@ ff-wm-read blob content "wm-record-uuid" -o ./document.pdf
 
 # View JSON blob directly
 ff-wm-read blob content "wm-record-uuid" --raw | jq .
+
+# Save to file
+ff-wm-read blob content "wm-record-uuid" -o ./extracted-data.json
 ```
 
 ### manifest — Entity Data Overview
 
-Get the working memory manifest for a root node, showing all attached records and blobs with optional filtering.
+Get the working memory manifest for a root node. The manifest provides a complete inventory of all records and blobs attached to an entity and its descendants, with optional filtering.
 
 ```bash
 ff-wm-read manifest <root-node-id> [options]
@@ -167,13 +194,27 @@ ff-wm-read manifest <root-node-id> [options]
 
 | Option | Purpose |
 |--------|---------|
-| `--memory-types <types...>` | Filter by memory types (e.g., `code/typescript`, `data/json`) |
-| `--subtypes <types...>` | Filter by subtypes |
-| `--semantic-purposes <purposes...>` | Filter by semantic purposes |
+| `--memory-types <types...>` | Filter by memory types (space-separated) |
+| `--subtypes <types...>` | Filter by subtypes (space-separated) |
+| `--semantic-purposes <purposes...>` | Filter by semantic purposes (space-separated) |
+
+Common memory types:
+
+| Type | Content |
+|------|---------|
+| `code/typescript` | TypeScript source files |
+| `code/javascript` | JavaScript source files |
+| `data/json` | Structured JSON data |
+| `file` | Generic binary files |
+| `image/png` | PNG images |
+| `text/markdown` | Markdown documents |
 
 ```bash
 # Get full manifest
 ff-wm-read manifest "root-node-uuid"
+
+# Count total items
+ff-wm-read manifest "root-node-uuid" | jq '.items | length'
 
 # Only code files
 ff-wm-read manifest "root-uuid" --memory-types code/typescript code/javascript
@@ -183,46 +224,57 @@ ff-wm-read manifest "root-uuid" --memory-types data/json
 
 # Filter by semantic purpose
 ff-wm-read manifest "root-uuid" --semantic-purposes context reference
+
+# Combine filters
+ff-wm-read manifest "root-uuid" --memory-types data/json --semantic-purposes output
 ```
 
 ### chat-history — Conversation Logs
 
-Get the chat history for a node.
+Get the chat history for a node. Returns the sequence of messages exchanged during bot execution, including system prompts, user messages, and assistant responses.
 
 ```bash
 ff-wm-read chat-history <node-id>
 ```
 
 ```bash
+# Get full chat history
 ff-wm-read chat-history "node-uuid"
+
+# Count messages
+ff-wm-read chat-history "node-uuid" | jq 'length'
+
+# Extract just the assistant responses
+ff-wm-read chat-history "node-uuid" | jq '.[] | select(.role == "assistant") | .content'
+
+# Find messages containing a keyword
+ff-wm-read chat-history "node-uuid" | jq '.[] | select(.content | test("error"; "i"))'
 ```
 
-## Common Workflows
+## Diagnostic Workflows
 
-### View Documents Attached to an Entity
-
-```bash
-# 1. List all blobs for the entity
-ff-wm-read blob list "entity-uuid"
-
-# 2. Download a specific file
-ff-wm-read blob get "blob-key" --output-file ./document.pdf
-
-# Or by working memory ID
-ff-wm-read blob content "wm-record-uuid" -o ./document.pdf
-```
-
-### Inspect Entity Data
+### View All Data Attached to an Entity
 
 ```bash
-# 1. Check what records exist
-ff-wm-read record list "entity-uuid" | jq '.records[].name'
+# 1. List structured records
+ff-wm-read record list "entity-uuid" | jq '.records[] | {name, memory_type}'
 
-# 2. Read a specific record
-ff-wm-read record get "wm-record-uuid" | jq '.content'
+# 2. List file attachments
+ff-wm-read blob list "entity-uuid" | jq '.[] | {name, content_type}'
 
-# 3. Get the full manifest
+# 3. Get the complete manifest
 ff-wm-read manifest "entity-uuid"
+```
+
+### Download All Documents for an Entity
+
+```bash
+# List blobs and download each one
+ff-wm-read blob list "entity-uuid" | jq -r '.[].key' | while read -r key; do
+  FILENAME=$(ff-wm-read blob list "entity-uuid" | jq -r ".[] | select(.key == \"$key\") | .name")
+  echo "Downloading: $FILENAME"
+  ff-wm-read blob get "$key" -o "./$FILENAME"
+done
 ```
 
 ### Debug File Processing Issues
@@ -231,30 +283,53 @@ ff-wm-read manifest "entity-uuid"
 # 1. Check if a file was uploaded
 ff-wm-read blob list "entity-uuid"
 
-# 2. Check the manifest for the entity
-ff-wm-read manifest "entity-uuid"
+# 2. Check the manifest for processing artifacts
+ff-wm-read manifest "entity-uuid" --memory-types data/json
 
-# 3. Review chat history for processing context
-ff-wm-read chat-history "entity-uuid"
+# 3. Review chat history for error messages
+ff-wm-read chat-history "entity-uuid" | jq '.[] | select(.content | test("error|fail"; "i"))'
 ```
 
-### Combine with Entity Graph Queries
+### Trace Data Flow Through a Workflow
 
-Use `ff-eg-read` to find the entity, then `ff-wm-read` to examine its data:
+Combine with `ff-eg-read` to follow data through connected entities:
 
 ```bash
-# Get entity details
-ff-eg-read node get "entity-uuid" | jq '{status, entity_type}'
+# 1. Get the workflow entity and its steps
+ff-eg-read node connected <workflow-id> HAS_STEP | jq '.[] | {id, name, status}'
 
-# See what files it processed
-ff-wm-read blob list "entity-uuid"
+# 2. For each step, check what data it produced
+for STEP_ID in $(ff-eg-read node connected <workflow-id> HAS_STEP | jq -r '.[].id'); do
+  echo "=== Step: $STEP_ID ==="
+  ff-wm-read record list "$STEP_ID" | jq '.records[] | {name, memory_type}'
+done
+```
 
-# See what structured output it stored
-ff-wm-read record list "entity-uuid"
+### Compare Entity Data Across Runs
+
+```bash
+# Get records from two entities and compare
+ff-wm-read record list "entity-run-1" | jq '.records[] | {name, content}' > /tmp/run1.json
+ff-wm-read record list "entity-run-2" | jq '.records[] | {name, content}' > /tmp/run2.json
+diff /tmp/run1.json /tmp/run2.json
+```
+
+### Inspect Bot Conversation Quality
+
+```bash
+# Get chat history and analyze
+ff-wm-read chat-history "entity-uuid" | jq '
+  {
+    total_messages: length,
+    by_role: (group_by(.role) | map({role: .[0].role, count: length})),
+    avg_length: ([.[].content | length] | add / length)
+  }
+'
 ```
 
 ## See Also
 
+- [ff-wm-write](ff-wm-write.md) — Write records and upload blobs to working memory
 - [ff-eg-read](ff-eg-read.md) — Query the entity graph
 - [ff-eg-write](ff-eg-write.md) — Modify the entity graph
 - [ff-sdk-cli](ff-sdk-cli.md) — Invoke entity methods on running agent bundles
