@@ -214,7 +214,9 @@ export default class SimpleBot extends Bot<SIMPLE_BTH> {
                     spec: {
                         name: "calculate",
                         description: "Add two numbers",
-                        parameters: {
+                        // Use `inputSchema` (not `parameters`) — this is the
+                        // FireFoundry SDK's ToolSpec field name.
+                        inputSchema: {
                             type: "object",
                             properties: {
                                 a: { type: "number" },
@@ -409,7 +411,10 @@ const myDispatchTable: DispatchTable<MY_PTH, MY_OUTPUT> = {
         spec: {
             name: "calculate",
             description: "Add two numbers together",
-            parameters: {
+            // The SDK's ToolSpec uses `inputSchema` (NOT `parameters` as in
+            // some OpenAI function-call examples). Accepts a raw JSON Schema
+            // object, a JSON string, or a Zod schema.
+            inputSchema: {
                 type: "object",
                 properties: {
                     a: { type: "number", description: "First number" },
@@ -429,7 +434,7 @@ const myDispatchTable: DispatchTable<MY_PTH, MY_OUTPUT> = {
         spec: {
             name: "fetch_data",
             description: "Fetch data based on query",
-            parameters: {
+            inputSchema: {
                 type: "object",
                 properties: {
                     query: { type: "string", description: "Query string" }
@@ -1018,7 +1023,7 @@ export default class NerBinningBot extends Bot<NER_BINNING_BTH> {
                     spec: {
                         name: "process_entities",
                         description: "Process named entities",
-                        parameters: { /* ... */ }
+                        inputSchema: { /* ... */ }
                     }
                 }
             }
@@ -1405,7 +1410,7 @@ export default class CoderBot extends Bot<CODER_BTH> {
         spec: {
           name: "execute_sql",
           description: "Execute a SQL query",
-          parameters: {
+          inputSchema: {
             type: "object",
             properties: {
               query: { type: "string", description: "SQL query to execute" }
@@ -1430,7 +1435,7 @@ export default class CoderBot extends Bot<CODER_BTH> {
         spec: {
           name: "save_chart",
           description: "Save chart data to working memory",
-          parameters: {
+          inputSchema: {
             type: "object",
             properties: {
               chart_data: { type: "object", description: "Chart data to save" },

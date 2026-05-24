@@ -31,6 +31,12 @@ For local development, port-forward the broker service:
 kubectl port-forward -n firefoundry-home svc/ff-broker 50099:50099
 ```
 
+## Quick Reference
+
+| Command | Purpose |
+|---------|---------|
+| `complete` | Send a chat completion request to the broker |
+
 ## Command Reference
 
 ### complete
@@ -66,6 +72,14 @@ ff-brk complete --model-pool <pool> --semantic-label <label> --message <msg> [op
 | `--host` | Override `FF_BROKER_HOST` |
 | `--port` | Override `FF_BROKER_PORT` |
 
+### Understanding Key Concepts
+
+**Model pools** are named groups of LLM providers configured in the broker. A pool like `gpt-4o` may route to different providers or models depending on load, cost, or failover rules. The broker handles provider selection transparently.
+
+**Semantic labels** identify the purpose of a request for telemetry tracking and mock cache lookup. Use descriptive labels like `"invoice-extraction"` or `"summary-generation"` rather than generic labels. Labels appear in telemetry data (queryable via `ff-telemetry-read`).
+
+**Mock cache IDs** enable deterministic testing. When a mock cache ID is provided, the broker returns a cached response instead of calling the LLM provider. This is useful for integration tests that need repeatable results.
+
 ## Common Workflows
 
 ### Basic Completion
@@ -90,11 +104,19 @@ ff-brk complete \
 ### JSON Output for Scripting
 
 ```bash
+# Get just the content
 ff-brk complete \
   -m gpt-4o \
   -l "scripted-request" \
   --msg "Summarize this in one sentence" \
-  --json | jq '.content'
+  --json | jq -r '.content'
+
+# Get content, model, and usage
+ff-brk complete \
+  -m gpt-4o \
+  -l "json-test" \
+  --msg "Hello" \
+  --json | jq '{model, content, usage}'
 ```
 
 ### Deterministic Testing with Mock Cache
@@ -112,25 +134,32 @@ ff-brk complete \
 ### Control Generation Parameters
 
 ```bash
+# Creative, longer output
 ff-brk complete \
   -m gpt-4o \
   -l "creative-request" \
   --msg "Write a haiku about code" \
   -t 1.5 \
   --max-tokens 100
+
+# Precise, deterministic output
+ff-brk complete \
+  -m gpt-4o \
+  -l "precise-request" \
+  --msg "Convert 72°F to Celsius" \
+  -t 0.0 \
+  --max-tokens 50
 ```
 
 ### Test Different Model Pools
 
 ```bash
-# Test GPT-4o
-ff-brk complete -m gpt-4o -l "model-test" --msg "Hello"
-
-# Test Claude
-ff-brk complete -m claude-sonnet -l "model-test" --msg "Hello"
-
-# Test Gemini
-ff-brk complete -m gemini-pro -l "model-test" --msg "Hello"
+# Compare responses across model pools
+for pool in gpt-4o claude-sonnet gemini-pro; do
+  echo "=== $pool ==="
+  ff-brk complete -m "$pool" -l "model-comparison" --msg "Explain recursion in one sentence" --json | jq -r '.content'
+  echo
+done
 ```
 
 ## Response Format
@@ -155,11 +184,7 @@ Usage: 15 prompt + 8 completion = 23 total tokens
 
 **JSON output (`--json`):**
 
-Returns the full broker response object including content, model, finish_reason, and usage metrics. Suitable for piping to `jq`:
-
-```bash
-ff-brk complete -m gpt-4o -l "json-test" --msg "Hello" --json | jq '{model, content, usage}'
-```
+Returns the full broker response object including `content`, `model`, `finish_reason`, and `usage` metrics.
 
 ## Diagnostic Workflows
 
@@ -173,14 +198,14 @@ ff-brk complete -m gpt-4o -l "health-check" --msg "ping"
 ### Verify a Model Pool Configuration
 
 ```bash
-# Send a request and check which model was actually used
+# Send a request and check which underlying model was actually used
 ff-brk complete -m my-custom-pool -l "pool-test" --msg "Hello" --json | jq '.model'
 ```
 
 ### Test Failover Behavior
 
 ```bash
-# Send multiple requests and compare which model is selected each time
+# Send multiple requests and see which model handles each one
 for i in 1 2 3 4 5; do
   ff-brk complete -m gpt-4o -l "failover-test-$i" --msg "Hello" --json | jq -r '.model'
 done
@@ -189,13 +214,44 @@ done
 ### Debug Token Usage
 
 ```bash
-ff-brk complete \
-  -m gpt-4o \
-  -l "usage-test" \
-  -s "Be very concise." \
-  --msg "Explain quantum computing" \
-  --json | jq '.usage'
+# Compare token usage with and without a system prompt
+echo "Without system prompt:"
+ff-brk complete -m gpt-4o -l "usage-baseline" \
+  --msg "Explain quantum computing" --json | jq '.usage'
+
+echo "With system prompt:"
+ff-brk complete -m gpt-4o -l "usage-with-system" \
+  -s "Be very concise. One sentence only." \
+  --msg "Explain quantum computing" --json | jq '.usage'
 ```
+
+### Benchmark Response Latency
+
+```bash
+# Time a completion request
+time ff-brk complete -m gpt-4o -l "latency-test" --msg "Hello" --json > /dev/null
+```
+
+### Trace a Request in Telemetry
+
+After sending a request, use `ff-telemetry-read` to find it in the telemetry database:
+
+```bash
+# Send a request with a unique label
+ff-brk complete -m gpt-4o -l "trace-test-$(date +%s)" --msg "Hello"
+
+# Then query telemetry for that request
+ff-telemetry-read broker-requests --semantic-label "trace-test-*" --limit 1
+```
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Connection refused | Broker not running or wrong port | Check `kubectl get pods -n firefoundry-home` and port-forward |
+| "model pool not found" | Invalid pool name | Check broker configuration for available pool names |
+| Timeout | Network issue or slow provider | Increase timeout, check provider health |
+| Empty response | Max tokens too low | Increase `--max-tokens` |
 
 ## See Also
 

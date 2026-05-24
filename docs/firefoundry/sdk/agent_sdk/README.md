@@ -22,13 +22,16 @@ FireFoundry treats **entities** as persistent business objects in a graph, **bot
 
 ### For Beginners
 
-**1. Understand the Concepts** (15 minutes)
+**1. Quick-Start** (30 minutes)
+- **[SDK Quick-Start Guide](guides/sdk-quickstart.md)** - Scaffold, build, and deploy your first agent bundle end-to-end
+
+**2. Understand the Concepts** (15 minutes)
 - **[Core Concepts & Glossary](fire_foundry_core_concepts_glossary_agent_sdk.md)** - Mental models and terminology
 
-**2. Build Your First Application** (2-3 hours)
+**3. Build a Complete Application** (2-3 hours)
 - **[Getting Started Tutorial](agent_sdk_getting_started.md)** - Complete walkthrough building a News Article Impact Analyzer
 
-**3. Learn the Fundamentals** (4-6 hours)
+**4. Learn the Fundamentals** (4-6 hours)
 - **[Prompting Tutorial](core/prompting_tutorial.md)** - Learn the prompting framework
 - **[Bot Tutorial](core/bot_tutorial.md)** - Learn to build AI-powered bots
 - **[Agent Bundle Tutorial](core/agent_bundle_tutorial.md)** - Learn to structure and deploy applications
@@ -112,6 +115,22 @@ The XML DSL system provides four domain-specific languages that let you define p
 | BotML | `.botml` | Bot configuration with LLM settings, mixins, and prompt groups |
 | AgentML | `.agentml` | Async workflows with bot calls, working memory, and graph operations |
 | BundleML | `.bundleml` | Bundle manifest with constructors, HTTP endpoints, and methods |
+
+---
+
+## Reference Guides
+
+- **[Core Decorators Reference](guides/core-decorators-reference.md)** - Complete reference for all SDK decorators (`@EntityMixin`, `@RegisterBot`, `@ApiEndpoint`, and more)
+- **[Entity Lifecycle & Patterns](guides/entity-lifecycle-patterns.md)** - Mixin composition, lifecycle hooks, control flow helpers, and common entity patterns
+- **[Prompt Patterns Cookbook](guides/prompt-patterns-cookbook.md)** - Practical recipes for building prompts: conditionals, schemas, iteration, working memory, and more
+
+## Production Guides
+
+- **[Testing Guide](guides/testing-guide.md)** - Unit testing bots and prompts, integration testing entities and workflows, mock factories, and test organization
+- **[Error Handling & Resilience](guides/error-handling-resilience.md)** - Bot retries, custom error handlers, workflow error propagation, validation errors, and defensive patterns
+- **[Deployment & Configuration](guides/deployment-configuration.md)** - `firefoundry.json` configuration, environment variables, Docker builds, Helm deployment, health checks, and resource tuning
+- **[Performance & Optimization](guides/performance-optimization.md)** - Prompt optimization, concurrency tuning, caching strategies, entity graph efficiency, and model pool selection
+- **[Monitoring & Debugging](guides/monitoring-debugging.md)** - Structured logging, entity status monitoring, telemetry analysis, diagnostic CLI tools, and failure debugging
 
 ---
 
@@ -202,7 +221,7 @@ Practical how-to guides for specific capabilities. Use as needed for your use ca
 ## Quick Decision Tree
 
 **I'm completely new to FireFoundry**
-→ Start with [Getting Started Tutorial](agent_sdk_getting_started.md)
+→ Start with [SDK Quick-Start Guide](guides/sdk-quickstart.md), then [Getting Started Tutorial](agent_sdk_getting_started.md)
 
 **I want quick reference material**
 → Check [Core Concepts & Glossary](fire_foundry_core_concepts_glossary_agent_sdk.md)
@@ -218,6 +237,21 @@ Practical how-to guides for specific capabilities. Use as needed for your use ca
 
 **I want to define bundles in XML instead of TypeScript**
 → Start with [XML DSL Getting Started](dsl/getting-started-tutorial.md)
+
+**I need to test my agent bundle**
+→ Read the [Testing Guide](guides/testing-guide.md)
+
+**My bot or workflow is failing and I need to handle errors**
+→ Read [Error Handling & Resilience](guides/error-handling-resilience.md)
+
+**I need to deploy my bundle to production**
+→ Read [Deployment & Configuration](guides/deployment-configuration.md)
+
+**My bundle is slow and I need to optimize it**
+→ Read [Performance & Optimization](guides/performance-optimization.md)
+
+**Something is broken in production and I need to debug it**
+→ Read [Monitoring & Debugging](guides/monitoring-debugging.md)
 
 **I'm migrating from v2.x**
 → Check [v2.x → v3.0 Migration Guide](MIGRATION_v2_to_v3.md)
