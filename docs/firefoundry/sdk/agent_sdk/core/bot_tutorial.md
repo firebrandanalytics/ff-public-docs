@@ -229,7 +229,9 @@ const reviewDispatchTable: DispatchTable<CodeReviewPTH, CodeReviewOutput> = {
     spec: { // The schema tells the LLM how to use the tool
       name: 'validateSuggestion',
       description: 'Validates a TypeScript code suggestion to ensure it follows best practices like including type annotations.',
-      parameters: {
+      // Use `inputSchema` (NOT `parameters` as in some OpenAI examples) —
+      // this is the FireFoundry SDK's ToolSpec field name.
+      inputSchema: {
         type: 'object',
         properties: {
           suggestion: { type: 'string', description: 'The suggested code snippet to validate.' }

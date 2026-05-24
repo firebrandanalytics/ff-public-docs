@@ -58,7 +58,11 @@ const newsAnalysisTools: DispatchTable<IMPACT_PTH, IMPACT_ANALYSIS_OUTPUT> = {
     spec: {
       name: "lookup_company_info",
       description: "Look up current information about a company mentioned in the article",
-      parameters: {
+      // NOTE: The SDK's ToolSpec uses `inputSchema` (NOT `parameters` as in some
+      // OpenAI function-call examples). `inputSchema` accepts a raw JSON Schema
+      // object, a JSON string, or a Zod schema (auto-converted by the broker
+      // client).
+      inputSchema: {
         type: "object",
         properties: {
           company_name: {
@@ -106,9 +110,9 @@ const newsAnalysisTools: DispatchTable<IMPACT_PTH, IMPACT_ANALYSIS_OUTPUT> = {
       };
     },
     spec: {
-      name: "search_related_articles", 
+      name: "search_related_articles",
       description: "Search for related news articles to provide additional context",
-      parameters: {
+      inputSchema: {
         type: "object",
         properties: {
           keywords: {
@@ -151,8 +155,8 @@ const newsAnalysisTools: DispatchTable<IMPACT_PTH, IMPACT_ANALYSIS_OUTPUT> = {
     spec: {
       name: "calculate_impact_score",
       description: "Calculate a numerical impact score based on multiple weighted factors",
-      parameters: {
-        type: "object", 
+      inputSchema: {
+        type: "object",
         properties: {
           factors: {
             type: "array",
@@ -333,6 +337,236 @@ With tools, your analysis becomes more data-driven:
   "overall_significance": "high"
 }
 ```
+
+## State Management: Bot vs. Request
+
+A common mistake when writing tool implementations is to keep mutable per-call
+state in TypeScript closures captured at bot-construction time. **This is
+unsafe.** This section explains the actual lifecycle and the correct pattern.
+
+### Lifecycle Recap
+
+- **Bot and `dispatch_table` are LONG-LIVED.** A bot is constructed once
+  (typically in your `FFAgentBundle` constructor or registered as a singleton
+  via `@RegisterBot`). The same instance handles every incoming request for
+  the lifetime of the process. Its `dispatch_table` is fixed at construction.
+- **`BotRequest` is PER-CALL.** Every call to `bot.run(request)` creates a new
+  `BotRequest` carrying that call's `args`, `input`, and `context`. The bot's
+  retry loop then constructs one or more `BotTryRequest` objects from it (one
+  per attempt). A single LLM "turn" with multiple tool calls all share the
+  same `BotTryRequest`.
+- **Tool functions are invoked by `BotTry` as
+  `tool_call_func(request, args)`** — the `request` argument is the current
+  `BotTryRequest<BTH>`. From it, `request.parent` is the `BotRequest`, and
+  `request.state` is a `BotTryState` that lives only for this try.
+
+### What closures should and should not capture
+
+Closure capture is correct for **immutable dependencies** that you want every
+invocation to share:
+
+- service clients (HTTP clients, DB pools, broker clients)
+- sub-bot instances (so a tool can delegate to another bot)
+- entity helpers and accessor functions wired up in your bundle
+- configuration values
+
+Closure capture is **wrong** for anything that changes per request:
+
+- the current user's id / session / tenant
+- progress accumulated during this conversation
+- counters, retry budgets, page-read quotas, etc.
+
+If you put mutable per-request data in a closure on the dispatch table, two
+concurrent requests will trample each other's state on the same long-lived
+bot — and even sequential requests will leak state between calls.
+
+### Where per-request state actually lives
+
+The framework gives you three reliable surfaces for per-request data, in
+order of how often you'll reach for them:
+
+1. **`request.parent.args`** — read-only, set by the caller of
+   `bot.run(...)`. This is where you read the user id, tenant id, request
+   options, etc. Most tool implementations only need this.
+2. **`request.state`** — a `BotTryState<BTH>` created fresh for each try.
+   - `request.state.tool_call_results` — auto-populated by `BotTry` with
+     `{ func_name, arguments, result?, error? }` for every tool call the
+     LLM made during this try. You can read this from a later tool call to
+     see what happened earlier in the same turn.
+     `BotRequest.get_tool_call_results()` aggregates across tries.
+   - `request.state.partials` — emit streaming intermediate values here.
+   - You may add your own fields by extending `BotTryState` in a custom
+     `BotTry` subclass if you need richer try-scoped scratch space.
+3. **`request.add_additional_message(message, sectionName?)`** — append a
+   message that the next LLM call in this try will see. The framework already
+   uses this to inject `role: "tool"` results, but tools can call it too if
+   they need to inject extra context into the conversation.
+
+For state that must persist beyond a single `bot.run` — across many
+conversations, restarts, or other bots — write to working memory or to the
+entity graph, not to in-memory state.
+
+### Correct example — read per-request state from the request object
+
+This pattern is from the production `HelpBot` in `apps/training-bundle`. The
+bot is constructed once and reused for every chat request, but each tool
+implementation reads the calling user from `request.parent.args`:
+
+```typescript
+import {
+  BotTryRequest,
+  type DispatchTable,
+} from "@firebrandanalytics/ff-agent-sdk";
+
+// `deps` is captured by closure — these are LONG-LIVED, immutable services.
+// Safe to share across all requests.
+export function buildUserTools(deps: HelpBotDeps): DispatchTable<ChatPTH, CHAT_OUTPUT> {
+  return {
+    get_progress: {
+      func: async (
+        request: BotTryRequest<ChatBTH>,
+        _args: Record<string, never>,
+      ) => {
+        // Per-request data lives on the request object — NOT in a closure.
+        const userId = request.parent.args?.userId;
+        if (typeof userId !== "string" || !userId.trim()) {
+          return { success: false, error: "No userId available" };
+        }
+        const progress = await deps.getUserProgress(userId);
+        return { success: true, progress };
+      },
+      spec: {
+        name: "get_progress",
+        description: "Get the current user's training progress.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+    },
+  };
+}
+```
+
+The bundle constructs the bot once and reuses it:
+
+```typescript
+// agent-bundle.ts
+this.helpBotUser = new HelpBotUser(helpBotDeps); // built ONCE, lives forever
+```
+
+And each request brings its own `userId`:
+
+```typescript
+await helpBotUser.run(new BotRequest<ChatBTH>({
+  input: userMessage,
+  args: { userId: "alice@example.com" }, // <-- per-request state
+  context: new Context(),
+}));
+```
+
+Two simultaneous requests from Alice and Bob each get their own `BotRequest`
+with their own `args.userId`. Their tool calls see the right user.
+
+### Reading earlier tool results from a later tool
+
+Within a single try, the framework records every tool call into
+`request.state.tool_call_results`. A later tool in the same turn can read
+that history — useful if one tool's result should influence another:
+
+```typescript
+plan_next_step: {
+  func: async (request: BotTryRequest<MyBTH>, _args: {}) => {
+    // What did the LLM already do this turn?
+    const calls = Object.values(request.state.tool_call_results);
+    const fetchedDocs = calls
+      .filter((c) => c.func_name === "fetch_document")
+      .map((c) => c.result);
+    return { next: deriveStep(fetchedDocs) };
+  },
+  spec: { /* ... */ },
+}
+```
+
+To inspect across retries of the same `BotRequest`, use
+`request.parent.get_tool_call_results()` instead — that aggregates over every
+try the request has made.
+
+### Mistake to avoid — closure capture for mutable per-request state
+
+```typescript
+// DO NOT DO THIS.
+function buildBadTools() {
+  // currentUserId lives in the closure for the bot's entire lifetime.
+  let currentUserId: string | undefined;
+
+  return {
+    set_current_user: {
+      func: async (_req, args: { userId: string }) => {
+        currentUserId = args.userId; // <-- shared across ALL requests
+        return { ok: true };
+      },
+      spec: { /* ... */ },
+    },
+    get_progress: {
+      func: async (_req, _args: {}) => {
+        // Reads whatever the most recent call (from any user, any request)
+        // happened to set. Concurrent calls will see each other's data.
+        return { userId: currentUserId };
+      },
+      spec: { /* ... */ },
+    },
+  };
+}
+```
+
+Why this breaks:
+
+- The bot is built once and reused for every request. The closure variable
+  `currentUserId` is shared by every concurrent and sequential call.
+- Two users hitting the bot at the same time race on the same variable.
+- Even a single user gets bleed-through from the previous request because
+  the variable is never reset.
+
+Replace any mutable closure variable with a read from `request.parent.args`
+(or with explicit state on `request.state`).
+
+### Edge case — instance fields on bot subclasses
+
+Some production bots stash per-call state on `this` and **rebuild it at the
+top of `run()`** to work around the long-lived-instance constraint. The
+extraction bots in `ff-app-system` do this:
+
+```typescript
+async run(request: BotRequest<UPDATE_BTH>): Promise<BotResponse<UPDATE_BTH>> {
+  // ALWAYS rebuild state — registry reuses bot instance across requests
+  this.toolContext = await this.buildToolContext(request.args);
+  return super.run(request);
+}
+```
+
+This pattern works **only if you guarantee a single in-flight request per
+bot instance** (e.g. the bot is singleton and the caller serializes
+requests). It is not safe under concurrency. Prefer keeping state on
+`request.state` or a closure over an immutable holder; reach for instance
+fields only when you must persist state across `super.run()` machinery that
+doesn't propagate the request — and document the single-flight requirement
+clearly.
+
+### Persistence across multiple `bot.run` calls
+
+`request.state` is fresh for every `BotTryRequest`, and a new `BotRequest`
+is created for every `bot.run` call. **No in-memory state survives across
+`bot.run` calls.** If you need durable conversation memory:
+
+- Persist transcripts and structured state in working memory or the entity
+  graph.
+- Pass identifiers in `BotRequest.args` so the next call can rehydrate from
+  storage.
+- For chat history specifically, use the chat-history provider
+  (`setEntityGraphHistoryClient`) — it loads prior turns into the prompt
+  group on each call.
 
 ## Best Practices for Tool Calls
 
