@@ -26,6 +26,7 @@ Extended Services provide specialized capabilities that enhance agent functional
 - **Data Access Service** - Secure multi-database SQL access with AST query translation and fine-grained ACL
 - **Document Processing Service** - Document extraction, generation, and transformation
 - **Virtual Worker Manager** - CLI coding agent orchestration with managed sessions and persistent workspaces
+- **Skills Service** - Skill registry, versioning, and environment-scoped installation for hosted agents
 
 ### Tier 3: Supporting Services
 
@@ -50,6 +51,7 @@ Supporting Services include services under active development that extend platfo
 | **Doc Proc Python Worker** | 0.1.0 | Planning | Advanced ML-based document processing backends | Supporting | gRPC |
 | **Web Search Service** | 0.1.0 | Beta | Provider-agnostic web search with Bing integration | Supporting | REST |
 | **Virtual Worker Manager** | 0.1.0 | Beta | CLI coding agent orchestration with managed sessions and persistent workspaces | Extended | REST |
+| **Skills Service** | 0.1.0 | Beta | Skill registry, versioning, and environment-scoped installation for hosted agents | Extended | REST |
 
 ## How Services Work Together
 
