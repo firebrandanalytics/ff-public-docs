@@ -23,18 +23,18 @@ The FireFoundry platform consists of:
 FireFoundry provides 8 specialized microservices organized by maturity:
 
 ### Tier 1 - Core Runtime (GA)
-- **[Broker Service](./services/ff-broker.md)** - AI model routing and orchestration
+- **[Broker Service](./services/ff-broker/README.md)** - AI model routing and orchestration
 - **[Context Service](./services/context-service/README.md)** - Working memory and blob storage
-- **[Code Sandbox](./services/code-sandbox.md)** - Secure code execution
+- **[Code Sandbox](./services/code-sandbox/README.md)** - Secure code execution
 
 ### Tier 2 - Extended Services (Beta)
-- **[Entity Service](./services/entity-service.md)** - Entity graph management with vector search
+- **[Entity Service](./services/entity-service/README.md)** - Entity graph management with vector search
 - **[Data Access Service](./services/data-access-service.md)** - Multi-database SQL access with AST query translation
-- **[Document Processing Service](./services/doc-proc-service.md)** - Document extraction and transformation
+- **[Document Processing Service](./services/doc-proc-service/README.md)** - Document extraction and transformation
 
 ### Tier 3 - Supporting Services
 - **[Document Processing Python Worker](./services/doc-proc-pyworker.md)** - Advanced ML-based processing
-- **[Web Search Service](./services/web-search.md)** - Provider-agnostic web search with Bing integration
+- **[Web Search Service](./services/web-search/README.md)** - Provider-agnostic web search with Bing integration
 
 **For detailed service documentation, architecture, communication patterns, and deployment guidance, see the [Platform Services Overview](./services/README.md).**
 
