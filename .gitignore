@@ -195,11 +195,12 @@ PERSONAL.md
 personal/
 notes/
 
-# Testing and experimental files
-test-*
-experimental/
-sandbox/
-scratch/
+# Testing and experimental files (only at repo root, so docs filenames like
+# test-evaluation.md don't get accidentally excluded)
+/test-*
+/experimental/
+/sandbox/
+/scratch/
 
 # ===================================
 # CUSTOM CONFIGURATION FILES

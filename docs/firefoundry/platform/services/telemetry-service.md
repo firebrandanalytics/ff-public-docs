@@ -2,11 +2,13 @@
 
 ## Overview
 
-The Telemetry Service is the core FireFoundry platform service that collects, stores, and serves telemetry from broker LLM calls, tool invocations, agent runs, and other platform service operations. It gives application developers a unified, queryable record of what their agent workloads did and why — enabling debugging, auditing, cost analysis, and post-hoc investigation across an entire bundle's execution.
+The Telemetry Service is a background FireFoundry platform service that collects, stores, and serves telemetry from broker LLM calls and other producer-service operations. Application developers do not normally interact with it directly — telemetry is emitted automatically by the services that produce it, and developers consume it through the FireFoundry Console UI or the `ff-telemetry-read` CLI when they need to debug, audit, or analyze what their agent workloads did.
+
+This page documents the service for completeness; in day-to-day development you should not need to plan around it.
 
 ## Purpose and Role in Platform
 
-The Telemetry Service is the single source of truth for runtime observability on the FireFoundry platform. Every platform service that does meaningful work — the FF Broker issuing model calls, the Entity Service mutating state, the Virtual Worker Manager running agents — emits structured telemetry events here. Application developers and operators consume that data to:
+The Telemetry Service is the single source of truth for runtime observability on the FireFoundry platform. Producer services emit structured telemetry events to it as they work — most notably the FF Broker (every LLM call, including prompts, tool calls, and responses) and other services as their telemetry emission lands over time. Application developers and operators consume that data through the FireFoundry Console UI or the `ff-telemetry-read` CLI to:
 
 - Trace a single agent run end-to-end across services
 - Inspect the exact prompts, tool calls, and responses involved in a broker request
@@ -32,8 +34,8 @@ The Telemetry Service follows the standard FireFoundry layered architecture, wit
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│           Producer Services (FF Broker,             │
-│           Entity Service, VWM, etc.)                │
+│           Producer Services (FF Broker today;       │
+│           additional services over time)            │
 └───────────────────┬─────────────────────────────────┘
                     │ gRPC IngestBatch
                     ▼
@@ -126,5 +128,4 @@ Source code: [ff-services-telemetry](https://github.com/firebrandanalytics/ff-se
 
 - [Platform Services Overview](./README.md) — Overview of all FireFoundry services
 - [FF Broker](./ff-broker/README.md) — Primary producer of LLM call telemetry
-- [Entity Service](./entity-service/README.md) — Produces state-mutation telemetry
 - [`ff-telemetry-read` CLI](../../sdk/cli-tools/ff-telemetry-read.md) — Recommended way to query telemetry interactively
