@@ -88,4 +88,4 @@ context-service/
 - [Platform Services Overview](../README.md)
 - [Agent SDK — Chat History Guide](../../../sdk/agent_sdk/guides/chat-history.md)
 - [Agent SDK — Working Memory Guide](../../../sdk/agent_sdk/guides/working-memory.md)
-- [Entity Service](../entity-service.md)
+- [Entity Service](../entity-service/README.md)

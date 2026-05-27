@@ -13,7 +13,7 @@ The Skills Service is the single source of truth for skill data on the platform.
 - Download skill content (markdown, assets, references) on demand
 - Honor per-bot access grants and dependency declarations
 
-Previously, skills were tacked onto the Virtual Worker Manager (VWM) using a single flat `shared.skills` table, while the console maintained its own parallel data model. This service consolidates skill management into one schema with proper separation between platform-curated registry skills and per-environment custom skills.
+Skill management was previously embedded in the Virtual Worker Manager (VWM), with a parallel data model maintained by the console. This service consolidates skill management into a single source of truth, with proper separation between platform-curated registry skills and per-environment custom skills.
 
 ## Key Features
 
@@ -22,9 +22,8 @@ Previously, skills were tacked onto the Virtual Worker Manager (VWM) using a sin
 - **Installation Tracking**: Records which registry skill versions are installed into which environment
 - **Access Grants**: Fine-grained permissions controlling which apps, bots, or workers may consume which skills
 - **Bot Dependencies**: Declarative skill-to-bot dependency tracking so deployments can validate completeness
-- **Manifest Parsing at Upload**: YAML front matter and mode extraction run when a zip is uploaded; results stored as JSONB for zero-cost runtime reads
+- **Manifest Parsing at Upload**: YAML front matter and mode extraction run when a zip is uploaded; consumers always see pre-parsed manifests, never raw zips
 - **System Skills**: Built-in skills with a default-include toggle for new environments
-- **Multi-tenant Storage**: Skill zips persisted in blob storage; metadata in PostgreSQL
 
 ## Architecture Overview
 
@@ -33,34 +32,28 @@ The Skills Service follows the standard FireFoundry layered architecture:
 ```
 ┌─────────────────────────────────────────────────────┐
 │                  REST API Layer                     │
-│              (Express 5 + Zod validation)           │
-│      /admin (management)  /v1 (consumer)            │
+│      /admin (management)   /v1 (consumer)           │
 └───────────────────┬─────────────────────────────────┘
                     │
 ┌───────────────────▼─────────────────────────────────┐
 │              Business Logic Layer                   │
 │   Registry, Custom Skills, Installations,           │
 │   Access Grants, Bot Dependencies, Manifest         │
-│   parsing (js-yaml + unzipper)                      │
+│   parsing                                           │
 └───────────────────┬─────────────────────────────────┘
                     │
         ┌───────────┴───────────┐
         │                       │
 ┌───────▼────────────┐  ┌──────▼──────────────────────┐
-│   PostgreSQL       │  │   Blob Storage              │
-│   (skills schema)  │  │   (shared-utils adapter)    │
-│   - Metadata       │  │   - Skill zip files         │
-│   - Manifest JSONB │  │   - Per-version immutable   │
+│   Metadata Store   │  │   Skill Content Store       │
+│   (PostgreSQL)     │  │   (Blob Storage)            │
 └────────────────────┘  └─────────────────────────────┘
 ```
 
 **Core Components:**
-- **Express Application**: Standard lifecycle with `/health`, `/ready`, `/status` probes
 - **Admin Router (`/admin`)**: CRUD for registry, custom skills, installations, grants, and dependencies
-- **Consumer Router (`/v1`)**: Read-only endpoints for agent bundles and the VWM harness
+- **Consumer Router (`/v1`)**: Read-only endpoints for agent bundles and other skill consumers
 - **Manifest Parser**: Extracts SKILL.md front matter and mode list when a zip is uploaded
-- **PostgreSQL Pools**: Separate read (fireread) and write (fireinsert) connection pools
-- **Blob Storage**: Skill zip files stored via the shared blob storage adapter
 
 ## Skill Zip Format
 
@@ -92,7 +85,7 @@ toolRefs: [my-mcp-tool]
 Skill instructions in markdown...
 ```
 
-The service parses the front matter and mode list at **upload time** and stores the result as a `manifest` JSONB column. Consumer endpoints serve pre-parsed JSON, so runtime callers never extract zips.
+The service parses the front matter and mode list at **upload time**. Consumer endpoints serve pre-parsed JSON, so runtime callers never extract zips.
 
 ## API and Interfaces
 
@@ -169,72 +162,30 @@ Read-only endpoints intended for agent bundles and the VWM harness.
 | GET | `/v1/skills/manifest?environment_id=<uuid>` | Full `SkillManifest` for an environment |
 | GET | `/v1/skills/:name/download?environment_id=<uuid>` | Download skill zip |
 
-## Database Schema
-
-All tables live in the `skills` schema:
-
-| Table | Purpose |
-|-------|---------|
-| `registry_entries` | Platform-level skill catalog |
-| `registry_versions` | Immutable versions per registry entry |
-| `custom_skills` | Per-environment custom skills |
-| `custom_versions` | Versions for custom skills |
-| `installations` | Registry skills installed into environments |
-| `access_grants` | Skill-to-app/bot/worker permissions |
-| `bot_dependencies` | Bot-to-skill dependency tracking |
-
-Migrations are managed in the service repository and applied via `pnpm migrate`.
-
 ## Dependencies
 
-### Required Services
-- **PostgreSQL** with the `skills` schema and migrations applied
-- Database roles: `fireread` (readonly) and `fireinsert` (write access)
-- **Blob storage** backend (Azure Blob, S3, or local) accessible via `@firebrandanalytics/shared-utils`
-
-### NPM Dependencies
-- `express@5` — Web framework
-- `zod` — Request validation
-- `pg` — PostgreSQL client
-- `multer` — Multipart file upload handling
-- `js-yaml` — Front matter parsing
-- `unzipper` — Skill zip extraction at upload time
-- `@firebrandanalytics/shared-utils` — Blob storage adapter, logging
+The Skills Service depends on a relational database for metadata and a blob storage backend for skill content. Both are configured per environment as part of the standard FireFoundry deployment.
 
 ## Configuration
 
-### Service Settings
-```bash
-NODE_ENV=development              # development | production | test
-PORT=8080                         # HTTP server port
-LOG_LEVEL=info                    # debug | info | warn | error
-SERVICE_NAME=skills-service       # Service identifier
-```
+The service is configured via environment variables (see `.env.example` in the service repository for the complete list). The main groups are:
 
-### Database Connection
-```bash
-PG_HOST=...                       # Database host (or PG_SERVER)
-PG_DATABASE=firefoundry           # Database name (default: firefoundry)
-PG_PASSWORD=***                   # fireread password
-PG_INSERT_PASSWORD=***            # fireinsert password
-RUN_MIGRATIONS=false              # Auto-run migrations on startup
-```
-
-See the repository's `.env.example` for the complete list.
+- **Service settings** — `NODE_ENV`, `PORT`, `LOG_LEVEL`
+- **Database connection** — host, database, credentials
+- **Blob storage** — backend selection and credentials
 
 ## Design Decisions
 
-- **Parse at upload, not at read.** The YAML front matter and mode structure are extracted when a zip is uploaded and stored as a JSONB `manifest` column. Consumer endpoints serve pre-parsed JSON, so runtime callers never extract zips. This trades a small upload cost for fast, predictable consumer latency.
-- **Registry vs. custom skills are different lifecycles.** Registry skills are platform-global and versioned; custom skills are environment-scoped and managed by the environment owner. They share the same zip format and manifest schema but have separate tables and admin endpoints.
-- **Separate from VWM.** This service owns skill data. VWM's skill harness bootstrap reads from this service's consumer API rather than managing skills directly, eliminating the prior duplication between VWM's `shared.skills` table and the console's parallel model.
-- **REST-only at v0.1.** No gRPC yet. Skill reads are infrequent compared to broker or entity calls, so REST is sufficient. A gRPC consumer interface can be added later if high-throughput internal use cases emerge.
+- **Parse at upload, not at read.** The YAML front matter and mode structure are extracted when a zip is uploaded. Consumer endpoints serve pre-parsed JSON, so runtime callers never extract zips. This trades a small upload cost for fast, predictable consumer latency.
+- **Registry vs. custom skills are different lifecycles.** Registry skills are platform-global and versioned; custom skills are environment-scoped and managed by the environment owner. They share the same zip format but follow separate management endpoints.
+- **Separate from VWM.** This service owns skill data. The Virtual Worker Manager reads from this service's consumer API rather than managing skills directly, replacing earlier duplication between VWM and the console.
+- **REST-only at v0.1.** Skill reads are infrequent compared to broker or entity calls, so REST is sufficient. A higher-throughput interface can be added later if usage warrants it.
 
 ## Version and Maturity
 
 - **Current Version**: 0.1.0
 - **Status**: Beta — early in life, API may change
 - **Node.js Version**: 20+ required
-- **TypeScript**: Full type safety with strict mode
 
 ## Repository
 
@@ -243,4 +194,4 @@ Source code: [ff-services-skills](https://github.com/firebrandanalytics/ff-servi
 ## Related Documentation
 
 - [Platform Services Overview](./README.md) — Overview of all FireFoundry services
-- [Virtual Worker Manager](./virtual-workers.md) — VWM consumes skills via this service
+- [Virtual Worker Manager](./virtual-workers/README.md) — VWM consumes skills via this service
