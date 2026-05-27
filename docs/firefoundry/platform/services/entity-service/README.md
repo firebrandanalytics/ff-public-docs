@@ -71,11 +71,9 @@ This service acts as the persistent memory layer for agents, allowing them to bu
 - **[Reference](./reference.md)** — Complete REST API reference, headers, request/response schemas
 - **[Operations](./operations.md)** — Configuration, deployment, performance tuning, and monitoring
 
-## Version and Maturity
+## Version
 
-- **Current Version**: 0.3.0-beta.0
-- **Status**: Beta — Active development, API may change
-- **Node.js Version**: 20+ required
+- **Current Version**: 0.3.0
 
 ## Repository
 

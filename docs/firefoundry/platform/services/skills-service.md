@@ -179,13 +179,11 @@ The service is configured via environment variables (see `.env.example` in the s
 - **Parse at upload, not at read.** The YAML front matter and mode structure are extracted when a zip is uploaded. Consumer endpoints serve pre-parsed JSON, so runtime callers never extract zips. This trades a small upload cost for fast, predictable consumer latency.
 - **Registry vs. custom skills are different lifecycles.** Registry skills are platform-global and versioned; custom skills are environment-scoped and managed by the environment owner. They share the same zip format but follow separate management endpoints.
 - **Separate from VWM.** This service owns skill data. The Virtual Worker Manager reads from this service's consumer API rather than managing skills directly, replacing earlier duplication between VWM and the console.
-- **REST-only at v0.1.** Skill reads are infrequent compared to broker or entity calls, so REST is sufficient. A higher-throughput interface can be added later if usage warrants it.
+- **REST-only.** Skill reads are infrequent compared to broker or entity calls, so REST is sufficient for both administration and consumption.
 
-## Version and Maturity
+## Version
 
 - **Current Version**: 0.1.0
-- **Status**: Beta — early in life, API may change
-- **Node.js Version**: 20+ required
 
 ## Repository
 

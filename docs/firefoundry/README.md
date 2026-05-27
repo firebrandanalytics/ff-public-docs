@@ -120,24 +120,15 @@ Agent bundles are the core deployment unit—containerized collections of agents
 
 * Central interface for platform administration: environment management, bundle lifecycle control, observability, and testing. Includes **Continue in Playground** for one‑click reproduction of Broker interactions and **Mock Cache** management for deterministic runs.
 
-### 3.7 Platform Services (Comprehensive Microservices)
+### 3.7 Platform Services
 
-FireFoundry provides a collection of specialized microservices that work together to enable sophisticated AI applications. Services are organized by maturity level:
+FireFoundry provides a collection of microservices that hosted agent bundles call to do their work. Three are core to every FireFoundry environment:
 
-**Tier 1 - Core Runtime (GA - Production Ready)**
-* **[Broker Service](./platform/services/ff-broker/README.md)** (v5.2.7): Intelligent AI model routing with multi-provider support, cost-based selection, and automatic failover.
-* **[Context Service](./platform/services/context-service/README.md)** (v2.0.0): Working memory and blob storage with multi-cloud support (Azure, Google Cloud) and MCP integration.
-* **[Code Sandbox](./platform/services/code-sandbox/README.md)** (v2.0.0): Secure code execution environment with ODBC connectivity, Chart.js visualization, and DataFrame processing.
+* **[FF Broker](./platform/services/ff-broker/README.md)** — AI model routing across multiple providers with automatic failover and cost-aware selection.
+* **[Entity Service](./platform/services/entity-service/README.md)** — The Entity Graph: persistent entities, relationships, and vector-based semantic search.
+* **[Telemetry Service](./platform/services/telemetry-service.md)** — Captures broker LLM calls, tool invocations, and agent runs for debugging, audit, and cost analysis.
 
-**Tier 2 - Extended Services (Beta)**
-* **[Entity Service](./platform/services/entity-service/README.md)** (v0.3.0-beta.0): Entity graph management with pgvector-based semantic search and vector similarity matching.
-* **[Document Processing Service](./platform/services/doc-proc-service/README.md)** (v0.1.10): Unified document processing (extraction, generation, transformation) with Azure Document Intelligence integration.
-
-**Tier 3 - Emerging Services (Planning/Early Development)**
-* **[Document Processing Python Worker](./platform/services/doc-proc-pyworker.md)** (Planning): Advanced ML-based document processing with local OCR and complex table extraction.
-* **[Web Search Service](./platform/services/web-search/README.md)** (Planning): Web search capabilities for agent workflows.
-
-**See [Platform Services Overview](./platform/services/README.md)** for detailed architecture, service communication patterns, data flows, configuration, deployment, monitoring, and troubleshooting guidance.
+Additional services cover working memory, code execution, data access, document processing, skills, notifications, web search, and CLI coding agent orchestration. See the **[Platform Services Catalog](./platform/services/README.md)** for the full list and links to per-service documentation.
 
 ---
 
