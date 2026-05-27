@@ -1,62 +1,24 @@
 # FireFoundry Platform
 
-Platform architecture, deployment, and operations documentation.
+Platform architecture, deployment, and operations documentation for FireFoundry environments.
 
 ## Contents
 
-- [Platform Services](./services/README.md) - Comprehensive microservices overview
-- [Architecture](./architecture.md) - Platform architecture and design
-- [Deployment](./deployment.md) - Production deployment guide
-- [Operations](./operations.md) - Platform operations and maintenance
+- **[Platform Services](./services/README.md)** — Catalog of services running in a FireFoundry environment, with links to detailed per-service documentation
+- **[Architecture](./architecture.md)** — Platform architecture and design
+- **[Deployment](./deployment.md)** — Deploying FireFoundry environments
+- **[Operations](./operations.md)** — Day-to-day operations, monitoring, and troubleshooting
 
 ## Overview
 
-The FireFoundry platform consists of:
+A FireFoundry environment is composed of a set of platform services running on Kubernetes, backed by PostgreSQL and blob storage, with traffic routed through Kong Gateway. Agent bundles you build run alongside these services and call them through well-defined gRPC or REST APIs.
 
-- **Kubernetes Runtime**: Microservices hosting specialized AI services
-- **Platform Services**: Specialized microservices (Broker, Context Service, Code Sandbox, and extended services)
-- **Infrastructure**: PostgreSQL, blob storage, Kong Gateway
-- **Supporting Services**: Monitoring, logging, auto-scaling
-
-## Platform Services
-
-FireFoundry provides 8 specialized microservices organized by maturity:
-
-### Tier 1 - Core Runtime (GA)
-- **[Broker Service](./services/ff-broker/README.md)** - AI model routing and orchestration
-- **[Context Service](./services/context-service/README.md)** - Working memory and blob storage
-- **[Code Sandbox](./services/code-sandbox/README.md)** - Secure code execution
-
-### Tier 2 - Extended Services (Beta)
-- **[Entity Service](./services/entity-service/README.md)** - Entity graph management with vector search
-- **[Data Access Service](./services/data-access-service.md)** - Multi-database SQL access with AST query translation
-- **[Document Processing Service](./services/doc-proc-service/README.md)** - Document extraction and transformation
-
-### Tier 3 - Supporting Services
-- **[Document Processing Python Worker](./services/doc-proc-pyworker.md)** - Advanced ML-based processing
-- **[Web Search Service](./services/web-search/README.md)** - Provider-agnostic web search with Bing integration
-
-**For detailed service documentation, architecture, communication patterns, and deployment guidance, see the [Platform Services Overview](./services/README.md).**
-
-## Infrastructure Components
-
-- **PostgreSQL**: Entity graph and metadata storage
-- **Blob Storage**: Binary artifacts and working memory data
-- **Kong Gateway**: API management and security
-- **Monitoring**: Application-aware monitoring and tracing
-
-## Documentation
-
-- **[Platform Services Overview](./services/README.md)** - Complete services reference, communication patterns, and data flows
-- **[Individual Service Documentation](./services/)** - Detailed documentation for each microservice
-- [Architecture](./architecture.md) - Detailed architecture documentation
-- [Deployment](./deployment.md) - Deployment procedures and best practices
-- [Operations](./operations.md) - Day-to-day operations, monitoring, and troubleshooting
+The platform services are documented in detail in the [Platform Services](./services/README.md) catalog — start there for service-by-service references, links to per-service docs, and protocol information.
 
 ## Related Documentation
 
-- **[FireFoundry Platform Overview](../README.md)** - High-level platform summary
-- [Local Development](../local-development/README.md) - Running platform locally
-- [Getting Started](../getting-started/README.md) - Quick start guide
-- [Agent SDK](../sdk/agent_sdk/README.md) - Building agent bundles
+- **[FireFoundry Platform Overview](../README.md)** — High-level platform summary
+- [Local Development](../local-development/README.md) — Running platform locally
+- [Getting Started](../getting-started/README.md) — Quick start guide
+- [Agent SDK](../sdk/agent_sdk/README.md) — Building agent bundles
 

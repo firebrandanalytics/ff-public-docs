@@ -312,14 +312,9 @@ The broker maps provider errors to gRPC status codes:
 | `capability` | Model capabilities |
 | `model_family` | Model family groupings |
 
-## Version Information
+## Version
 
 - **Current Version**: 5.2.7
-- **Status**: GA (General Availability) with industrial-scale features in beta
-- **Node.js Version**: 18+ required
-- **Protocol Buffers**: ts-proto for TypeScript code generation
-- **gRPC Framework**: nice-grpc for async/await support
-- **ORM**: Drizzle ORM with PostgreSQL
 
 ## Repository
 
