@@ -2,18 +2,24 @@
 
 ## Overview
 
-The Test Evaluation Agent is a FireFoundry system agent that uses an LLM to judge whether the output of another AI agent or endpoint matches an expected answer. Given the original question, an expected answer, and the actual response, it returns a structured verdict — was the answer correct, what answer was actually given, how confident is the judgment, and what was the reasoning. It is designed to power evaluation suites for AI applications where exact-string matching is too brittle but human review for every test case is too slow.
+The Test Evaluation Agent is a FireFoundry system agent that uses an LLM to judge whether the output of another AI agent or endpoint matches an expected answer. Given the original question, an expected answer, and the actual response, it returns a structured verdict — was the answer correct, what answer was actually given, how confident is the judgment, and what was the reasoning.
+
+The agent is primarily intended to be used through the [Test Harness Service](../services/test-harness-service.md), which drives test execution and uses this agent's verdict for the `result_bot` semantic assertion type. Application developers building their own test runners can also call the agent directly; this page documents both paths.
 
 ## Purpose and Role
 
-Evaluating AI output is fundamentally different from evaluating deterministic code. A correct answer may be phrased many ways, may include extra prose around the right number, may use synonyms, or may format a list differently. Exact-match assertions miss legitimate correctness; loose substring checks let regressions through. The Test Evaluation Agent acts as an LLM judge that callers can drop into a test suite to grade AI responses against a known-good answer with the kind of semantic flexibility a human reviewer would apply.
+Evaluating AI output is fundamentally different from evaluating deterministic code. A correct answer may be phrased many ways, may include extra prose around the right number, may use synonyms, or may format a list differently. Exact-match assertions miss legitimate correctness; loose substring checks let regressions through. The Test Evaluation Agent acts as an LLM judge that grades AI responses against a known-good answer with the kind of semantic flexibility a human reviewer would apply.
 
-Typical use cases:
+The recommended path for most testing workflows is to define test suites in the [Test Harness Service](../services/test-harness-service.md), attach `result_bot` assertions to cases that need semantic judgment, and let the harness call this agent for each evaluation. Direct usage of this endpoint is appropriate when:
+
+- You are building a custom test runner outside the Test Harness Service
+- You want to score live production responses against a curated answer key from your own application code
+- You are tuning prompts or models and want to compare evaluated correctness rates from a script
+
+Typical use cases for `result_bot` assertions in the Test Harness:
 
 - Regression tests for AI applications: feed each test case's expected answer and the live response into the agent, gate the build on the verdict
-- Continuous evaluation in production: spot-check live responses against a curated answer key
-- Tuning workflows: compare model and prompt variants by their evaluated correctness rate
-- Mixed-format answers: numeric, free-text, and list answers all use the same evaluation endpoint
+- Mixed-format answers: numeric, free-text, and list answers all use the same evaluation logic
 
 ## Key Features
 
@@ -80,7 +86,9 @@ curl -X POST "https://<gateway-host>/api/validate-result" \
 
 ### Recommended Pattern
 
-The Test Evaluation Agent fits naturally into an automated test loop:
+Most teams should reach this agent through the [Test Harness Service](../services/test-harness-service.md): define test suites, mark the cases that need semantic judgment with a `result_bot` assertion, and the harness handles execution, the call to this agent, and result aggregation. The harness preserves run history, supports scheduled runs, and stores assertion verdicts alongside the input/output that produced them.
+
+For custom test runners that call this agent directly, the basic loop is:
 
 1. Run the agent or endpoint under test against a fixed set of cases, capturing each `actual_output`
 2. For each case, call `/api/validate-result` with the case's `original_question`, `expected_output`, and the captured `actual_output`
@@ -104,5 +112,6 @@ Source code: [ff-app-system / test-evaluation-agent](https://github.com/firebran
 
 ## Related Documentation
 
+- [Test Harness Service](../services/test-harness-service.md) — The recommended path for using this agent; manages test suites, runs, and results
 - [System Agents Catalog](./README.md)
 - [FF Broker](../services/ff-broker/README.md) — Routes the agent's LLM calls
