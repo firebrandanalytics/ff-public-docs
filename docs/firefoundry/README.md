@@ -125,17 +125,17 @@ Agent bundles are the core deployment unit—containerized collections of agents
 FireFoundry provides a collection of specialized microservices that work together to enable sophisticated AI applications. Services are organized by maturity level:
 
 **Tier 1 - Core Runtime (GA - Production Ready)**
-* **[Broker Service](./platform/services/ff-broker.md)** (v5.2.7): Intelligent AI model routing with multi-provider support, cost-based selection, and automatic failover.
+* **[Broker Service](./platform/services/ff-broker/README.md)** (v5.2.7): Intelligent AI model routing with multi-provider support, cost-based selection, and automatic failover.
 * **[Context Service](./platform/services/context-service/README.md)** (v2.0.0): Working memory and blob storage with multi-cloud support (Azure, Google Cloud) and MCP integration.
-* **[Code Sandbox](./platform/services/code-sandbox.md)** (v2.0.0): Secure code execution environment with ODBC connectivity, Chart.js visualization, and DataFrame processing.
+* **[Code Sandbox](./platform/services/code-sandbox/README.md)** (v2.0.0): Secure code execution environment with ODBC connectivity, Chart.js visualization, and DataFrame processing.
 
 **Tier 2 - Extended Services (Beta)**
-* **[Entity Service](./platform/services/entity-service.md)** (v0.3.0-beta.0): Entity graph management with pgvector-based semantic search and vector similarity matching.
-* **[Document Processing Service](./platform/services/doc-proc-service.md)** (v0.1.10): Unified document processing (extraction, generation, transformation) with Azure Document Intelligence integration.
+* **[Entity Service](./platform/services/entity-service/README.md)** (v0.3.0-beta.0): Entity graph management with pgvector-based semantic search and vector similarity matching.
+* **[Document Processing Service](./platform/services/doc-proc-service/README.md)** (v0.1.10): Unified document processing (extraction, generation, transformation) with Azure Document Intelligence integration.
 
 **Tier 3 - Emerging Services (Planning/Early Development)**
 * **[Document Processing Python Worker](./platform/services/doc-proc-pyworker.md)** (Planning): Advanced ML-based document processing with local OCR and complex table extraction.
-* **[Web Search Service](./platform/services/web-search.md)** (Planning): Web search capabilities for agent workflows.
+* **[Web Search Service](./platform/services/web-search/README.md)** (Planning): Web search capabilities for agent workflows.
 
 **See [Platform Services Overview](./platform/services/README.md)** for detailed architecture, service communication patterns, data flows, configuration, deployment, monitoring, and troubleshooting guidance.
 

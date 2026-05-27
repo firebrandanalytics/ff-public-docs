@@ -137,6 +137,6 @@ The worker uses structured logging and supports graceful shutdown on SIGTERM/SIG
 
 ## Related Documentation
 
-- **[Document Processing Service](./doc-proc-service.md)**: Main orchestrator that calls this worker
-- **[Context Service](./context-service.md)**: Working memory for document storage
+- **[Document Processing Service](./doc-proc-service/README.md)**: Main orchestrator that calls this worker
+- **[Context Service](./context-service/README.md)**: Working memory for document storage
 - **[Platform Services Overview](../README.md)**: FireFoundry microservices architecture

@@ -148,4 +148,4 @@ Added multi-provider image generation with streaming support:
 - [Platform Services Overview](../README.md)
 - [Platform Architecture](../../architecture.md)
 - [Agent SDK Documentation](../../../sdk/README.md) — Building agents that use the broker
-- [Context Service](../context-service.md) — Working memory and persistence
+- [Context Service](../context-service/README.md) — Working memory and persistence
