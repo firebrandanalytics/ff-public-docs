@@ -52,11 +52,9 @@ The Web Search Service enables FireFoundry agents to:
 - **[Reference](./reference.md)** — API endpoints, request/response schemas, error codes, configuration
 - **[Operations](./operations.md)** — Deployment, Bing API setup, monitoring, troubleshooting
 
-## Version and Maturity
+## Version
 
 - **Current Version**: 0.1.0
-- **Status**: Beta — Functional with Bing provider
-- **Node.js Version**: 20+ required
 
 ## Repository
 

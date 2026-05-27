@@ -74,11 +74,9 @@ This service acts as the central document processing hub for FireFoundry bundles
 - **[Reference](./reference.md)** — API endpoints, request/response schemas, configuration variables
 - **[Operations](./operations.md)** — Deployment, Azure configuration, monitoring, troubleshooting
 
-## Version and Maturity
+## Version
 
 - **Current Version**: 0.1.10
-- **Status**: Beta (Phase 3 Complete — Azure Document Intelligence integration)
-- **Node.js Version**: 20+ required
 
 ## Repository
 
