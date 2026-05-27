@@ -122,13 +122,14 @@ Agent bundles are the core deployment unit—containerized collections of agents
 
 ### 3.7 Platform Services
 
-FireFoundry provides a collection of microservices that hosted agent bundles call to do their work. Three are core to every FireFoundry environment:
+FireFoundry provides a collection of microservices that hosted agent bundles call to do their work. Two are core to every FireFoundry environment:
 
 * **[FF Broker](./platform/services/ff-broker/README.md)** — AI model routing across multiple providers with automatic failover and cost-aware selection.
 * **[Entity Service](./platform/services/entity-service/README.md)** — The Entity Graph: persistent entities, relationships, and vector-based semantic search.
-* **[Telemetry Service](./platform/services/telemetry-service.md)** — Captures broker LLM calls, tool invocations, and agent runs for debugging, audit, and cost analysis.
 
-Additional services cover working memory, code execution, data access, document processing, skills, notifications, web search, and CLI coding agent orchestration. See the **[Platform Services Catalog](./platform/services/README.md)** for the full list and links to per-service documentation.
+Additional services are opt-in: working memory, code execution, data access, document processing, knowledge bases, skills, notifications, web search, and CLI coding agent orchestration. System services like Telemetry run in the background and are consumed through the Console UI or CLI tools. See the **[Platform Services Catalog](./platform/services/README.md)** for the full list and links to per-service documentation.
+
+Beyond the platform services, FireFoundry also ships a set of pre-built **[System Agents](./platform/system-agents/README.md)** — agent bundles you can call directly to handle common tasks like web search, structured extraction, and retrieval-augmented generation.
 
 ---
 
