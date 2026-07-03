@@ -131,6 +131,27 @@ The DESIGN.md specifies a 5-part (+ optional Part 6) structure. This maps cleanl
 
 Note: Phase instructions say `scaffold → BundleML → AgentML+BotML → PromptML → deploy+GUI`. DESIGN.md has AgentML and BotML+PromptML in separate parts. I'm following DESIGN.md's part breakdown (which is more detailed) and treating AgentML as Part 3 and BotML+PromptML as Part 4.
 
+### Source doc → tutorial part contribution map
+
+For each source DSL doc, the tutorial part(s) it primarily serves and what specific content it contributes:
+
+| Source Doc | Primary Part(s) | Specific Contribution |
+|-----------|-----------------|----------------------|
+| `getting-started-tutorial.md` Ch6 (Running) | Part 1 | Local docker run + curl pattern for the 5-minute quickstart; confirms command shapes and expected output |
+| `getting-started-tutorial.md` Ch4 (BundleML) | Part 2 | `<bundle>`, `<constructors>`, `<endpoints>`, `<methods>` element introductions; CDATA handler context explanation (`body`/`query`/`registry`/`logger`) |
+| `getting-started-tutorial.md` Ch3 (AgentML) | Part 3 | `<yield-status>`, `<call-bot result="">`, `<wm-set>`, `<return>` element introductions; variable binding pattern |
+| `getting-started-tutorial.md` Ch2 (BotML) | Part 4 | `<bot>`, `<llm-options>`, `<model-pool>`, `max-tries` introductions; `<structured-prompt-group>` overview |
+| `getting-started-tutorial.md` Ch1 (PromptML) | Part 4 | `<prompt>`, `<text>`, `<section>`, interpolation introductions (as background for inline PromptML in BotML) |
+| `advanced-patterns-tutorial.md` Ch1 (conditionals) | Part 4 | `<if condition="...">` inside BotML embedded prompts; JS expression evaluation at prompt render time |
+| `advanced-patterns-tutorial.md` Ch4 (entity orchestration) | Part 3 | `<graph-append edge-type="...">` patterns; entity graph edge data fields |
+| `advanced-patterns-tutorial.md` Ch5 (working memory) | Part 3 | `<wm-set key="..." value="...">` patterns; working memory key path conventions |
+| `xml-e2e-bundle.md` | Part 2, Part 5 | Part 2: same-domain TypeScript-wiring comparison for `<constructors>` and `<endpoints>`; Part 5: contrast between TypeScript bootstrap (`agent-bundle.ts`) and zero-TS `bootstrapFromBundleML()` |
+| `bundleml-reference.md` | Part 2, Part 5 | Part 2: authoritative element reference for annotated `bundle.bundleml` walkthrough; Part 5: `bootstrapFromBundleML()` sibling-file resolution behavior, env var contract |
+| `agentml-reference.md` | Part 3 | Authoritative reference for all AgentML instructions in `analysis-workflow.agentml`: `<yield-status>`, `<call-bot>`, `<wm-set>`, `<graph-append>`, `<return>`, `<expr>` |
+| `botml-reference.md` | Part 4 | Authoritative reference for `analyzer-bot.botml`: `<bot>` attributes, `<llm-options>`, `<structured-prompt-group>` / `<base>` / `<input>` structure, mixin patterns |
+| `promptml-reference.md` | Part 4 | Reference for PromptML elements used inline in BotML: `<prompt role="...">`, `<text>`, `<section>`, `<if>`, `{{interpolation}}` — same syntax inside BotML as in standalone `.promptml` files |
+| `expressions-reference.md` | Part 3, Part 4 | Part 3: expression evaluation for `value="args.*"` attribute form and nested `<expr>` form in AgentML; Part 4: `{{input.*}}` vs `{{args.*}}` interpolation distinction in BotML prompt context |
+
 ### Actual DSL bundle files (authoritative — injected context)
 
 The actual deployed files (from injected context) differ from DESIGN.md in several ways. The tutorial MUST use the actual files, not the DESIGN.md design variants.
