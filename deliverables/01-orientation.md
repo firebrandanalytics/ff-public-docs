@@ -6,7 +6,7 @@
 
 The target directory `docs/firefoundry/sdk/agent_sdk/tutorials/xml-dsl-demo/` does not exist. No prior work targets this location. This session begins from zero for the tutorial series.
 
-**Prior work in scope (keeps):** An earlier phase of this session created `docs/firefoundry/sdk/agent_sdk/dsl/examples/xml-dsl-demo.md` — a guided tour at a *different* location. That file stays; it is not the tutorial series. It is a reference artifact, not a structured part-based tutorial.
+**Prior work retracted from P0 scope:** An earlier phase of this session created `docs/firefoundry/sdk/agent_sdk/dsl/examples/xml-dsl-demo.md` (538-line guided tour at a different location). That file was removed from this branch per gate feedback — tutorial content must not appear in P0. It may be re-introduced in a later phase as a separate deliverable.
 
 ## Repos and Branch in Scope
 
@@ -55,3 +55,7 @@ docs/firefoundry/sdk/agent_sdk/tutorials/xml-dsl-demo/
 - CDATA handler context: `body`, `query`, `registry`, `logger` (not `request`, `bundle`)
 - BotML can embed PromptML inline — no separate `.promptml` file needed
 - DESIGN.md is the sole authoritative source; source repos are not read
+
+## context_docs
+
+[]
