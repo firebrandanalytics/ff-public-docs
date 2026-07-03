@@ -11,7 +11,7 @@ PR #88 title: `docs(xml-dsl-demo): XML DSL demo tutorial series [WS#22 item 2.7]
 
 ## GitHub Comment (Posted)
 
-**Comment URL**: https://github.com/firebrandanalytics/augustus-workstream-tracker/issues/22#issuecomment-4879369707
+**Comment URL**: https://github.com/firebrandanalytics/augustus-workstream-tracker/issues/22#issuecomment-4879418319
 
 Posted operator-side (Q#39 — GitHub App lacks issues:write on tracker repo).
 
