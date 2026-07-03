@@ -18,8 +18,6 @@ Each guide assumes familiarity with the basic Entity-Bot-Prompt architecture cov
 
 - **[File Upload Patterns](file-upload-patterns.md)** - Comprehensive developer guide for implementing binary file upload, storage, and retrieval using the Context Service Client and Agent Bundle SDK with proper architectural separation.
 
-- **[Working with Files](uploading_files_example.md)** - Practical tutorial showing how to upload binary files to Working Memory using the Context Service Client and process them within runnable entities.
-
 ### Entity Graph Patterns
 
 - **[Graph Traversal](graph_traversal.md)** - Navigate entity relationships and connections through typed edges to build complex queries, find related entities, and implement graph-based workflows.
