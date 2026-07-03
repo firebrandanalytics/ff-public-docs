@@ -162,17 +162,8 @@ The `<methods>` section defines custom methods on the bundle class. These are ca
 
 Confirm that all four endpoints are accessible:
 
-```bash
-# 1. Verify dsl-info (static metadata handler)
-curl http://localhost:3000/api/dsl-info | jq .
-
-# 2. Confirm run-analysis returns pending immediately
-curl -s -X POST http://localhost:3000/api/run-analysis \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Markets rose sharply on positive earnings data.","analysis_type":"general"}' | jq .
-```
-
-Expected for dsl-info:
+**1. Verify dsl-info (static metadata handler)**
+Open `http://localhost:3000/api/dsl-info` in your browser. Expected:
 ```json
 {
   "bundle": "xml-dsl-content-analyzer",
@@ -181,15 +172,10 @@ Expected for dsl-info:
 }
 ```
 
-Expected for run-analysis (response is immediate — no LLM call yet):
-```json
-{
-  "entity_id": "<uuid>",
-  "status": "pending"
-}
-```
+**2. Confirm run-analysis returns pending immediately**
+Open the demo GUI at `http://localhost:4000`. Paste "Markets rose sharply on positive earnings data." into the **Text** field, select **general**, and click **Analyze**. The entity ID and `"status": "pending"` should appear in the GUI within milliseconds — before any LLM call has been made. This confirms the `run-analysis` handler's async pattern: `entity_factory.create_entity_node()` + `runBackground()` + immediate return.
 
-If run-analysis returns an error, check that `BUNDLE_PATH` points to the correct directory and that the `AnalysisWorkflow` and `AnalyzerBot` types were registered at startup (look for registration log lines).
+If `run-analysis` returns an error, check that `BUNDLE_PATH` points to the correct directory and that the `AnalysisWorkflow` and `AnalyzerBot` types were registered at startup (look for registration log lines).
 
 ---
 

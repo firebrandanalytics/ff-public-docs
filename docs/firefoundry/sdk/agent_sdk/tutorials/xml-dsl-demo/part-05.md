@@ -194,19 +194,17 @@ Once the pod reaches `Running` status and the readiness probe passes:
 # Check pod status
 kubectl get pods -n ff-dev -l app=xml-dsl-demo-bundle
 
-# Verify liveness and readiness directly
-kubectl exec -n ff-dev deployment/xml-dsl-demo-bundle -- \
-  curl -s http://localhost:3000/health
-
-kubectl exec -n ff-dev deployment/xml-dsl-demo-bundle -- \
-  curl -s http://localhost:3000/ready
-
-# Confirm components loaded (via dsl-info)
-kubectl exec -n ff-dev deployment/xml-dsl-demo-bundle -- \
-  curl -s http://localhost:3000/api/dsl-info
+# Wait for rollout to complete (readiness probe must pass first)
+kubectl rollout status deployment/xml-dsl-demo-bundle -n ff-dev
 ```
 
-Expected dsl-info output:
+To inspect the bundle's registered components, port-forward to the pod and open `http://localhost:3000/api/dsl-info` in your browser:
+
+```bash
+kubectl port-forward -n ff-dev deployment/xml-dsl-demo-bundle 3000:3000
+```
+
+Expected dsl-info response:
 ```json
 {
   "bundle": "xml-dsl-content-analyzer",
@@ -234,23 +232,25 @@ To create a completely different bundle: write new DSL files, create a new Confi
 
 ## Run and Verify
 
-Confirm the health and readiness probes pass and the bundle serves traffic:
+Confirm the pod is running and the bundle is healthy:
 
 ```bash
-# Port-forward for local access to the deployed pod
-kubectl port-forward -n ff-dev deployment/xml-dsl-demo-bundle 3000:3000 &
+# Verify pod status
+kubectl get pods -n ff-dev -l app=xml-dsl-demo-bundle
 
-# Health check
-curl http://localhost:3000/health
-
-# Readiness check
-curl http://localhost:3000/ready
-
-# Bundle info (confirms bootstrapFromBundleML() completed successfully)
-curl http://localhost:3000/api/dsl-info | jq .
+# Confirm rollout completed (readinessProbe at /ready must pass)
+kubectl rollout status deployment/xml-dsl-demo-bundle -n ff-dev
 ```
 
-Expected: both `/health` and `/ready` return 200 with a JSON body. `/api/dsl-info` returns the four DSL names.
+Expected: `deployment "xml-dsl-demo-bundle" successfully rolled out`.
+
+Port-forward to the pod and open `http://localhost:3000/api/dsl-info` in your browser to confirm `bootstrapFromBundleML()` completed successfully:
+
+```bash
+kubectl port-forward -n ff-dev deployment/xml-dsl-demo-bundle 3000:3000
+```
+
+Expected: the browser displays `dsls_loaded: ["PromptML", "BotML", "AgentML", "BundleML"]`. A successful rollout means both `/health` (liveness) and `/ready` (readiness) returned 200 — the Kubernetes probes verified this automatically before the deployment completed.
 
 ---
 

@@ -157,38 +157,21 @@ This pattern makes workflow results queryable via graph traversal, supporting do
 
 ## Run and Verify
 
-Confirm the progress array has exactly 5 entries and the result contains the expected keys:
+Open the demo GUI at `http://localhost:4000`. Submit the following text with analysis type **general**:
 
-```bash
-# Submit and capture entity ID
-ENTITY_ID=$(curl -s -X POST http://localhost:3000/api/run-analysis \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Scientists discovered a new species of deep-sea fish.","analysis_type":"general","requested_by":"demo-user"}' \
-  | jq -r .entity_id)
-
-echo "Entity ID: $ENTITY_ID"
-
-# Wait for LLM response
-sleep 6
-
-# Check progress count and result structure
-curl -s "http://localhost:3000/api/entity-status?id=$ENTITY_ID" | jq '{
-  status: .status,
-  progress_count: (.progress | length),
-  result_keys: (.result | keys)
-}'
+```
+Scientists discovered a new species of deep-sea fish.
 ```
 
-Expected output:
-```json
-{
-  "status": "complete",
-  "progress_count": 5,
-  "result_keys": ["confidence", "findings", "sentiment", "summary", "topic"]
-}
-```
+Watch the progress display as the workflow runs. You should see exactly **five** status messages appear in sequence:
 
-Five progress messages confirm all five `<yield-status>` instructions executed. The result keys confirm the LLM returned a well-formed JSON object matching the schema requested in the bot's prompt.
+1. "Starting content analysis workflow"
+2. "Calling AnalyzerBot"
+3. "Saving results to working memory"
+4. "Updating entity graph"
+5. "Content analysis workflow complete"
+
+Five messages confirm all five `<yield-status>` instructions executed. When the result panel appears, verify it contains the keys `summary`, `topic`, `sentiment`, `findings`, and `confidence` — this confirms the LLM returned a well-formed JSON object matching the schema requested in the bot's prompt.
 
 ---
 

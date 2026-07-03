@@ -1,6 +1,6 @@
 # Part 1: Run It, See It, Believe It
 
-By the end of this part, you will have the XML DSL Content Analyzer running locally in Docker and will have received your first structured analysis result from the bundle. No code to write — just a single `docker run` command and a few `curl` calls.
+By the end of this part, you will have the XML DSL Content Analyzer running locally in Docker and will have received your first structured analysis result from the bundle. No code to write — just a `docker run` command and the demo GUI.
 
 **What you'll learn:**
 - How the xml-bundle-server turns XML files into a live HTTP API with one environment variable
@@ -67,22 +67,20 @@ docker run \
   -e PG_SERVER=localhost \
   -e PG_DATABASE=ff_dev \
   -e PG_PASSWORD=your_password \
-  -e LLM_BROKER_HOST=broker.ff-dev.internal \
-  -e LLM_BROKER_PORT=8080 \
+  -e LLM_BROKER_HOST=$LLM_BROKER_HOST \
+  -e LLM_BROKER_PORT=${LLM_BROKER_PORT:-8080} \
   -e USE_REMOTE_ENTITY_CLIENT=true \
   -p 3000:3000 \
   firebrandanalytics/xml-bundle-server:latest
 ```
 
+Set `LLM_BROKER_HOST` to the hostname of your FireFoundry LLM broker before running. The ff-demo-apps repository also includes a `docker-compose.yml` at the project root that starts the full stack (bundle server + GUI) in one command.
+
 Within a few seconds, the server logs will show component registration messages. The bundle is ready when you see the HTTP server start line.
 
 ## Step 3: Verify the Bundle Loaded
 
-Confirm all four DSL components were registered:
-
-```bash
-curl http://localhost:3000/api/dsl-info
-```
+Confirm all four DSL components were registered by opening `http://localhost:3000/api/dsl-info` in your browser.
 
 Expected response:
 
@@ -100,17 +98,15 @@ This response is served directly by the `dsl-info` endpoint in `bundle.bundleml`
 
 The Content Analyzer accepts a `text` field in the POST body. The analysis runs asynchronously: the endpoint creates an entity in the background and returns immediately with an `entity_id` and a `status` of `pending`.
 
-```bash
-curl -s -X POST http://localhost:3000/api/run-analysis \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "The new product launch exceeded expectations, driving a 40% increase in quarterly revenue.",
-    "analysis_type": "general",
-    "requested_by": "demo-user"
-  }' | jq .
+Open the demo GUI at `http://localhost:4000`. Paste the following text into the **Text** field:
+
+```
+The new product launch exceeded expectations, driving a 40% increase in quarterly revenue.
 ```
 
-Expected response:
+Select **general** from the **Analysis type** dropdown and click **Analyze**.
+
+The GUI immediately receives a response like:
 
 ```json
 {
@@ -121,30 +117,22 @@ Expected response:
 
 The entity is now running the `AnalysisWorkflow` AgentML program in the background. It will yield five progress status messages, call `AnalyzerBot`, save results to working memory, append to the entity graph, and return structured JSON.
 
-## Step 5: Poll for Completion
+## Step 5: Observe Completion
 
-Use `entity-status` with the `entity_id` from the previous step:
+The GUI polls `entity-status` automatically. As the workflow progresses you will see a live progress stream showing each `<yield-status>` message as it is emitted:
 
-```bash
-curl -s "http://localhost:3000/api/entity-status?id=a1b2c3d4-e5f6-7890-abcd-ef1234567890" | jq .
+```
+Starting content analysis workflow
+Calling AnalyzerBot
+Saving results to working memory
+Updating entity graph
+Content analysis workflow complete
 ```
 
-While the workflow is running, you will see:
+Once the LLM responds and the workflow completes, the result panel populates with the structured output:
 
 ```json
 {
-  "entity_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "status": "pending",
-  "result": null,
-  "progress": ["Starting content analysis workflow", "Calling AnalyzerBot"]
-}
-```
-
-Once the LLM responds and the workflow completes, `status` transitions to `"complete"` and `result` is populated:
-
-```json
-{
-  "entity_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "status": "complete",
   "result": {
     "summary": "Strongly positive financial performance announcement",
@@ -156,14 +144,7 @@ Once the LLM responds and the workflow completes, `status` transitions to `"comp
       "Positive forward outlook implied"
     ],
     "confidence": 0.87
-  },
-  "progress": [
-    "Starting content analysis workflow",
-    "Calling AnalyzerBot",
-    "Saving results to working memory",
-    "Updating entity graph",
-    "Content analysis workflow complete"
-  ]
+  }
 }
 ```
 
@@ -171,29 +152,14 @@ Five progress messages. Structured JSON result. Zero TypeScript bundle code.
 
 ## Run and Verify
 
-Before moving on, confirm you can see both `"status": "complete"` and a non-null `result.sentiment` in the entity-status response:
+Open the demo GUI at `http://localhost:4000`. Submit the text "Revenue grew strongly this quarter." with analysis type **general**.
 
-```bash
-# Capture entity_id from a new analysis
-ENTITY_ID=$(curl -s -X POST http://localhost:3000/api/run-analysis \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Revenue grew strongly this quarter.","analysis_type":"general","requested_by":"demo-user"}' | jq -r .entity_id)
+You should see:
+1. An `entity_id` appear immediately — the `run-analysis` endpoint returned `{ "entity_id": "...", "status": "pending" }` in milliseconds without waiting for the LLM.
+2. Five progress stages appear in sequence: "Starting content analysis workflow" → "Calling AnalyzerBot" → "Saving results to working memory" → "Updating entity graph" → "Content analysis workflow complete".
+3. A result panel showing `sentiment: "positive"`, a non-empty `findings` array, and a `confidence` value between 0 and 1.
 
-# Poll until complete
-sleep 5
-curl -s "http://localhost:3000/api/entity-status?id=$ENTITY_ID" | jq '{status: .status, sentiment: .result.sentiment, progress_count: (.progress | length)}'
-```
-
-Expected output:
-```json
-{
-  "status": "complete",
-  "sentiment": "positive",
-  "progress_count": 5
-}
-```
-
-If `status` is still `"pending"` after 5 seconds, wait a moment and poll again — LLM response time varies. If you see `"error"`, check that `LLM_BROKER_HOST` and `LLM_BROKER_PORT` are reachable from the container.
+If the result panel shows `"error"`, confirm that `LLM_BROKER_HOST` is reachable from the container (check the docker run environment variables in Step 2).
 
 ---
 

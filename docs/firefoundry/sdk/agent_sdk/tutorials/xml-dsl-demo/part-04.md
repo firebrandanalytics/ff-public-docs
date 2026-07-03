@@ -169,36 +169,18 @@ The runtime-active prompt is the one embedded in `<structured-prompt-group>` ins
 
 ## Run and Verify
 
-Confirm the `args.mode === 'detailed'` conditional is active — the bot always receives `mode: "detailed"` from the AgentML workflow, so the detailed instruction is always included:
+Open the demo GUI at `http://localhost:4000`. Submit the following text with analysis type **impact**:
 
-```bash
-ENTITY_ID=$(curl -s -X POST http://localhost:3000/api/run-analysis \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Global chip shortage impacts automotive production lines.","analysis_type":"impact","requested_by":"demo-user"}' \
-  | jq -r .entity_id)
-
-sleep 6
-
-# Verify findings array has substantive content (detailed mode produces more findings)
-curl -s "http://localhost:3000/api/entity-status?id=$ENTITY_ID" | jq '{
-  sentiment: .result.sentiment,
-  confidence: .result.confidence,
-  findings_count: (.result.findings | length),
-  topic: .result.topic
-}'
+```
+Global chip shortage impacts automotive production lines.
 ```
 
-Expected output (values will vary by LLM response):
-```json
-{
-  "sentiment": "negative",
-  "confidence": 0.82,
-  "findings_count": 3,
-  "topic": "Supply Chain / Semiconductor"
-}
-```
+When the result appears, check the `findings` array in the result panel. You should see **two or more** findings — for example:
+- "Automotive production reduced due to chip supply constraints"
+- "Lead times for chip components have extended significantly"
+- "Multiple OEMs announced output reductions"
 
-A `findings_count` of 2 or more confirms the `<if condition="args.mode === 'detailed'">` branch was taken and the LLM produced a multi-finding analysis.
+A `findings` array with 2 or more entries confirms the `<if condition="args.mode === 'detailed'">` branch was taken. The AgentML workflow always passes `mode: "detailed"`, so the detailed-analysis instruction is always active. The `sentiment` should be `"negative"` and `confidence` between 0.7 and 0.95.
 
 ---
 

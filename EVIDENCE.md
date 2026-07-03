@@ -32,7 +32,7 @@ grep "^## " docs/firefoundry/sdk/agent_sdk/tutorials/xml-dsl-demo/README.md
 
 Expected sections in order:
 ```
-## What You'll Build
+## What You'll Learn
 ## Prerequisites
 ## Tutorial Parts
 ## How to Use This Tutorial
@@ -93,13 +93,22 @@ Expected: each part has ≥1 XML code block.
 
 ---
 
-## R07 — curl + expected output in each part
+## R07 — Verifiable "Run and Verify" step in each part
+
+Each part ends with a "Run and Verify" section that describes GUI or browser-based verification (AP-DOC-02 prohibits raw `curl` commands — zero hits required):
 
 ```bash
-grep -l 'curl' docs/firefoundry/sdk/agent_sdk/tutorials/xml-dsl-demo/part-0*.md
+grep "^## Run and Verify" docs/firefoundry/sdk/agent_sdk/tutorials/xml-dsl-demo/part-0*.md
 ```
 
-Expected: all 5 part files listed (each part has at least one `curl` command with expected output).
+Expected: all 5 part files contain the heading. Verification uses the demo GUI at `http://localhost:4000` (for POST-based analysis) and browser-accessible GET endpoints (`/api/dsl-info`, `/api/latest-result`). Part 5 uses `kubectl rollout status` and port-forward.
+
+```bash
+# Confirm zero curl commands (AP-DOC-02 compliance)
+grep -r 'curl' docs/firefoundry/sdk/agent_sdk/tutorials/xml-dsl-demo/ | wc -l
+```
+
+Expected: 0
 
 ---
 
@@ -205,6 +214,32 @@ grep "firebrand_completion_default" docs/firefoundry/sdk/agent_sdk/tutorials/xml
 # Async API (entity_factory.create_entity_node) should appear in Part 2
 grep "entity_factory" docs/firefoundry/sdk/agent_sdk/tutorials/xml-dsl-demo/part-02.md
 ```
+
+---
+
+## D10 — Unit Tests
+
+A test suite is provided at `tests/check-xml-dsl-tutorials.sh`. It verifies 14 integrity properties of the tutorial files:
+
+```bash
+bash tests/check-xml-dsl-tutorials.sh
+```
+
+The suite covers:
+- T01: All 6 files exist
+- T02: No TypeScript code blocks (zero-TypeScript constraint)
+- T03: At least one XML block per part
+- T04: Zero curl commands (AP-DOC-02)
+- T05: Zero internal hostnames (AP-DOC-03)
+- T06: README has `What You'll Learn` heading
+- T07–T08: README Architecture Overview + Diagnostic Tools sections
+- T09: Parts table column headers
+- T10–T11: Part 2 CDATA context table + entity_factory API
+- T12: Part 4 correct model pool name
+- T13: Part 4 documents promptml not auto-loaded
+- T14: Part 1 uses env-var for LLM broker host
+
+Expected: `All checks passed.` with exit code 0. All 27 assertions pass against the committed files.
 
 ---
 
