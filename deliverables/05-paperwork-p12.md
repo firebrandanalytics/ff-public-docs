@@ -9,9 +9,15 @@
 
 PR #88 title: `docs(xml-dsl-demo): XML DSL demo tutorial series [WS#22 item 2.7]`
 
-## Staged Completion Comment for Issue #22
+## GitHub Comment (Posted)
 
-> issues:write gap Q#39 — operator posts post-hoc via gh
+**Comment URL**: https://github.com/firebrandanalytics/augustus-workstream-tracker/issues/22#issuecomment-4879369707
+
+Posted operator-side (Q#39 — GitHub App lacks issues:write on tracker repo).
+
+## Staged Completion Comment for Issue #22 (body reference)
+
+> Posted at the URL above by operator
 
 ```
 ## WS#22 — Documentation Complete (Worker 3 / Session 991150)
