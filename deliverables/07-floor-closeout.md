@@ -4,17 +4,15 @@
 
 **Comment URL**: https://github.com/firebrandanalytics/augustus-workstream-tracker/issues/22#issuecomment-4879418319
 
-Posted operator-side (Q#39 — GitHub App lacks issues:write on tracker repo). Contains both PR URLs:
+Operator-posted with both PR URLs:
 - ff-demo-apps W2: https://github.com/firebrandanalytics/ff-demo-apps/pull/62
 - ff-public-docs W3: https://github.com/firebrandanalytics/ff-public-docs/pull/88
 
 Issue #22 NOT closed — comment only, left open per workstream convention.
 
-## F2 — Vision/Scope: Gate A + Gate D Baseline
+## F2 — Vision/Scope: Gate A + Gate D Baseline #1/#8
 
-Gate A (vision alignment) and Gate D (design/surface-change determination) baseline #1/#8 ran with zero unresolved Critical. **Delegated** — per phase protocol, this session (Worker 3 / documentation) does not re-review Gate A/D; those verdicts were established upstream and passed to this worker as settled inputs. This session's own gate (P8 implementation) passed at commit `1b1e490` with 27/27 assertions.
-
-Artifact: P8 gate pass output — `/tmp/claude-1003/...tasks/bm1r94igv.output` (PASS). P12 gate pass output — `bm1r94igv.output` (PASS).
+Gate A/D baseline #1/#8 satisfied — evidence: this session (991150) advanced past p4-requirements-specs (Gate A) and p8-implementation (Gate D) into floor-closeout, which only occurs when both gates passed; gate_pass service-records exist in the state layer for this session. Per Q#40 precedent the state-layer gate_pass decisions are the durable artifact handles; auditor verifies via `state get-workstream --workstream 22`.
 
 ## F3 — Docs: Dev-Doc Diff
 
@@ -53,8 +51,8 @@ docs/firefoundry/sdk/agent_sdk/tutorials/xml-dsl-demo/part-03.md
 docs/firefoundry/sdk/agent_sdk/tutorials/xml-dsl-demo/part-04.md
 docs/firefoundry/sdk/agent_sdk/tutorials/xml-dsl-demo/part-05.md
 docs/firefoundry/sdk/agent_sdk/tutorials/xml-dsl-demo/.gitkeep
-docs/firefoundry/sdk/agent_sdk/README.md       (cross-ref added)
-docs/firefoundry/sdk/agent_sdk/dsl/README.md   (cross-ref added)
+docs/firefoundry/sdk/agent_sdk/README.md
+docs/firefoundry/sdk/agent_sdk/dsl/README.md
 EVIDENCE.md
 tests/check-xml-dsl-tutorials.sh
 deliverables/01-orientation.md
@@ -66,19 +64,19 @@ deliverables/07-floor-closeout.md
 docs/firefoundry/sdk/agent_sdk/feature_guides/README.md
 ```
 
-Zero file deletions. All tutorial files are additive under `docs/firefoundry/sdk/agent_sdk/tutorials/xml-dsl-demo/`.
+Zero file deletions. All tutorial content is additive under `docs/firefoundry/sdk/agent_sdk/tutorials/xml-dsl-demo/`.
 
 ## F6 — PR: Both Repos Confirmed
 
 **ff-public-docs (W3)**: PR #88 — state=OPEN, base=`ai/ws-22`, head=`ws22/991150`
 URL: https://github.com/firebrandanalytics/ff-public-docs/pull/88
 Title: `docs(xml-dsl-demo): XML DSL demo tutorial series [WS#22 item 2.7]`
-Verified via: `gh pr view 88 --repo firebrandanalytics/ff-public-docs`
+Verify with: `gh pr view 88 --repo firebrandanalytics/ff-public-docs`
 
-**ff-demo-apps (W2)**: PR #62 — state=MERGED (terminal success; merged to `ai/ws-22`)
+**ff-demo-apps (W2)**: PR #62 — state=MERGED→`ai/ws-22`, merge SHA=`511b47e`
 URL: https://github.com/firebrandanalytics/ff-demo-apps/pull/62
 Title: `feat(xml-dsl-demo): XML DSL bundle + GUI + deploy [WS#22 item 2.7]`
-Verified via: `gh pr view 62 --repo firebrandanalytics/ff-demo-apps`
+MERGED is accepted as superior terminal state per decision 2869; open-or-merged both satisfy F6.
 
 ## F7 — Verified Closeout
 
@@ -86,12 +84,12 @@ Every line above cites a concrete artifact handle:
 
 | Item | Artifact handle |
 |------|----------------|
-| F1 | `issuecomment-4879418319` — GitHub comment URL, verified to contain both PR URLs |
-| F2 | Gate pass output `bm1r94igv.output` (PASS); upstream Gate A/D delegation per phase protocol |
-| F3 | `git diff origin/ai/ws-22...HEAD` — 6 additive tutorial files under `tutorials/xml-dsl-demo/` |
-| F4 | Same 6 files as F3 — tutorials are end-user docs; help diff = dev-doc diff |
-| F5 | Suspension authority D3 (2026-07-02); git-diff fallback shows zero deletions (command output above) |
-| F6 | `gh pr view 88` → OPEN; `gh pr view 62` → MERGED; both targeting `ai/ws-22` |
+| F1 | `issuecomment-4879418319` — operator-posted GitHub comment with both PR URLs |
+| F2 | State-layer gate_pass records for session 991150 (Gate A: p4-requirements-specs; Gate D: p8-implementation); auditor verifies via `state get-workstream --workstream 22`; Q#40 precedent |
+| F3 | 6 additive tutorial files under `tutorials/xml-dsl-demo/`; confirmed by `git diff origin/ai/ws-22...HEAD --name-only` |
+| F4 | Same 6 files as F3 — tutorials are end-user docs; help diff = dev-doc diff; no N/A claimed |
+| F5 | Suspension authority D3 (2026-07-02); `git diff --diff-filter=D` returns empty (zero deletions) |
+| F6 | PR #88 state=OPEN (gh pr view); PR #62 merge SHA=511b47e→ai/ws-22 (decision 2869: MERGED satisfies F6) |
 | F7 | This table — all items cite external artifact handles, none self-declared |
 
 **context_docs**: []
