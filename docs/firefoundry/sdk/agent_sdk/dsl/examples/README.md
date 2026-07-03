@@ -4,33 +4,6 @@ This section contains annotated examples demonstrating the FireFoundry XML DSL s
 
 ## Available Examples
 
-### [XML DSL Content Analyzer — Guided Tour](xml-dsl-demo.md)
-
-A live guided tour of the XML DSL Content Analyzer — a complete agent bundle that runs with zero hand-written TypeScript. The bundle accepts a text snippet and returns structured analysis (topic, sentiment, confidence, findings) using all four XML DSLs deployed via a Kubernetes ConfigMap on the xml-bundle-server.
-
-**What it demonstrates:**
-
-- The xml-bundle-server fleet model: one server image, any bundle via ConfigMap swap
-- BundleML as the bundle manifest — constructors, CDATA endpoint handlers, custom methods
-- AgentML as the workflow engine — status streaming, bot invocation, working memory, graph edges
-- BotML + inline PromptML — LLM configuration, structured prompt groups, conditional content
-- Zero-TypeScript deployment: DSL files only, no `src/`, no compilation
-
-**Bundle architecture:**
-
-```
-POST /api/run-analysis
-  --> BundleML CDATA handler (registry.createEntity)
-    --> AgentML interpreter executes analysis-workflow.agentml
-      --> <call-bot name="AnalyzerBot"> invokes the BotML-defined bot
-        --> Bot sends inline PromptML prompts to the LLM
-      --> <wm-set> stores results in working memory
-      --> <graph-append> records the analysis in the entity graph
-      --> <return> sends the result back through the async generator
-```
-
----
-
 ### [XML E2E Bundle Walkthrough](xml-e2e-bundle.md)
 
 A complete end-to-end agent bundle that exercises all four XML DSLs together. This is the primary reference example for understanding how PromptML, BotML, AgentML, and BundleML work in concert within a single deployed bundle.

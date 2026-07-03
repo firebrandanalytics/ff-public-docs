@@ -108,7 +108,6 @@ The XML DSL system provides four domain-specific languages that let you define p
 - **[Advanced Patterns](dsl/advanced-patterns-tutorial.md)** - Conditionals, loops, mixins, entity orchestration, error handling
 - **[Reference Guides](dsl/reference/)** - Complete element and attribute documentation for all four DSLs
 - **[E2E Example](dsl/examples/xml-e2e-bundle.md)** - Annotated walkthrough of a real deployed bundle (TypeScript wiring)
-- **[XML DSL Demo](dsl/examples/xml-dsl-demo.md)** - Guided tour of the Content Analyzer: zero-TypeScript bundle running on xml-bundle-server
 
 | DSL | Extension | Defines |
 |-----|-----------|---------|

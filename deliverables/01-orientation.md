@@ -15,7 +15,7 @@ The target directory `docs/firefoundry/sdk/agent_sdk/tutorials/xml-dsl-demo/` do
 | `ff-public-docs` | `ws22/991150` | Primary — tutorial content lives here |
 | `ff-demo-apps` | not provisioned | Referenced but not modified in this session |
 
-All writes happen in `/workspace/sessions/991150/ff-public-docs` on branch `ws22/991150`.
+Branch `ws22/991150` is branched off `ai/ws-22` (merge-base: `e5abd75`). All writes happen in `/workspace/sessions/991150/ff-public-docs` on this branch. PRs will target `ai/ws-22`.
 
 ## What Already Exists (Builds On)
 
