@@ -974,12 +974,10 @@ Environment management integrates with other ff-cli commands:
 
 - [`ff-cli cluster`](./cluster-management.md) - Cluster operations and connectivity
 - [`ff-cli profile`](./profiles.md) - Profile management for environment defaults
-- [`ff-cli agent-bundle deploy`](./agent-bundles.md) - Deploy agent bundles to environments
-- [`ff-cli config`](./configuration.md) - Configure ff-cli settings
+- [`ff-cli ops deploy`](./ops.md) - Build and deploy agent bundles to environments
 
 ## See Also
 
-- [Deployment Guide](../operations/deployment.md) - Best practices for environment deployment
-- [Security Guide](../operations/security.md) - Securing environments and secrets
-- [Agent Bundle Guide](./agent-bundles.md) - Deploying agents to environments
+- [Deployment Guide](../firefoundry/platform/deployment.md) - Best practices for environment deployment
+- [Operations Guide](./ops.md) - Deploying agent bundles to environments
 - [Profile Management](./profiles.md) - Managing profile defaults

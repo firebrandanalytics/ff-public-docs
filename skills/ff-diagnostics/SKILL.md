@@ -184,5 +184,5 @@ Multiple breadcrumbs indicate nested entity calls (parent → child).
 
 - [ff-eg-read](../ff-eg-read/SKILL.md) - Entity graph CLI reference
 - [ff-telemetry-read](../ff-telemetry-read/SKILL.md) - Telemetry CLI reference
-- [ff-wm-read](../ff-wm-read/SKILL.md) - Working memory (files/documents) CLI reference
+- [ff-wm-read](https://github.com/firebrandanalytics/ff-public-docs/blob/main/docs/firefoundry/sdk/cli-tools/ff-wm-read.md) - Working memory (files/documents) CLI reference
 - [ff-cli](../ff-cli/SKILL.md) - Cluster operations CLI

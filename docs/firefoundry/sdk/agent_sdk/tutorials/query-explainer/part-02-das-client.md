@@ -202,7 +202,7 @@ ff-da schema --connection firekicks
 ff-da query --connection firekicks --sql "SELECT COUNT(*) FROM orders"
 ```
 
-> **Tip:** If `ff-da connections` doesn't show `firekicks`, the DAS hasn't been configured with the FireKicks database. See the [FireKicks Tutorial](../../../platform/services/data-access/firekicks/README.md) for setup instructions.
+> **Tip:** If `ff-da connections` doesn't show `firekicks`, the DAS hasn't been configured with the FireKicks database. See the [FireKicks Tutorial](../../../../platform/services/data-access/firekicks/README.md) for setup instructions.
 
 ## Step 5: Test the Published Client (Optional)
 

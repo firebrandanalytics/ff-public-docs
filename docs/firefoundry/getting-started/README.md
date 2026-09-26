@@ -85,8 +85,8 @@ For the complete walkthrough including LLM integration, see the [Agent Developme
 
 1. [Minikube Bootstrap Guide](../local-development/minikube-bootstrap.md)
 2. [Agent Development Guide](../local-development/agent-development.md)
-3. [AgentSDK Documentation](../sdk/agent-sdk/README.md)
-4. [Entity Modeling Tutorial](../sdk/agent-sdk/entity-graph/entity_modeling_tutorial.md)
+3. [AgentSDK Documentation](../sdk/agent_sdk/README.md)
+4. [Entity Modeling Tutorial](../sdk/agent_sdk/entity_graph/entity_modeling_tutorial.md)
 
 ### For Operators
 
@@ -97,8 +97,8 @@ For the complete walkthrough including LLM integration, see the [Agent Developme
 
 ### For Consumers
 
-1. [FF SDK Documentation](../sdk/ff-sdk/README.md)
-2. [Integration Tutorials](../sdk/ff-sdk/ff_sdk_tutorial.md)
+1. [FF SDK Documentation](../sdk/ff_sdk/README.md)
+2. [Integration Tutorials](../sdk/ff_sdk/ff_sdk_tutorial.md)
 
 ## Additional Resources
 
@@ -112,4 +112,4 @@ For the complete walkthrough including LLM integration, see the [Agent Developme
 
 Once you're comfortable with FireFoundry basics, explore:
 - [FireIQ Suite](../../fireiq/README.md) - Pre-built applications on FireFoundry
-- [Advanced Features](../sdk/agent-sdk/feature_guides/README.md) - Deep dives into specific capabilities
+- [Advanced Features](../sdk/agent_sdk/feature_guides/README.md) - Deep dives into specific capabilities

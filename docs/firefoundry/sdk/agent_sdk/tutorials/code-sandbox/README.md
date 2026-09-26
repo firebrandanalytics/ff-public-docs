@@ -19,11 +19,11 @@ You define the *problem space* (what data is available, how to access it, what r
 
 ## Prerequisites
 
-- [FireFoundry local development environment](../../../local-development/README.md) or access to a deployed FireFoundry cluster
-- [ff-cli installed and configured](../../../local-development/ff-cli-setup.md)
+- [FireFoundry local development environment](../../../../local-development/README.md) or access to a deployed FireFoundry cluster
+- [ff-cli installed and configured](../../../../local-development/ff-cli-setup.md)
 - Node.js 20+
 - Basic TypeScript knowledge
-- Familiarity with [FireFoundry core concepts](../fire_foundry_core_concepts_glossary_agent_sdk.md) (recommended but not required)
+- Familiarity with [FireFoundry core concepts](../../fire_foundry_core_concepts_glossary_agent_sdk.md) (recommended but not required)
 
 ## Tutorial Parts
 
@@ -51,7 +51,7 @@ Key capabilities:
 - **Data Access Service (DAS) integration** -- generated code can query databases through the DAS proxy without handling credentials directly
 - **TypeScript and Python runtimes** -- profiles specify the target language and execution harness
 
-For architecture and configuration details, see the [Code Sandbox Service documentation](../../platform/services/code-sandbox/README.md).
+For architecture and configuration details, see the [Code Sandbox Service documentation](../../../../platform/services/code-sandbox/README.md).
 
 ## Architecture Overview
 
@@ -95,7 +95,7 @@ The complete source code is available in the [ff-demo-apps](https://github.com/f
 
 ## Related
 
-- [Code Sandbox Service](../../platform/services/code-sandbox/README.md) -- platform service documentation
+- [Code Sandbox Service](../../../../platform/services/code-sandbox/README.md) -- platform service documentation
 - [Report Generator Tutorial](../report-generator/README.md) -- beginner tutorial covering entities, bots, structured output, and working memory
 - [Illustrated Story Tutorial](../illustrated-story/README.md) -- intermediate tutorial covering multi-bot pipelines and parallel execution
 

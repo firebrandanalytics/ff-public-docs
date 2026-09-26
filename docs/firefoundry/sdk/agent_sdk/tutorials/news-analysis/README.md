@@ -83,7 +83,7 @@ The complete source code is available in the [ff-demo-apps](https://github.com/f
 
 - [File Upload Tutorial](../file-upload/README.md) -- beginner tutorial covering file handling and Working Memory
 - [Report Generator Tutorial](../report-generator/README.md) -- advanced tutorial covering the full entity/bot/prompt stack
-- [StructuredOutputBotMixin Reference](../../reference/structured-output-bot-mixin.md) -- API reference for structured output bots
+- [Advanced Bot Mixin Patterns](../../feature_guides/advanced-bot-mixin-patterns.md) -- using `StructuredOutputBotMixin` and other bot mixins
 
 ---
 

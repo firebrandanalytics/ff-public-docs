@@ -831,4 +831,4 @@ Key patterns:
 5. **Fallback** - Try primary, fall back on failure
 6. **Composition** - Nested dispatchers
 
-For more information on entities and mixins, see [Entities Guide](../core/entities.md) and [Mixins & Composition](../utils/mixins.md).
+For more information on entities and mixins, see [Entities Guide](../core/entities.md) and [Mixins & Composition](../../utils/mixins.md).

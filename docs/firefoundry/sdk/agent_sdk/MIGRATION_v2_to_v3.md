@@ -495,7 +495,7 @@ class ContactInfo {
 const validated = await new ValidationFactory().create(ContactInfo, rawData);
 ```
 
-See: [Data Validation Framework Guide](feature_guides/data-validation-framework.md)
+See: [Data Validation Framework Guide](feature_guides/data-validation-overview.md)
 
 ---
 

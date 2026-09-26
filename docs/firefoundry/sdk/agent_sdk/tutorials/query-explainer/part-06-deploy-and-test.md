@@ -237,7 +237,7 @@ You should see tool invocations for `explain_query`, `get_dictionary_tables`, `g
 | Zod validation fails repeatedly | LLM uses wrong field names | Add explicit field name instructions to the system prompt (see Part 4) |
 | `MockBrokerClient` in logs | SDK created mock client (no broker URL) | Set `BROKER_URL=localhost:50052` in environment |
 | `AxiosError: Request failed with status 403` | DAS permission denied | Check `FF_FUNCTION_NAME` and `FF_FUNCTION_NAMESPACE` env vars, or DAS ACL configuration |
-| Tool returns empty tables/columns | FireKicks not configured in DAS | Run `ff-da connections` to check; see [FireKicks Tutorial](../../../platform/services/data-access/firekicks/README.md) |
+| Tool returns empty tables/columns | FireKicks not configured in DAS | Run `ff-da connections` to check; see [FireKicks Tutorial](../../../../platform/services/data-access/firekicks/README.md) |
 | Port 3001 already in use | Another process using the port | Change `PORT` env var or stop the other process |
 
 ### Debugging DAS Issues with ff-da

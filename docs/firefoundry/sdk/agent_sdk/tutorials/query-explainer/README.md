@@ -28,8 +28,8 @@ An agent bundle with:
 - `ff-cli` installed and configured
 - Access to a FireFoundry cluster (or local dev environment)
 - Access to a running **Data Access Service** with the FireKicks dataset
-  - See the [DAS Getting Started guide](../../../platform/services/data-access/getting-started.md)
-  - See the [FireKicks Tutorial](../../../platform/services/data-access/firekicks/README.md) for the sample dataset
+  - See the [DAS Getting Started guide](../../../../platform/services/data-access/getting-started.md)
+  - See the [FireKicks Tutorial](../../../../platform/services/data-access/firekicks/README.md) for the sample dataset
 - Node.js 20+
 - `pnpm` package manager
 
@@ -98,7 +98,7 @@ The complete source code is available in the [ff-demo-apps](https://github.com/f
 - [News Analysis Tutorial](../news-analysis/README.md) -- beginner tutorial covering `StructuredOutputBotMixin` and entity relationships
 - [Report Generator Tutorial](../report-generator/README.md) -- advanced tutorial covering the full entity/bot/prompt stack
 - [Tool Calling Feature Guide](../../feature_guides/ad_hoc_tool_calls.md) -- reference guide for dispatch table patterns
-- [Data Access Service Docs](../../../platform/services/data-access/README.md) -- DAS API reference
+- [Data Access Service Docs](../../../../platform/services/data-access/README.md) -- DAS API reference
 
 ---
 

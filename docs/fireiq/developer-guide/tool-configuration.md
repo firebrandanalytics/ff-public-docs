@@ -99,7 +99,7 @@ _[To be documented]_
 - Working memory for state
 - Bot system integration
 
-See also: [FireFoundry AgentSDK](../../firefoundry/sdk/agent-sdk/README.md)
+See also: [FireFoundry AgentSDK](../../firefoundry/sdk/agent_sdk/README.md)
 
 ## Best Practices
 

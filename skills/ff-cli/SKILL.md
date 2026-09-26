@@ -603,5 +603,4 @@ All commands support:
 
 ## More Information
 
-- [COMMANDS.md](./COMMANDS.md) - Complete command reference with all options
-- [WORKFLOWS.md](./WORKFLOWS.md) - Advanced workflows and CI/CD patterns
+- [ff-cli documentation](https://github.com/firebrandanalytics/ff-public-docs/blob/main/docs/ff-cli/README.md) - Complete command reference with all options

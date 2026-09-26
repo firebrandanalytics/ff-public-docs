@@ -111,5 +111,5 @@ FF_GATEWAY=https://api.example.com
 ## See Also
 
 - [Main ff-eg-read skill](../SKILL.md) - Command reference
-- [ff-eg-write configuration](../../ff-eg-write/modes/configuration.md) - Write tool configuration
-- [ff-wm-read configuration](../../ff-wm-read/modes/configuration.md) - Working memory read tool
+- [ff-eg-write reference](https://github.com/firebrandanalytics/ff-public-docs/blob/main/docs/firefoundry/sdk/cli-tools/ff-eg-write.md) - Write tool reference
+- [ff-wm-read reference](https://github.com/firebrandanalytics/ff-public-docs/blob/main/docs/firefoundry/sdk/cli-tools/ff-wm-read.md) - Working memory read tool

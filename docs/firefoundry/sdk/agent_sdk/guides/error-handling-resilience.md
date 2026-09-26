@@ -557,7 +557,7 @@ ff-sdk-cli query --app-id $APP_ID --status Error
 
 ### Telemetry Integration
 
-FireFoundry automatically records telemetry for every LLM call through the Broker service. Use the [Telemetry Read](../../telemetry/) tools to trace failures:
+FireFoundry automatically records telemetry for every LLM call through the Broker service. Use the [Telemetry Read](../../cli-tools/ff-telemetry-read.md) tools to trace failures:
 
 ```bash
 # Find failed broker requests for a specific entity

@@ -1,12 +1,12 @@
 # Validation Library Integration Patterns
 
-This guide shows how to integrate the FireFoundry Data Validation Library with Agent SDK bots and entities. For comprehensive validation library documentation, see the [Validation Library Reference](../../utils/validation-library-reference.md).
+This guide shows how to integrate the FireFoundry Data Validation Library with Agent SDK bots and entities. For comprehensive validation library documentation, see the [Validation Library Reference](../../utils/validation/validation-library-reference.md).
 
 ## Quick Links
 
-- **[Validation Library - Getting Started](../../utils/validation-library-getting-started.md)** - Core concepts and basic usage
-- **[Validation Library - Intermediate](../../utils/validation-library-intermediate.md)** - Advanced patterns and AI transformations
-- **[Validation Library - Complete Reference](../../utils/validation-library-reference.md)** - Full API reference for all decorators
+- **[Validation Library - Getting Started](../../utils/validation/validation-library-getting-started.md)** - Core concepts and basic usage
+- **[Validation Library - Intermediate](../../utils/validation/validation-library-intermediate.md)** - Advanced patterns and AI transformations
+- **[Validation Library - Complete Reference](../../utils/validation/validation-library-reference.md)** - Full API reference for all decorators
 
 ---
 
@@ -801,6 +801,6 @@ The validation library integrates with Agent SDK through:
 10. **Batch validation** - Parallel processing
 
 For complete decorator reference and advanced patterns, see:
-- **[Validation Library - Getting Started](../../utils/validation-library-getting-started.md)**
-- **[Validation Library - Intermediate](../../utils/validation-library-intermediate.md)**
-- **[Validation Library - Complete Reference](../../utils/validation-library-reference.md)**
+- **[Validation Library - Getting Started](../../utils/validation/validation-library-getting-started.md)**
+- **[Validation Library - Intermediate](../../utils/validation/validation-library-intermediate.md)**
+- **[Validation Library - Complete Reference](../../utils/validation/validation-library-reference.md)**

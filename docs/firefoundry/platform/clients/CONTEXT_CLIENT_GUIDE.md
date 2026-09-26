@@ -876,7 +876,7 @@ Get or create a singleton instance.
 
 ### Getting Help
 
-- **Documentation**: Review the [FireFoundry Platform documentation](docs/README.md)
+- **Documentation**: Review the [FireFoundry Platform documentation](../../README.md)
 - **Examples**: Check the `src/examples/` directory for reference implementations
 - **GitHub Issues**: Report bugs or request features
 - **Internal Support**: Contact your platform team for environment-specific issues
@@ -887,10 +887,10 @@ Get or create a singleton instance.
 
 ### Related Documentation
 
-- [FireFoundry Platform Overview](../docs/README.md)
-- [AgentSDK Documentation](../packages/agent-sdk/)
-- [FF SDK Documentation](../packages/ff-sdk/)
-- [Deployment Guide](../docs/deployment.md)
+- [FireFoundry Platform Overview](../../README.md)
+- [AgentSDK Documentation](../../sdk/agent_sdk/README.md)
+- [FF SDK Documentation](../../sdk/ff_sdk/README.md)
+- [Deployment Guide](../deployment.md)
 
 ### Example Applications
 
@@ -903,8 +903,6 @@ All examples are in `packages/context-client/src/examples/`:
 - `wm-manifest-usage.ts` - Manifest fetching patterns
 
 ### Version History
-
-See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
 **Latest Changes (v1.6.0):**
 - Added `environment` parameter for Kong Gateway namespace routing

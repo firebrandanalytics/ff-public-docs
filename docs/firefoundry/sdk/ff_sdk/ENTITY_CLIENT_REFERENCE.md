@@ -3871,10 +3871,10 @@ curl http://entity-service:8080/status
 
 ### Related Documentation
 
-- [Entity Service API Documentation](../ff-services-entity/README.md)
-- [FireFoundry Platform Overview](../docs/README.md)
-- [Agent SDK Guide](../ff-agent-sdk/README.md)
-- [Management Console User Guide](../docs/console/README.md)
+- [Entity Service API Documentation](../../platform/services/entity-service/README.md)
+- [FireFoundry Platform Overview](../../README.md)
+- [Agent SDK Guide](../agent_sdk/README.md)
+- [FF Console Integration](../../platform/self-contained/console-integration.md)
 
 ### Support
 
@@ -3882,10 +3882,6 @@ curl http://entity-service:8080/status
 - **API Questions**: Check entity service documentation
 - **Configuration Help**: Consult with your platform administrator
 - **Bug Reports**: Submit via internal issue tracker
-
-### Version History
-
-See [CHANGELOG.md](./CHANGELOG.md) for version history and migration guides.
 
 ---
 

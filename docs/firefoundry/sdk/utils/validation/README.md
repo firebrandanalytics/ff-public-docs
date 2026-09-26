@@ -145,4 +145,4 @@ npx tsx error-recovery-and-repair.ts
 
 | Document | Description |
 |----------|-------------|
-| [Agent SDK Integration Patterns](../../../agent_sdk/feature_guides/validation-integration-patterns.md) | Using the validation library with FireFoundry bots, entities, and workflows |
+| [Agent SDK Integration Patterns](../../agent_sdk/feature_guides/validation-integration-patterns.md) | Using the validation library with FireFoundry bots, entities, and workflows |

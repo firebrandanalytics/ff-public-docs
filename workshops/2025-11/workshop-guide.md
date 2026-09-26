@@ -516,7 +516,7 @@ Share your project plan (from the Custom GPT) with your coding agent:
 
 - Point them to your `PROJECT_PLAN.md` file (if you saved one)
 - Include the vibe-coding plan from the Agent Bundle Idea Generator
-- Reference the [Agent SDK Documentation](../../docs/sdk/agent_sdk/README.md) for FireFoundry patterns
+- Reference the [Agent SDK Documentation](../../docs/firefoundry/sdk/agent_sdk/README.md) for FireFoundry patterns
 
 **2. Encourage Regular Type Checking**
 
@@ -1555,6 +1555,6 @@ echo $GITHUB_TOKEN
 ## Related Documentation
 
 - **[Local Development Guide](../../docs/ff_local_dev/README.md)** - Complete setup instructions
-- **[Agent SDK Documentation](../../docs/sdk/agent_sdk/README.md)** - Agent development reference
+- **[Agent SDK Documentation](../../docs/firefoundry/sdk/agent_sdk/README.md)** - Agent development reference
 - **[FF CLI Documentation](../../docs/ff-cli/README.md)** - CLI command reference
-- **[Frontend Development Guide](../../docs/sdk/ff_sdk/frontend_development_guide.md)** - GUI development guide
+- **[Frontend Development Guide](../../docs/firefoundry/sdk/ff_sdk/frontend_development_guide.md)** - GUI development guide

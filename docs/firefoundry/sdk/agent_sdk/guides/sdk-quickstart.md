@@ -7,7 +7,7 @@ Build and deploy your first FireFoundry agent bundle in under 30 minutes. This g
 - **Node.js** 20+ and **pnpm** 9+
 - **ff-cli** installed (`npm install -g @firebrandanalytics/ff-cli`)
 - **GitHub token** with `read:packages` scope (for FireFoundry npm packages)
-- A running **FireFoundry cluster** (minikube or cloud) — see [Local Development Setup](../../../ff_local_dev/README.md)
+- A running **FireFoundry cluster** (minikube or cloud) — see [Local Development Setup](../../../../ff_local_dev/README.md)
 
 ```bash
 export GITHUB_TOKEN="ghp_your_token_here"

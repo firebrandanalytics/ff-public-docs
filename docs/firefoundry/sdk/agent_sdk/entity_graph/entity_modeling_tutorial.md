@@ -135,4 +135,4 @@ You have now seen how to map three very different problems onto the FireFoundry 
 
 The key takeaway is to **whiteboard before you code**. A few minutes spent sketching your entities and their relationships will provide immense clarity and save hours of development and refactoring time.
 
-**Next Step:** [Entity Modeling and Development (Technical Guide)](./entities.md)
+**Next Step:** [Entity Modeling and Development (Technical Guide)](../core/entities.md)

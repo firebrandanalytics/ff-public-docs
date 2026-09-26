@@ -873,7 +873,5 @@ main().catch(console.error);
 
 ## See Also
 
-- [Server-side documentation](../../ff-agent-sdk/src/server/README.md)
-- [Blob improvement summary](../../ff-agent-sdk/notes/BLOB_IMPROVEMENT_SUMMARY.md)
-- [API Endpoint documentation](../../ff-agent-sdk/src/server/README.md#binary-file-upload-support)
+- [File Upload Patterns](../agent_sdk/feature_guides/file-upload-patterns.md) - Server-side binary file upload handling in agent bundles
 

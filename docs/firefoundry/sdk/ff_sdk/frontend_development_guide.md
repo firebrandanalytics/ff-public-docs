@@ -1155,7 +1155,7 @@ const results = await entityClient.search_nodes_scoped(criteria, sort, paginatio
 
 ### Next Steps
 
-- Review the [report-gui example](../../../../ff-demo-report-generator/apps/report-gui) for a complete implementation
+- Review the `report-gui` example application for a complete implementation
 - Read [FF SDK Tutorial](./ff_sdk_tutorial.md) for more details
 - Check [News Analysis Consumer Example](./news_analysis_consumer.md) for additional patterns
 

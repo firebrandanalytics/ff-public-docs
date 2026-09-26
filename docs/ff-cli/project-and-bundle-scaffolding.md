@@ -9,7 +9,7 @@ FireFoundry scaffolding handles two primary tasks:
 1. **Project Creation** - Initialize new monorepos with Turborepo, pnpm workspaces, and Docker/Kubernetes configuration
 2. **Agent Bundle Creation** - Add agent bundles (services) to existing projects, either from templates or examples
 
-All scaffolding integrates with the [FireFoundry Agent SDK](../sdk/agent_sdk/core/README.md) and follows monorepo best practices.
+All scaffolding integrates with the [FireFoundry Agent SDK](../firefoundry/sdk/agent_sdk/core/README.md) and follows monorepo best practices.
 
 ## Concepts
 
@@ -1228,7 +1228,7 @@ cd apps/my-service/
 
 ## See Also
 
-- **[Agent SDK Core Documentation](../sdk/agent_sdk/core/README.md)** - Learn about `FFAgentBundle` and entity patterns
-- **[Agent Bundle Tutorial](../sdk/agent_sdk/core/agent_bundle_tutorial.md)** - Step-by-step guide to building agent bundles
-- **[Local Development Guide](../ff_local_dev.md)** - Setting up local FireFoundry environment
+- **[Agent SDK Core Documentation](../firefoundry/sdk/agent_sdk/core/README.md)** - Learn about `FFAgentBundle` and entity patterns
+- **[Agent Bundle Tutorial](../firefoundry/sdk/agent_sdk/core/agent_bundle_tutorial.md)** - Step-by-step guide to building agent bundles
+- **[Local Development Guide](../ff_local_dev/README.md)** - Setting up local FireFoundry environment
 - **[Operations Commands](ops.md)** - Build and deployment workflows

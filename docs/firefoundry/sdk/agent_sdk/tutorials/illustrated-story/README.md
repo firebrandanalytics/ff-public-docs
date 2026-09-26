@@ -38,11 +38,11 @@ By the end of this series, you'll have a complete **Illustrated Children's Story
 ## Prerequisites
 
 - Completion of (or familiarity with) the [report-generator tutorial](../report-generator/README.md) -- this tutorial assumes you understand entities, bots, prompts, working memory, and deployment basics
-- [FireFoundry local development environment](../../../local-development/README.md) or access to a deployed FireFoundry cluster
-- [ff-cli installed and configured](../../../local-development/ff-cli-setup.md)
+- [FireFoundry local development environment](../../../../local-development/README.md) or access to a deployed FireFoundry cluster
+- [ff-cli installed and configured](../../../../local-development/ff-cli-setup.md)
 - Node.js 20+
 - TypeScript knowledge
-- Familiarity with [FireFoundry core concepts](../fire_foundry_core_concepts_glossary_agent_sdk.md)
+- Familiarity with [FireFoundry core concepts](../../fire_foundry_core_concepts_glossary_agent_sdk.md)
 
 ## Tutorial Parts
 

@@ -15,11 +15,11 @@ By the end of this series, you'll have a complete **Document-to-Report Generator
 
 ## Prerequisites
 
-- [FireFoundry local development environment](../../../local-development/README.md) or access to a deployed FireFoundry cluster
-- [ff-cli installed and configured](../../../local-development/ff-cli-setup.md)
+- [FireFoundry local development environment](../../../../local-development/README.md) or access to a deployed FireFoundry cluster
+- [ff-cli installed and configured](../../../../local-development/ff-cli-setup.md)
 - Node.js 20+
 - Basic TypeScript knowledge
-- Familiarity with [FireFoundry core concepts](../fire_foundry_core_concepts_glossary_agent_sdk.md) (recommended but not required)
+- Familiarity with [FireFoundry core concepts](../../fire_foundry_core_concepts_glossary_agent_sdk.md) (recommended but not required)
 
 ## Tutorial Parts
 

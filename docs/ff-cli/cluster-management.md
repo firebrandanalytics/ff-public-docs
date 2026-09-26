@@ -835,8 +835,7 @@ helm show chart firebrandanalytics/firefoundry-control-plane
 
 - **[Profile Management](./profiles.md)** - Configure registry credentials and kubectl contexts
 - **[Operations Guide](./ops.md)** - Build, deploy, and manage agent bundles and web UIs
-- **[Tooling Management](./tooling.md)** - Install and manage required development tools
-- **[Environment Management](./environments.md)** - Create and manage FireFoundry Core environments
+- **[Environment Management](./environment-management.md)** - Create and manage FireFoundry Core environments
 
 ## Advanced Topics
 

@@ -522,7 +522,8 @@ await analyzeArticle(text);
 - [Platform Overview](../../README.md) - Architecture and concepts
 - [AgentSDK Getting Started](../agent_sdk/agent_sdk_getting_started.md) - Building agent bundles
 - [Frontend Development Guide](./frontend_development_guide.md) - **Recommended for coding agents building frontends**
-- [FF SDK API Reference](./packages/ff-sdk/README.md) - Complete API documentation
+- [Entity Client Reference](./ENTITY_CLIENT_REFERENCE.md) - `RemoteEntityClient` API documentation
+- [RemoteAgentBundleClient](./RemoteAgentBundleClient.md) - Agent bundle client API documentation
 
 ### External Resources
 
@@ -547,8 +548,6 @@ We welcome contributions to these tutorials! If you find errors, have suggestion
 2. Create a feature branch
 3. Make your changes
 4. Submit a pull request
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines.
 
 ---
 
