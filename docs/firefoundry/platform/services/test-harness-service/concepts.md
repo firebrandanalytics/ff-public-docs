@@ -1,62 +1,59 @@
 # Test Harness Service — Concepts
 
-This page explains the mental model behind the Test Harness Service: the objects it stores, how a test run moves through its lifecycle, how assertions are evaluated, and how the service relates to agent bundles and the Test Evaluation Agent.
+This page explains how to think about tests in the Test Harness Service, how to design a suite for your agent bundle, how runs and assertions behave, and what is available today versus in development.
 
 ## The Mental Model
 
-A test in FireFoundry is a question you ask an agent together with a description of what a good answer looks like. The Test Harness Service turns that idea into data:
+A test is a question you ask your agent plus a description of what a good answer looks like. The service stores that as data:
 
 ```
-Test Suite  ──(1:n)──>  Test Case  ──(1:n, inline)──>  Assertion
+Test Suite ──(1:n)──> Test Case ──(inline)──> Assertions
     │
-    ├──(1:n)──>  Test Run  ──(1:n)──>  Test Result  ──(1:n, inline)──>  Assertion Result
+    ├──(1:n)──> Test Run ──(1:n)──> Test Result ──(inline)──> Assertion Results
     │
-    └──(1:n)──>  Scheduled Run
+    └──(1:n)──> Schedule
 ```
 
 - You define **what** to test once (suite, cases, assertions).
-- Every time you execute the suite you get a new **run** with one **result** per case.
-- A **schedule** describes **when** a suite should run automatically.
+- Each execution of the suite is a new **run** with one **result** per case.
+- A **schedule** says **when** a suite should run automatically (automatic triggering is in development).
 
-Because definitions and history are stored by the service, the same suite can be run by a developer from the command line, by a CI pipeline, or by a schedule, and all of those runs are comparable.
+Because the same suite can be run by you from a terminal, by CI, or by a schedule, those runs are directly comparable.
 
-## Core Domain Objects
+## Core Objects
 
 ### Test Suite
 
-A suite is a named collection of test cases aimed at one target bot.
+A named collection of cases aimed at one target.
 
 | Field | Description |
 |-------|-------------|
-| `id` | UUID assigned by the service |
 | `name` | Human-readable name (required) |
-| `description` | Optional free text |
 | `target_bot_id` | Identifier of the bot or bundle under test (required) |
-| `target_bot_name` | Optional display name for the target |
-| `tags` | Array of strings for grouping and filtering (default `[]`) |
-| `created_at` / `updated_at` | ISO 8601 timestamps; `updated_at` also changes when a case is added |
+| `target_bot_name` | Optional display name |
+| `description` | Optional free text |
+| `tags` | Strings for grouping and filtering, e.g. `["smoke", "orders"]` |
 
-When you list suites, each suite is enriched with statistics: `case_count`, and — if the suite has been run — `last_run_status`, `last_run_at`, `last_run_passed`, and `last_run_failed`. The list is sorted by most recently updated first.
+Suite listings add `case_count` and, once the suite has been run, `last_run_status`, `last_run_at`, `last_run_passed`, and `last_run_failed`.
 
 ### Test Case
 
-A case is one input and the checks applied to the response.
+One input and the checks applied to the response.
 
 | Field | Description |
 |-------|-------------|
-| `id` / `suite_id` | Case UUID and owning suite |
-| `name` | Case name (required); copied onto results so history survives renames |
-| `description` | Optional free text |
+| `name` | Case name (required); copied onto each result so history stays readable after renames |
 | `input_message` | The message sent to the target (required) |
 | `assertions` | Array of assertions (default `[]`) |
 | `timeout_ms` | Per-case timeout budget (default `10000`) |
-| `sort_order` | Execution order within the suite; defaults to one more than the current highest value |
+| `sort_order` | Execution order within the suite; new cases go after existing ones by default |
+| `description` | Optional free text |
 
-Cases execute in ascending `sort_order`. A case with no assertions always passes.
+Cases run in ascending `sort_order`. A case with no assertions always passes.
 
 ### Assertion
 
-Assertions are stored inline on the case as JSON objects:
+Assertions are stored inline on the case:
 
 ```json
 { "type": "matches_regex", "expected": "ORD-\\d+", "label": "Returns order ID" }
@@ -64,110 +61,129 @@ Assertions are stored inline on the case as JSON objects:
 
 | Field | Description |
 |-------|-------------|
-| `type` | The assertion type (see below) |
-| `expected` | The value or pattern to compare with — always a string |
-| `path` | For `json_path` only: a dot-separated path such as `$.order.status` |
-| `label` | Optional human-readable label shown in results |
+| `type` | Assertion type (see [Assertion Types](#assertion-types)) |
+| `expected` | Value or pattern to compare with; always a string |
+| `path` | For `json_path` only: dot path such as `$.order.status` (default `$`) |
+| `label` | Optional label echoed in results |
 
-A case **passes only when every assertion passes**. Each evaluated assertion produces an **assertion result** containing the original assertion, `passed`, the `actual_value` it was compared against, and a `message` explaining the verdict.
+A case **passes only when every assertion passes**. Each evaluated assertion yields an **assertion result**: the original assertion, `passed`, the `actual_value` it was compared with, and a `message` explaining the verdict.
 
 ### Test Run
 
-A run is one execution of a suite.
+One execution of a suite.
 
 | Field | Description |
 |-------|-------------|
 | `status` | `pending`, `running`, `completed`, `cancelled`, or `failed` |
-| `environment` | Optional free-text label, e.g. `staging` or `dev` |
-| `triggered_by` | Optional free-text label for who or what started the run, e.g. `ci-pipeline` |
-| `total_cases` | Number of cases in the suite when the run was created |
-| `passed` / `failed` / `skipped` | Roll-up counts, filled in when the run completes |
-| `started_at` / `completed_at` / `duration_ms` | Timing information |
+| `environment` | Your free-text label, e.g. `dev`, `staging` |
+| `triggered_by` | Your free-text label, e.g. `ci-pipeline`, `alice` |
+| `total_cases` | Cases in the suite when the run was created |
+| `passed` / `failed` / `skipped` | Roll-up counts |
+| `started_at` / `completed_at` / `duration_ms` | Timing |
 
 ### Test Result
 
-A result is the outcome of one case within one run: `status` (`passed`, `failed`, `skipped`, or `error`), the `actual_response` that was evaluated, `duration_ms`, an optional `error_message`, and the array of `assertion_results`.
+The outcome of one case in one run: `status` (`passed`, `failed`, `skipped`, `error`), the `actual_response` that was evaluated, `duration_ms`, an optional `error_message`, and the `assertion_results` array.
 
-### Scheduled Run
+### Schedule
 
-A schedule ties a suite to a frequency: `hourly`, `daily`, `weekly`, `monthly`, or `cron` (which requires a `cron_expression`). Schedules can carry an `environment` label and can be switched on and off with `enabled`. The fields `last_run_at` and `next_run_at` are reserved for the scheduler.
+Ties a suite to a frequency — `hourly`, `daily`, `weekly`, `monthly`, or `cron` (requires `cron_expression`) — with an optional `environment` label and an `enabled` switch. A suite with an enabled schedule cannot be deleted until the schedule is disabled or removed.
 
 ## Run Lifecycle
 
 ```
-            POST /api/runs                 POST /api/runs/{id}/execute
-  (none) ──────────────────> pending ─────────────────────────> running ──> completed
-                               │                                  │
-                               │ POST /api/runs/{id}/cancel       │ cancel
-                               v                                  v
-                           cancelled <─────────────────────────────
+          POST /api/runs              POST /api/runs/{id}/execute
+ (none) ─────────────────> pending ─────────────────────────────> running ──> completed
+                              │                                      │
+                              │ POST /api/runs/{id}/cancel           │ cancel
+                              v                                      v
+                          cancelled <─────────────────────────────────
 ```
 
-1. **Create** — `POST /api/runs` records a `pending` run and snapshots `total_cases`. Nothing executes yet, so a CI job can create the run, store its ID, and execute it as a separate step.
-2. **Execute** — `POST /api/runs/{id}/execute` moves the run to `running`, evaluates each case in `sort_order`, stores one result per case, and marks the run `completed` with pass/fail counts and duration. Only a `pending` run can be executed; executing any other status returns `409 Conflict`.
-3. **Cancel** — `POST /api/runs/{id}/cancel` is allowed while a run is `pending` or `running`; any other status returns `409 Conflict`.
-4. **Shortcut** — `POST /api/suites/{suiteId}/run` performs create and execute in one call and returns the finished run.
+1. **Create** — `POST /api/runs` records a `pending` run. Nothing executes yet, so a CI job can record the run ID first.
+2. **Execute** — `POST /api/runs/{id}/execute` evaluates each case in order and returns the finished run. Only a `pending` run can be executed (otherwise `409`).
+3. **Cancel** — Allowed while `pending` or `running` (otherwise `409`).
+4. **Shortcut** — `POST /api/suites/{suiteId}/run` creates and executes in one call.
 
-Execution is synchronous: the execute call returns once every case has been evaluated. `completed` means the run finished, not that every case passed — check the `passed` and `failed` counts, or list results with `?status=failed`.
+Execution is synchronous: the call returns when every case has been evaluated. **`completed` means the run finished, not that every case passed** — check `failed`, or list results with `?status=failed`.
 
-The `failed` run status and the `skipped` / `error` result statuses are part of the data model for the live execution engine; the 0.1.0 executor produces only `completed` runs with `passed` or `failed` results.
+Today runs finish as `completed` with `passed` or `failed` results. The `failed` run status and the `skipped` / `error` result statuses will be produced once live bundle invocation ships (for example, when a call to your bundle times out), so handle them in your tooling now.
 
-## Assertion Evaluation
+## Assertion Types
 
-In 0.1.0 the engine evaluates these assertion types against the response text:
+Available now, evaluated against the response text:
 
 | Type | Behavior |
 |------|----------|
-| `contains` | Passes if the response contains `expected` (case-sensitive substring) |
+| `contains` | Passes if the response contains `expected` (case-sensitive) |
 | `not_contains` | Passes if the response does **not** contain `expected` |
 | `equals` | Passes if the response is exactly `expected` |
-| `matches_regex` | Passes if `expected`, compiled as a JavaScript regular expression without flags, matches anywhere in the response. An invalid pattern fails the assertion with an `Invalid regex` message |
-| `json_path` | Parses the response as JSON, follows the dot path in `path` (default `$`, the whole document), and compares the value — strings as-is, everything else as JSON text — with `expected`. A non-JSON response fails |
+| `matches_regex` | Passes if `expected`, as a JavaScript regular expression without flags, matches anywhere in the response. An invalid pattern fails with `Invalid regex` |
+| `json_path` | Parses the response as JSON, follows `path`, and compares the value (strings as-is, other values as JSON text) with `expected`. A non-JSON response fails |
 
-Three further types are accepted and stored but are placeholders until the live execution engine lands:
+Accepted but not yet enforced:
 
-| Type | 0.1.0 behavior |
-|------|----------------|
-| `status_code` | Always passes (message: "Status code assertion evaluated at HTTP level") |
-| `latency_under` | Always passes (message: "Latency assertion evaluated at run level") |
+| Type | Current behavior |
+|------|------------------|
+| `status_code` | Always passes |
+| `latency_under` | Always passes |
 | `skill_called` | Case-insensitive check that the response text mentions `expected`; does not inspect traces |
 
-Any other `type` fails with `Unknown assertion type`. Assertion types are not validated when a case is saved, so a typo surfaces as a failed assertion at run time.
+Any other `type` fails at run time with `Unknown assertion type`. Types are not validated when you save a case, so a typo shows up as a failed assertion when the suite runs.
+
+### Semantic assertions with `result_bot` (in development)
+
+For free-text, numeric-with-explanation, and multi-step answers, exact matching is brittle. The planned `result_bot` assertion sends the case's input, your expected answer, and the actual response to the [Test Evaluation Agent](../../system-agents/test-evaluation.md), and uses its `is_correct` verdict and reasoning as the assertion result. Until it ships, a `result_bot` assertion fails with `Unknown assertion type`. If you need semantic judgment today, call the Test Evaluation Agent directly from your own runner.
+
+## Designing a Test Suite for Your Bundle
+
+- **One suite per behavior area of one target.** A suite has a single `target_bot_id` and is the unit you run and schedule. Split "order lookup" from "refund answers" so a failure points at one area.
+- **Use tags for tiers.** Tag suites `smoke`, `regression`, or `nightly` and choose which to run at each stage of your pipeline.
+- **Prefer several narrow assertions over one broad one.** Two `contains` checks give two independent verdicts; one regex covering both does not tell you which part failed.
+- **Label every assertion.** The `label` is echoed back in results and makes failure reports readable.
+- **Assert on structure where you can.** If your bundle returns JSON, `json_path` checks on specific fields are far more stable than text matching on prose.
+- **Use `not_contains` for guardrails.** For example, check that responses never include `error`, internal IDs, or phrases your prompt forbids.
+- **Plan for `result_bot`.** For cases where only an LLM judge will do, write the expected answer now so you can add a `result_bot` assertion when it ships.
+- **Fork with `duplicate`.** Copy a suite before a sweeping prompt or model change so you can compare old and new definitions.
+- **Keep test data synthetic.** Inputs and responses are stored verbatim; avoid real customer data or credentials in `input_message` or `expected`.
+
+## Fitting Testing into Your Workflow
+
+1. **Keep suites as code.** Store suite and case definitions as JSON in your bundle's repository, with a small script that creates them through the API. This makes suites reviewable and lets you re-create them after a service restart.
+2. **Run during development.** After [deploying your bundle locally](../../../local-development/agent-development.md), run the relevant suite and inspect failed results.
+3. **Gate CI.** After deploying to a dev or staging environment, call `POST /api/suites/{id}/run` with `environment` and `triggered_by` set, and fail the job if `failed > 0`. See [Getting Started — Use It in CI](./getting-started.md#step-7-use-it-in-ci).
+4. **Review history.** List runs per suite to spot trends across environments and releases.
+
+Remember that while runs use simulated responses, CI gating verifies your wiring and assertion definitions, not your bundle's actual answers.
 
 ## Current Release vs. In Development
 
-Version 0.1.0 ships the full REST surface described in the [Reference](./reference.md), with two important limitations:
+**Available now (0.1.0):** the full REST API described in the [Reference](./reference.md), the assertion types above, run history, and schedule definitions.
 
-1. **In-memory storage.** Suites, cases, runs, results, and schedules live in the service process. They are lost when the pod restarts, and they are not shared between replicas. The repository includes PostgreSQL migrations for the same tables (`test_suites`, `test_cases`, `test_runs`, `test_results`, `test_assertions`, `scheduled_runs`), but 0.1.0 does not connect to a database.
-2. **Simulated execution.** The executor does not call the target bot. Each case is evaluated against the string `Simulated response for: <input_message>`. This is useful for exercising the API, building UI and CI integrations, and validating that assertions are well-formed, but results do not reflect real bundle behavior.
+**Current limitations:**
 
-Additionally, **schedules are stored but not triggered** — 0.1.0 has no scheduler process, so a schedule never creates runs on its own.
+1. **Simulated responses.** Runs do not call your bundle. Each case is evaluated against the placeholder text `Simulated response for: <input_message>`. Results are useful for exercising the API and validating assertions, not for judging bundle behavior.
+2. **No persistence across restarts.** Suites, cases, runs, results, and schedules are lost when the service restarts.
+3. **Schedules do not trigger runs.** Drive runs from CI or another scheduler.
 
-The following capabilities are in development. They are described here so you can see where the service is heading; names and shapes may change before release.
+**In development** (names and shapes may change before release):
 
-- **Live bundle invocation.** Each case will declare an `invocation_type` — `api_endpoint` (call a bundle's custom API route), `entity_invoke` (call a method on a specific entity), or `bot_run` (run a named bot) — plus the fields that type needs (`route` and `method`, `entity_id` and `entity_method`, or `bot_name`).
-- **Bundle routing.** Cases will reference a `target_bundle` by name; the service will resolve the name to a host and port through an environment-scoped routing file, so the same suite can run against dev, staging, or production bundles by changing configuration rather than cases.
-- **Real `status_code` and latency checks** measured on the actual HTTP call.
-- **Extended assertion library.** `string_match` (optionally case-insensitive), `levenshtein` (similarity threshold), `number_match` (numeric tolerance), and `json_match` (deep JSON comparison, optionally allowing extra fields).
-- **`result_bot` semantic assertions.** The harness will send the case's input, the expected answer, and the actual response to the [Test Evaluation Agent](../../system-agents/test-evaluation.md) and use its `is_correct` verdict and reasoning as the assertion result. This is the recommended way to test free-text, numeric-with-reasoning, and multi-step answers where exact matching is too brittle.
-- **PostgreSQL persistence** using the shipped migrations.
+- **Live bundle invocation.** Cases will declare how to call your bundle — `api_endpoint` (a bundle's custom API route, with `route` and `method`), `entity_invoke` (a method on an entity, with `entity_id` and `entity_method`), or `bot_run` (a named bot, with `bot_name`).
+- **Environment routing.** Cases will reference a `target_bundle` by name, resolved per environment, so the same suite can run against dev, staging, or production by configuration rather than by editing cases.
+- **Real `status_code` and `latency_under` checks** measured on the actual call.
+- **Extended assertions:** `string_match` (optionally case-insensitive), `levenshtein` (similarity threshold), `number_match` (numeric tolerance), `json_match` (deep JSON comparison, optionally allowing extra fields).
+- **`result_bot` semantic assertions** via the Test Evaluation Agent.
+- **Persistent storage** of suites and run history.
+- **Automatic scheduled runs.**
 
-## How It Interacts with Other Services
+## How It Relates to Other Parts of the Platform
 
 | Component | Relationship |
 |-----------|--------------|
-| **Agent bundles** | The systems under test. A suite's `target_bot_id` identifies the target; live invocation is in development |
-| **[Test Evaluation Agent](../../system-agents/test-evaluation.md)** | LLM judge for `result_bot` assertions (in development). Can also be called directly by custom test runners |
-| **[FF Broker](../ff-broker/README.md)** | Routes LLM calls made by the bundles under test and by the Test Evaluation Agent. The harness itself makes no LLM calls |
-| **Console / CI pipelines** | Clients of the REST API; `environment` and `triggered_by` labels let them tag runs |
-
-## Design Guidance
-
-- **One suite per behavior area of one target.** Suites carry a single `target_bot_id` and are the unit of execution and scheduling.
-- **Label your assertions.** `label` is echoed back in every assertion result and makes failure reports readable.
-- **Prefer several narrow assertions over one broad one.** Two `contains` checks produce two independent verdicts; a single regex that tries to cover both does not.
-- **Use `duplicate` to fork.** Copy a suite before making sweeping changes so you can compare old and new definitions side by side.
-- **Tag runs.** Set `environment` and `triggered_by` on every run so history can be filtered and attributed.
+| **Your agent bundles** | The systems under test, identified by the suite's `target_bot_id`. Live invocation is in development |
+| **[Test Evaluation Agent](../../system-agents/test-evaluation.md)** | LLM judge for `result_bot` assertions (in development); can also be called directly |
+| **[FF Broker](../ff-broker/README.md)** | Routes LLM calls made by your bundle and by the Test Evaluation Agent; the harness makes no LLM calls itself |
+| **CI pipelines / Console** | Clients of the REST API; `environment` and `triggered_by` labels attribute each run |
 
 ## Related
 

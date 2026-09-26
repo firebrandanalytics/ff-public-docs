@@ -1,14 +1,14 @@
 # Test Harness Service — Reference
 
-Complete REST API reference for the Test Harness Service 0.1.0: endpoints, request and response shapes, assertion types, error responses, and configuration.
+REST API reference for the Test Harness Service 0.1.0: endpoints, request and response shapes, assertion types, and errors.
 
 ## Conventions
 
-- **Base URL**: `http://localhost:3004` when running from source; inside a cluster, `http://<test-harness-service>.<namespace>.svc.cluster.local:<port>` for whatever Service you create (see [Operations](./operations.md#deployment)).
+- **Base URL**: The URL of the Test Harness Service in your environment (see [Operations — Getting Access](./operations.md#getting-access-in-your-environment)). Examples use `$HARNESS_URL`.
 - **Content type**: JSON request and response bodies (`Content-Type: application/json`). Request bodies are limited to 5 MB.
 - **IDs**: All resource IDs are UUIDs.
 - **Timestamps**: ISO 8601 strings in UTC.
-- **Authentication**: `/api/*` and platform endpoints are unauthenticated in 0.1.0; only `/admin/*` requires an API key. Restrict network access accordingly (see [Operations — Security](./operations.md#security)).
+- **Authentication**: The `/api/*` endpoints require no credentials in 0.1.0; access is controlled by who can reach the service on the network (see [Operations — Access and Data Handling](./operations.md#access-and-data-handling)).
 - **Partial updates**: `PATCH` endpoints apply only the fields present in the body.
 
 ### Pagination
@@ -55,11 +55,8 @@ All list endpoints accept `page` (default `1`) and `page_size` (default `25`) qu
 | GET | `/api/schedules/{id}` | Get a schedule |
 | PATCH | `/api/schedules/{id}` | Update a schedule |
 | DELETE | `/api/schedules/{id}` | Delete a schedule |
-| GET | `/admin/stats` | Totals across suites, runs, and schedules (API key) |
-| GET | `/` | Service banner |
 | GET | `/health` | Liveness probe |
 | GET | `/ready` | Readiness probe |
-| GET | `/status` | Service status summary |
 
 ## Test Suites
 
@@ -212,31 +209,14 @@ Body: any of `frequency`, `cron_expression`, `environment`, `enabled`. Switching
 
 Returns `204` or `404`.
 
-## Admin Endpoints
-
-### GET /admin/stats
-
-Requires the admin API key when `ADMIN_API_KEY` is configured, sent as either header:
-
-```
-X-API-Key: <key>
-Authorization: Bearer <key>
-```
-
-```json
-{ "total_suites": 4, "total_runs": 3, "total_schedules": 0 }
-```
-
-Returns `401` `{ "error": "Unauthorized" }` for a missing or wrong key. If `ADMIN_API_KEY` is not set, the endpoint is open and the service logs a warning on each call.
-
-## Platform Endpoints
+## Health Endpoints
 
 | Path | Response |
 |------|----------|
-| `GET /` | `{ "message": "FireFoundry Test Harness Service", "service": "test-harness-service", "version": "0.1.0" }` |
 | `GET /health` | `{ "status": "healthy", "timestamp": "<iso>" }` |
 | `GET /ready` | `{ "ready": true }` |
-| `GET /status` | `{ "service": "...", "version": "...", "uptime": <seconds>, "environment": "<NODE_ENV>" }` |
+
+Use `/health` to check that the service is reachable from your workstation, CI runner, or bundle.
 
 ## Response Schemas
 
@@ -346,12 +326,12 @@ Returns `401` `{ "error": "Unauthorized" }` for a missing or wrong key. If `ADMI
 | `equals` | Implemented | Response equals `expected` exactly |
 | `matches_regex` | Implemented | JavaScript regex `expected` matches the response; invalid regex fails |
 | `json_path` | Implemented | Value at `path` (string, or JSON text for other types) equals `expected`; non-JSON response fails |
-| `status_code` | Placeholder | Always passes until live execution ships |
-| `latency_under` | Placeholder | Always passes until live execution ships |
+| `status_code` | Placeholder | Always passes until live bundle invocation ships |
+| `latency_under` | Placeholder | Always passes until live bundle invocation ships |
 | `skill_called` | Placeholder | Case-insensitive text match of `expected` in the response |
-| `string_match`, `levenshtein`, `number_match`, `json_match`, `result_bot` | In development | Not evaluated by 0.1.0; currently fail with `Unknown assertion type` |
+| `string_match`, `levenshtein`, `number_match`, `json_match`, `result_bot` | In development | Not evaluated yet; currently fail with `Unknown assertion type` |
 
-See [Concepts — Assertion Evaluation](./concepts.md#assertion-evaluation) for details and [Concepts — Current Release vs. In Development](./concepts.md#current-release-vs-in-development) for the planned types, including `result_bot`, which delegates to the [Test Evaluation Agent](../../system-agents/test-evaluation.md).
+See [Concepts — Assertion Types](./concepts.md#assertion-types) for details and [Concepts — Current Release vs. In Development](./concepts.md#current-release-vs-in-development) for the planned types, including `result_bot`, which delegates to the [Test Evaluation Agent](../../system-agents/test-evaluation.md).
 
 ## Error Responses
 
@@ -364,30 +344,9 @@ Errors use a simple JSON body:
 | Status | When |
 |--------|------|
 | `400` | Missing required fields; `cron` schedule without `cron_expression` |
-| `401` | Missing or invalid admin API key on `/admin/*` |
 | `404` | Resource not found (message names the resource), or unknown route (`"Not Found"`) |
 | `409` | Deleting a suite with enabled schedules; executing a non-pending run; cancelling a finished run |
-| `500` | Unexpected error: `{ "error": "Internal Server Error", "message": "..." }` — `message` is included only when `NODE_ENV=development` |
-
-## Configuration
-
-Environment variables read by the service. Variables marked *reserved* are parsed and validated at startup but not used by 0.1.0; they belong to the execution engine and database layer in development.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NODE_ENV` | `development` | `development`, `production`, or `test`. `development` seeds sample data and includes error details in 500 responses |
-| `PORT` | `3004` | HTTP port. The container image health check expects `8080` |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
-| `SERVICE_NAME` | `test-harness-service` | Reported by `/` and `/status` |
-| `ADMIN_API_KEY` | *(unset)* | API key for `/admin/*`. Unset leaves admin endpoints open |
-| `PG_DATABASE` | `firefoundry_beta` | *Reserved* — database name |
-| `PG_POOL_MAX` | `10` | *Reserved* — maximum pool connections |
-| `PG_POOL_MIN` | `2` | *Reserved* — minimum pool connections |
-| `BOT_ENDPOINT_BASE_URL` | `http://localhost:3000` | *Reserved* — base URL for invoking target bots |
-| `TEST_EXECUTION_TIMEOUT_MS` | `30000` | *Reserved* — overall execution timeout |
-| `TEST_EXECUTION_CONCURRENCY` | `5` | *Reserved* — parallel case execution limit |
-
-An invalid value (for example `LOG_LEVEL=trace` or a non-numeric `PORT`) fails validation and the service exits at startup with `Invalid configuration`.
+| `500` | Unexpected error, including a malformed JSON request body: `{ "error": "Internal Server Error" }` |
 
 ## Related
 

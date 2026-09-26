@@ -1,65 +1,28 @@
 # Test Harness Service — Getting Started
 
-This guide walks you through running the Test Harness Service, creating a test suite, adding cases with assertions, running the suite, and reading the results.
+This guide walks you through creating a test suite for your agent bundle, adding cases with assertions, running the suite, reading results and history, and wiring a run into CI.
 
-> **Remember:** in version 0.1.0 the service evaluates assertions against a simulated response (`Simulated response for: <input_message>`) instead of calling your bundle, and keeps data in memory. The walkthrough below uses that behavior deliberately so the outcomes are predictable. See [Concepts — Current Release vs. In Development](./concepts.md#current-release-vs-in-development).
+> **Preview behavior.** Runs currently use a simulated response (`Simulated response for: <input_message>`) instead of calling your bundle, and data does not persist across service restarts. The walkthrough uses that behavior deliberately so outcomes are predictable. See [Concepts — Current Release vs. In Development](./concepts.md#current-release-vs-in-development).
 
 ## Prerequisites
 
-- **Node.js 20+** and npm, if you run the service from source
-- Read access to the private `@firebrandanalytics` npm packages on GitHub Packages (a GitHub token exported as `GITHUB_TOKEN`), which the service depends on
-- `curl` and, optionally, `jq` for pretty-printing responses
-- Or: a Test Harness Service instance already running in your cluster, reachable through `kubectl port-forward` (see [Operations](./operations.md#deployment))
+- Access to a Test Harness Service instance in your environment and its base URL (see [Operations — Getting Access](./operations.md#getting-access-in-your-environment))
+- `curl`, and optionally `jq`
 
-The examples use `http://localhost:3004`, the service's default port. If you are port-forwarding to a container started from the published image, use the port you forwarded (the image expects `PORT=8080`).
-
-## Step 1: Start the Service
-
-From a checkout of the service repository:
+Set the base URL once. For example, if you port-forward the service to your workstation:
 
 ```bash
-npm install
-npm run dev          # tsx watch mode, listens on PORT (default 3004)
+export HARNESS_URL=http://localhost:8080
+curl -s $HARNESS_URL/health
+# {"status":"healthy","timestamp":"..."}
 ```
 
-`NODE_ENV` defaults to `development`, and in development mode the service **seeds sample data** on startup: four suites, their cases, and three completed runs. That is handy for exploring the API. To start with an empty store, run with `NODE_ENV=production`:
-
-```bash
-NODE_ENV=production npm run dev
-```
-
-## Step 2: Verify the Service is Running
-
-```bash
-curl -s http://localhost:3004/health
-```
-
-```json
-{
-  "status": "healthy",
-  "timestamp": "2026-02-20T15:04:12.381Z"
-}
-```
-
-```bash
-curl -s http://localhost:3004/status
-```
-
-```json
-{
-  "service": "test-harness-service",
-  "version": "0.1.0",
-  "uptime": 12.84,
-  "environment": "development"
-}
-```
-
-## Step 3: Create a Test Suite
+## Step 1: Create a Test Suite
 
 A suite needs a `name` and the `target_bot_id` of the bot or bundle it tests.
 
 ```bash
-curl -s -X POST http://localhost:3004/api/suites \
+curl -s -X POST $HARNESS_URL/api/suites \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "Geography Bot - Smoke",
@@ -85,18 +48,16 @@ Response (`201 Created`):
 }
 ```
 
-Save the ID:
-
 ```bash
 SUITE_ID=5b0f2a7e-3c1d-4f5e-9a8b-0c6d7e8f9a01
 ```
 
-## Step 4: Add Test Cases
+## Step 2: Add Test Cases
 
-Each case needs a `name` and an `input_message`. Attach assertions to describe a correct answer.
+Each case needs a `name` and an `input_message`. Attach labelled assertions that describe a correct answer.
 
 ```bash
-curl -s -X POST http://localhost:3004/api/suites/$SUITE_ID/cases \
+curl -s -X POST $HARNESS_URL/api/suites/$SUITE_ID/cases \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "Capital of France",
@@ -110,10 +71,10 @@ curl -s -X POST http://localhost:3004/api/suites/$SUITE_ID/cases \
   }'
 ```
 
-Add a second case that returns structured data:
+A second case that expects structured output:
 
 ```bash
-curl -s -X POST http://localhost:3004/api/suites/$SUITE_ID/cases \
+curl -s -X POST $HARNESS_URL/api/suites/$SUITE_ID/cases \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "Population lookup",
@@ -124,18 +85,18 @@ curl -s -X POST http://localhost:3004/api/suites/$SUITE_ID/cases \
   }'
 ```
 
-Cases run in `sort_order`; when you do not set it, each new case is placed after the existing ones. List them to confirm:
+Cases run in `sort_order`; new cases go after existing ones unless you set it. Confirm:
 
 ```bash
-curl -s "http://localhost:3004/api/suites/$SUITE_ID/cases" | jq '.data[] | {id, name, sort_order}'
+curl -s "$HARNESS_URL/api/suites/$SUITE_ID/cases" | jq '.data[] | {id, name, sort_order}'
 ```
 
-## Step 5: Run the Suite
+## Step 3: Run the Suite
 
-The shortcut endpoint creates a run and executes it in one call. Tag the run with an environment and a trigger so it is easy to find later.
+The shortcut endpoint creates and executes a run in one call. Tag it so it is easy to find later.
 
 ```bash
-curl -s -X POST http://localhost:3004/api/suites/$SUITE_ID/run \
+curl -s -X POST $HARNESS_URL/api/suites/$SUITE_ID/run \
   -H 'Content-Type: application/json' \
   -d '{ "environment": "dev", "triggered_by": "getting-started" }'
 ```
@@ -158,24 +119,24 @@ curl -s -X POST http://localhost:3004/api/suites/$SUITE_ID/run \
 }
 ```
 
-`completed` means the run finished; the `passed` and `failed` counts tell you how the cases fared. Both cases fail here because the simulated response does not mention Paris and is not JSON.
+`completed` means the run finished; `passed` and `failed` tell you how the cases fared. Both cases fail here because the simulated response does not mention Paris and is not JSON.
 
-If you prefer two steps — for example, a CI job that records the run ID before executing — create the run and then execute it:
+To create and execute as two steps (for example, so a CI job can record the run ID first):
 
 ```bash
-RUN_ID=$(curl -s -X POST http://localhost:3004/api/runs \
+RUN_ID=$(curl -s -X POST $HARNESS_URL/api/runs \
   -H 'Content-Type: application/json' \
   -d "{\"suite_id\": \"$SUITE_ID\", \"environment\": \"dev\", \"triggered_by\": \"ci\"}" | jq -r .id)
 
-curl -s -X POST http://localhost:3004/api/runs/$RUN_ID/execute
+curl -s -X POST $HARNESS_URL/api/runs/$RUN_ID/execute
 ```
 
-## Step 6: Inspect Results
+## Step 4: Read the Results
 
-List the failed results of a run (either run from Step 5 works; the example output shows one result):
+List only the failed results of a run:
 
 ```bash
-curl -s "http://localhost:3004/api/runs/$RUN_ID/results?status=failed" | jq .
+curl -s "$HARNESS_URL/api/runs/$RUN_ID/results?status=failed" | jq .
 ```
 
 ```json
@@ -219,28 +180,77 @@ curl -s "http://localhost:3004/api/runs/$RUN_ID/results?status=failed" | jq .
 }
 ```
 
-Each assertion result tells you what was checked, what value it was compared with, and why it passed or failed. Fetch a single result with `GET /api/results/{id}`.
+Each assertion result shows what was checked, the value it was compared with, and why it passed or failed. A compact failure report:
 
-## Step 7: Review Suite History
+```bash
+curl -s "$HARNESS_URL/api/runs/$RUN_ID/results?status=failed" \
+  | jq -r '.data[] | .test_case_name as $c | .assertion_results[] | select(.passed == false)
+           | "\($c): \(.assertion.label // .assertion.type) - \(.message)"'
+```
+
+## Step 5: Review Run History
 
 The suite list shows the latest run for every suite:
 
 ```bash
-curl -s http://localhost:3004/api/suites | jq '.data[] | {name, case_count, last_run_status, last_run_passed, last_run_failed}'
+curl -s $HARNESS_URL/api/suites | jq '.data[] | {name, case_count, last_run_status, last_run_passed, last_run_failed}'
 ```
 
-List every run of one suite, newest first:
+All runs of one suite, newest first:
 
 ```bash
-curl -s "http://localhost:3004/api/runs?suite_id=$SUITE_ID" | jq '.data[] | {id, status, environment, passed, failed}'
+curl -s "$HARNESS_URL/api/runs?suite_id=$SUITE_ID" | jq '.data[] | {id, status, environment, triggered_by, passed, failed}'
 ```
 
-## Step 8: Define a Schedule (Optional)
+## Step 6: Iterate on Cases
 
-Store a nightly schedule for the suite. A `cron` frequency requires `cron_expression`.
+Update a case's assertions (the array is replaced as a whole):
 
 ```bash
-curl -s -X POST http://localhost:3004/api/schedules \
+curl -s -X PATCH $HARNESS_URL/api/cases/$CASE_ID \
+  -H 'Content-Type: application/json' \
+  -d '{ "assertions": [ { "type": "contains", "expected": "Paris", "label": "Names Paris" } ] }'
+```
+
+Fork a suite before a major prompt or model change:
+
+```bash
+curl -s -X POST $HARNESS_URL/api/suites/$SUITE_ID/duplicate \
+  -H 'Content-Type: application/json' \
+  -d '{ "name": "Geography Bot - Smoke (v2 prompt)" }'
+```
+
+## Step 7: Use It in CI
+
+Run a suite after deploying your bundle to a test environment and fail the job if any case fails:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+RUN=$(curl -sf -X POST "$HARNESS_URL/api/suites/$SUITE_ID/run" \
+  -H 'Content-Type: application/json' \
+  -d "{\"environment\": \"staging\", \"triggered_by\": \"ci-${BUILD_ID:-local}\"}")
+
+FAILED=$(echo "$RUN" | jq '.failed')
+RUN_ID=$(echo "$RUN" | jq -r '.id')
+echo "Run $RUN_ID: $(echo "$RUN" | jq '.passed') passed, $FAILED failed"
+
+if [ "$FAILED" -gt 0 ]; then
+  curl -s "$HARNESS_URL/api/runs/$RUN_ID/results?status=failed&page_size=100" \
+    | jq -r '.data[] | "FAILED: \(.test_case_name)"'
+  exit 1
+fi
+```
+
+Because data does not persist across service restarts, keep suite definitions in your repository and have CI (re)create the suite before running it if it is missing. While runs use simulated responses, treat this as validating your pipeline wiring rather than your bundle's answers.
+
+## Optional: Define a Schedule
+
+Store a nightly schedule. A `cron` frequency requires `cron_expression`.
+
+```bash
+curl -s -X POST $HARNESS_URL/api/schedules \
   -H 'Content-Type: application/json' \
   -d "{
     \"suite_id\": \"$SUITE_ID\",
@@ -250,17 +260,17 @@ curl -s -X POST http://localhost:3004/api/schedules \
   }"
 ```
 
-In 0.1.0 schedules are stored but **not executed automatically**; drive runs from your CI system in the meantime. While a suite has an enabled schedule it cannot be deleted — disable the schedule first:
+Schedules do **not** trigger runs automatically yet; use your CI system's scheduler in the meantime. A suite with an enabled schedule cannot be deleted; disable the schedule first:
 
 ```bash
-curl -s -X PATCH http://localhost:3004/api/schedules/$SCHEDULE_ID \
+curl -s -X PATCH $HARNESS_URL/api/schedules/$SCHEDULE_ID \
   -H 'Content-Type: application/json' \
   -d '{ "enabled": false }'
 ```
 
 ## Next Steps
 
-- [Concepts](./concepts.md) — Run lifecycle, assertion semantics, and what is coming in the live execution engine
+- [Concepts](./concepts.md) — Suite design guidance, assertion semantics, and what is coming (live invocation, `result_bot`)
 - [Reference](./reference.md) — Every endpoint, field, and error response
-- [Operations](./operations.md) — Deploying and configuring the service
+- [Operations](./operations.md) — Access, limits, and troubleshooting
 - [Test Evaluation Agent](../../system-agents/test-evaluation.md) — Try LLM-judged evaluation directly while `result_bot` assertions are in development
