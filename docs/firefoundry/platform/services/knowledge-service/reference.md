@@ -1,6 +1,6 @@
 # Knowledge Service — Reference
 
-Complete REST API reference for the Knowledge Service 0.2.0: endpoints, request and response schemas, error codes, and configuration. The canonical machine-readable contract is the OpenAPI 3.0 document served at `GET /openapi.json` (generated from the service's Zod schemas).
+REST API reference for the Knowledge Service 0.2.0: endpoints, request and response schemas, and error codes. The machine-readable contract is the OpenAPI 3.0 document served at `GET /openapi.json`; the `@firebrandanalytics/kb-client` TypeScript client is generated from it.
 
 ## Conventions
 
@@ -9,8 +9,8 @@ Complete REST API reference for the Knowledge Service 0.2.0: endpoints, request 
 - **Envelope**: single resources are returned as `{ "data": { … } }`; lists as `{ "data": [ … ], "total": n }`.
 - **Ids**: `kbId`, `docId`, and `sectionId` path parameters must be UUIDs; otherwise the response is `400`. `pageId` accepts any non-empty string (see [Get a page](#get-apikbkbidpagespageid)).
 - **Request body limit**: 10 MB.
-- **Correlation**: every response carries an `X-Request-Id` header. If the request supplies `X-Request-Id` (1–128 characters of `[A-Za-z0-9_-]`), it is echoed; otherwise a UUID is generated. The id appears in the service's access log.
-- **Authentication**: none in 0.2.0. The service is cluster-internal and expected to be fronted by the platform gateway.
+- **Correlation**: every response carries an `X-Request-Id` header. If the request supplies `X-Request-Id` (1–128 characters of `[A-Za-z0-9_-]`), it is echoed; otherwise a UUID is generated. Include it when reporting a problem.
+- **Authentication**: none in 0.2.0; callers send no credentials. The service is reached in-cluster or through the platform gateway.
 
 ## Endpoint Summary
 
@@ -28,7 +28,6 @@ Complete REST API reference for the Knowledge Service 0.2.0: endpoints, request 
 | DELETE | `/api/kb/{kbId}/documents/{docId}` | Cascade-delete a document | 204 |
 | GET | `/api/kb/{kbId}/documents/{docId}/capabilities` | Get a document's capability summary | 200 |
 | POST | `/api/kb/{kbId}/documents/{docId}/ingest` | Trigger ingestion via the RAG agent bundle | 202 |
-| POST | `/api/kb/ingestion-callback` | Receive a completion or failure callback from the RAG agent bundle | 204 |
 | GET | `/api/kb/{kbId}/sections/{sectionId}` | Get a section and its subtree | 200 |
 | GET | `/api/kb/{kbId}/pages/{pageId}` | Get a page by id, physical index, or label | 200 |
 | GET | `/` | Service info | 200 |
@@ -37,7 +36,7 @@ Complete REST API reference for the Knowledge Service 0.2.0: endpoints, request 
 | GET | `/status` | Service status summary | 200 |
 | GET | `/openapi.json` | OpenAPI 3.0 document | 200 |
 
-Any other path returns `404` with a problem body (`detail: "No route matches <METHOD> <path>"`).
+Any other path returns `404` with a problem body (`detail: "No route matches <METHOD> <path>"`). The service also exposes `POST /api/kb/ingestion-callback`, which the RAG agent bundle uses to report ingestion results; applications do not call it.
 
 ---
 
@@ -47,7 +46,7 @@ Any other path returns `404` with a problem body (`detail: "No route matches <ME
 
 | Field | Type | Notes |
 |---|---|---|
-| `id` | UUID | Server-issued; also the entity-graph partition name |
+| `id` | UUID | Server-issued |
 | `name` | string | Non-empty |
 | `description` | string | Optional |
 | `createdAt` | string | ISO-8601 |
@@ -55,7 +54,7 @@ Any other path returns `404` with a problem body (`detail: "No route matches <ME
 
 ### POST /api/kb
 
-Create a knowledge base. Creates the KB's partition and a `KnowledgeBase` entity in the `system` partition.
+Create a knowledge base.
 
 **Request**
 
@@ -70,11 +69,11 @@ Create a knowledge base. Creates the KB's partition and a `KnowledgeBase` entity
 
 **Response** `201`: `{ "data": KnowledgeBase }`
 
-**Errors**: `400` validation, `503` entity service unavailable.
+**Errors**: `400` validation, `503` storage unavailable (retry).
 
 ### GET /api/kb
 
-List knowledge bases. No query parameters.
+List all knowledge bases in the environment. No query parameters.
 
 **Response** `200`:
 
@@ -113,11 +112,11 @@ Update name and/or description. Omitted fields keep their current values.
 
 ### DELETE /api/kb/{kbId}
 
-Cascade-delete the knowledge base: every document and its ingestion subgraph is hard-deleted, leftover nodes in the partition are removed, then the `KnowledgeBase` entity is deleted. Requires the Entity Service admin API (see [`ENTITY_SERVICE_ADMIN_API_KEY`](#environment-variables)).
+Permanently delete the knowledge base, every document in it, and everything ingested from them. Large KBs can take a while; if the call fails part-way, repeating it is safe.
 
 **Response** `204` (no body)
 
-**Errors**: `400`, `404` `kb_not_found`, `500` (admin auth misconfigured), `503`.
+**Errors**: `400`, `404` `kb_not_found`, `500`, `503`.
 
 ---
 
@@ -133,9 +132,9 @@ Cascade-delete the knowledge base: every document and its ingestion subgraph is 
 | `blobPath` | string | Reference to the stored file |
 | `status` | enum | `registered`, `queued`, `in-progress`, `complete`, `failed` |
 | `jobId` | UUID | Optional; set when ingestion is triggered |
-| `entityCount` | integer ≥ 0 | Optional; from the completion callback |
-| `edgeCount` | integer ≥ 0 | Optional; from the completion callback |
-| `error` | string | Optional; from a failure callback |
+| `entityCount` | integer ≥ 0 | Optional; set when ingestion completes |
+| `edgeCount` | integer ≥ 0 | Optional; set when ingestion completes |
+| `error` | string | Optional; set when ingestion fails |
 | `uploadedAt` | string | ISO-8601 |
 | `updatedAt` | string | ISO-8601 |
 
@@ -157,7 +156,7 @@ Cascade-delete the knowledge base: every document and its ingestion subgraph is 
 
 ### POST /api/kb/{kbId}/documents
 
-Register a document. Creates a `Document` entity with status `registered` in the KB's partition.
+Register a document. It starts with status `registered`.
 
 **Request**
 
@@ -206,7 +205,7 @@ List documents in a KB.
 | `page` | integer ≥ 1 | Page number (default 1) |
 | `size` | integer 1–200 | Page size (default 50) |
 
-Filters target the snake_case metadata written by the RAG agent bundle's structured ingestion (for example `mime_type`, `language`, `page_count`, `table_count`); documents lacking a field do not match a filter on it. Date parameters must match `YYYY-MM-DD` optionally followed by `THH:MM[:SS[.sss]][Z|±HH:MM]`.
+Most filters target the snake_case metadata written by the RAG agent bundle's structured ingestion (for example `mime_type`, `language`, page and table counts), so they match only after ingestion; the financial-filing fields supplied at registration match immediately. Documents lacking a field do not match a filter on it. Date parameters must match `YYYY-MM-DD` optionally followed by `THH:MM[:SS[.sss]][Z|±HH:MM]`.
 
 **Errors**: `400` (invalid parameter), `404` `kb_not_found`, `503`.
 
@@ -236,15 +235,15 @@ Update document metadata. The supplied fields are merged into the existing metad
 
 ### DELETE /api/kb/{kbId}/documents/{docId}
 
-Cascade-delete the document: all `Section`, `Page`, `Chunk`, `Table`, and `Figure` nodes reachable through `CONTAINS` edges are hard-deleted first, then the document. Edges and vector-similarity rows are removed by cascading foreign keys. Requires the Entity Service admin API.
+Permanently delete the document and everything ingested from it (sections, pages, chunks, tables, figures, embeddings). If the call fails part-way, repeating it is safe.
 
 **Response** `204` (no body)
 
-**Errors**: `400`, `404` `document_not_found`, `500` (admin auth misconfigured), `503`.
+**Errors**: `400`, `404` `document_not_found`, `500`, `503`.
 
 ### GET /api/kb/{kbId}/documents/{docId}/capabilities
 
-Return the capability summary for a document. Cached per replica for `CAPABILITIES_CACHE_TTL_SECONDS`.
+Return the capability summary for a document. Responses may be up to about a minute stale after a document is re-ingested.
 
 **Response** `200` — one of two shapes:
 
@@ -305,23 +304,9 @@ Return the capability summary for a document. Cached per replica for `CAPABILITI
 
 ### POST /api/kb/{kbId}/documents/{docId}/ingest
 
-Trigger ingestion. Allowed when the document is `registered` or `failed`. No request body.
+Trigger ingestion. Allowed when the document is `registered` or `failed`. No request body. Financial-filing metadata supplied at registration is passed to ingestion automatically.
 
-The service POSTs the following to `${RAG_AGENT_BUNDLE_URL}/api/kb-ingest`:
-
-```json
-{
-  "kbId": "uuid",
-  "documentId": "uuid",
-  "blobPath": "<path-of-the-stored-file>",
-  "config": {
-    "jobId": "uuid",
-    "documentMetadataOverride": { "issuer": "ACME", "fiscal_year": 2025, "fiscal_period": "FY", "document_type": "10-K" }
-  }
-}
-```
-
-`documentMetadataOverride` is included only when the document was registered with at least one of those four fields. The trigger waits up to `RAG_BUNDLE_TIMEOUT_MS` for the bundle; a 2xx response, or the window elapsing, is treated as success.
+The call returns once the RAG agent bundle has accepted the work; ingestion continues in the background. Poll [`GET /api/kb/{kbId}/documents/{docId}`](#get-apikbkbiddocumentsdocid) until `status` is `complete` or `failed`.
 
 **Response** `202`:
 
@@ -329,40 +314,7 @@ The service POSTs the following to `${RAG_AGENT_BUNDLE_URL}/api/kb-ingest`:
 { "data": { "jobId": "uuid", "status": "queued", "message": "Ingestion queued" } }
 ```
 
-**Errors**: `400`, `404` `document_not_found`, `409` `ingestion_in_flight` (status is `queued`, `in-progress`, or `complete`), `502` (bundle unreachable or returned non-2xx; document status unchanged), `503`.
-
-### POST /api/kb/ingestion-callback
-
-Called by the RAG agent bundle when ingestion finishes. Idempotent.
-
-**Request**
-
-```json
-{
-  "jobId": "uuid",
-  "documentId": "uuid",
-  "kbId": "uuid",
-  "status": "complete",
-  "entityCount": 812,
-  "edgeCount": 1964
-}
-```
-
-| Field | Type | Required |
-|---|---|---|
-| `jobId` | UUID | yes |
-| `documentId` | UUID | yes |
-| `kbId` | UUID | yes |
-| `status` | `complete` \| `failed` | yes |
-| `entityCount` | integer ≥ 0 | no |
-| `edgeCount` | integer ≥ 0 | no |
-| `error` | string | no (expected when `status` is `failed`) |
-
-On `complete` the document becomes `complete` with the counts recorded and any previous error cleared. On `failed` it becomes `failed` with `error` recorded. A `jobId` that differs from the recorded one is accepted and logged.
-
-**Response** `204` (no body)
-
-**Errors**: `400`, `404` `document_not_found` (usually a stale job), `503`.
+**Errors**: `400`, `404` `document_not_found`, `409` `ingestion_in_flight` (status is `queued`, `in-progress`, or `complete`), `502` (RAG agent bundle unreachable or rejected the request; document status unchanged, retry), `503`.
 
 ---
 
@@ -439,7 +391,7 @@ Return one page. `pageId` may be a Page UUID, a 0-based physical page index, or 
 |---|---|
 | `GET /` | `{ "service": "knowledge-service", "version": "0.2.0", "description": "…" }` |
 | `GET /health` | `{ "status": "healthy", "service": "knowledge-service" }` |
-| `GET /ready` | `{ "status": "ready" }` — does not probe dependencies |
+| `GET /ready` | `{ "status": "ready" }` — does not check dependencies; use a real call such as `GET /api/kb` to verify end to end |
 | `GET /status` | `{ "service", "version", "environment", "startedAt", "uptimeSeconds" }` |
 | `GET /openapi.json` | OpenAPI 3.0.3 document (`info.title` "FireFoundry Knowledge Service") |
 
@@ -463,35 +415,12 @@ Errors are RFC 7807 problem documents with content type `application/problem+jso
 |---|---|---|---|
 | 400 | `validation` | — | Body or query fails schema validation; path id is not a UUID; empty `pageId` |
 | 404 | `not-found` | `kb_not_found` | Knowledge base does not exist |
-| 404 | `not-found` | `document_not_found` | Document does not exist in this KB (including callbacks for unknown documents) |
+| 404 | `not-found` | `document_not_found` | Document does not exist in this KB |
 | 404 | `not-found` | `section_not_found` | Section does not exist in this KB |
 | 404 | `not-found` | `page_not_found` | No page matches the reference |
 | 404 | `not-found` | — | No route matches |
 | 409 | `conflict` | `ingestion_in_flight` | Trigger on a `queued`, `in-progress`, or `complete` document |
 | 409 | — | — | Ambiguous page reference (disambiguation body, see above) |
-| 500 | `internal` | — | Unexpected error, or cascade delete failed because Entity Service admin auth is misconfigured |
-| 502 | `bad-gateway` | — | RAG agent bundle unreachable or returned non-2xx during the trigger window |
-| 503 | `service-unavailable` | — | Entity Service unreachable, timed out, or returned 5xx; retry |
-
----
-
-## Environment Variables
-
-| Variable | Required | Default | Purpose |
-|---|---|---|---|
-| `PORT` | no | `8080` | HTTP listen port |
-| `NODE_ENV` | no | `development` | `development`, `production`, or `test` |
-| `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, `error` |
-| `SERVICE_NAME` | no | `knowledge-service` | Name reported by `/`, `/health`, `/status` |
-| `KNOWLEDGE_SERVICE_BUNDLE_ID` | no | built-in UUID | Agent-bundle id under which the service authors its entities. Keep stable across deploys. |
-| `APPLICATION_ID` | no | built-in UUID | Application id for the service's entities. Keep stable across deploys. |
-| `REMOTE_ENTITY_SERVICE_URL` | **yes** | — | Entity Service base URL without port, e.g. `http://firefoundry-core-entity-service` |
-| `REMOTE_ENTITY_SERVICE_PORT` | no | `8080` | Entity Service port |
-| `REMOTE_ENTITY_SERVICE_TIMEOUT` | no | `200000` | Per-request timeout for Entity Service calls (ms) |
-| `ENTITY_SERVICE_ADMIN_API_KEY` | no* | — | Entity Service admin key used for cascade (hard) deletes. *Required when the Entity Service enforces an admin key. |
-| `RAG_AGENT_BUNDLE_URL` | **yes** | — | Base URL (with port) of the RAG agent bundle; the service appends `/api/kb-ingest` |
-| `RAG_BUNDLE_TIMEOUT_MS` | no | `300000` | How long the trigger waits for the bundle's response before treating the request as fired (ms) |
-| `CAPABILITIES_CACHE_TTL_SECONDS` | no | `60` | Per-replica cache TTL for capability responses; `0` disables caching |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | no | — | Optional telemetry sink for the shared logging library |
-
-The service validates configuration at startup and exits if a required variable is missing or a URL/UUID is malformed. `USE_REMOTE_ENTITY_CLIENT` appears in the Helm chart and example environment for compatibility but is not read by version 0.2.0.
+| 500 | `internal` | — | Unexpected error; if deletes consistently return 500, contact your environment administrator |
+| 502 | `bad-gateway` | — | Ingestion trigger could not reach the RAG agent bundle, or the bundle rejected the request; retry |
+| 503 | `service-unavailable` | — | Backing storage temporarily unavailable; retry |

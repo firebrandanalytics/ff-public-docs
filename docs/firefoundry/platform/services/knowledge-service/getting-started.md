@@ -1,59 +1,33 @@
 # Knowledge Service — Getting Started
 
-This guide walks you through creating a knowledge base, registering a document, triggering ingestion through the RAG agent bundle, tracking the document's status, and exploring its structure once it has been ingested.
+This guide walks through the full app-builder flow: create a knowledge base, register a document, trigger ingestion and wait for it to finish, navigate the ingested document, ask questions through the RAG agent bundle, and clean up. It then shows the same flow from TypeScript inside an agent bundle.
 
 ## Prerequisites
 
-- A FireFoundry cluster with the Knowledge Service enabled (`knowledge-service.enabled: true` in the `firefoundry-core` Helm values — see [Operations](./operations.md#deployment))
-- A running [Entity Service](../entity-service/README.md) (part of `firefoundry-core`)
-- The [RAG agent bundle](../../system-agents/rag-agent.md) deployed, with the Knowledge Service's `RAG_AGENT_BUNDLE_URL` pointing at it, and the bundle configured with the Knowledge Service URL so it can post completion callbacks
-- A document already stored where the RAG agent bundle can read it (for example in working memory via the [Context Service](../context-service/README.md)), and its path — this becomes `blobPath`
-- `curl` and (optionally) `jq`
+- The Knowledge Service and the [RAG agent bundle](../../system-agents/rag-agent.md) enabled in your environment (see [Operations](./operations.md#enabling-the-service))
+- A document already stored where the RAG agent bundle can read it — typically in working memory via the [Context Service](../context-service/README.md) ([Working Memory Guide](../../../sdk/agent_sdk/guides/working-memory.md)) — and its path, which becomes `blobPath`
+- `curl` and `jq`
 
-For local development, port-forward the service (adjust the namespace to your environment):
+From an agent bundle in the cluster, the service is at `http://firefoundry-core-knowledge-service.<namespace>.svc.cluster.local:8080`. For local experiments, port-forward it:
 
 ```bash
-kubectl port-forward svc/firefoundry-core-knowledge-service -n ff-dev 8080:8080
+kubectl port-forward svc/firefoundry-core-knowledge-service -n <namespace> 8080:8080
 export KS=http://localhost:8080
 ```
 
-From inside the cluster, use `http://firefoundry-core-knowledge-service.<namespace>.svc.cluster.local:8080`.
-
-## Step 1: Verify the Service is Running
+Check it responds:
 
 ```bash
 curl -s $KS/health
+# { "status": "healthy", "service": "knowledge-service" }
 ```
 
-```json
-{ "status": "healthy", "service": "knowledge-service" }
-```
-
-```bash
-curl -s $KS/status
-```
-
-```json
-{
-  "service": "knowledge-service",
-  "version": "0.2.0",
-  "environment": "production",
-  "startedAt": "2026-08-21T09:00:00.000Z",
-  "uptimeSeconds": 3600
-}
-```
-
-The full OpenAPI document is available at `GET $KS/openapi.json`.
-
-## Step 2: Create a Knowledge Base
+## Step 1: Create a Knowledge Base
 
 ```bash
 curl -s -X POST $KS/api/kb \
   -H 'Content-Type: application/json' \
-  -d '{
-    "name": "engineering-docs",
-    "description": "Specifications and design documents"
-  }'
+  -d '{ "name": "engineering-docs", "description": "Specifications and design documents" }'
 ```
 
 Response (`201 Created`):
@@ -70,13 +44,13 @@ Response (`201 Created`):
 }
 ```
 
-Save the id — it is both the KB identifier and the name of the entity-graph partition that will hold its content:
+Save the id — your app should persist it, because every later call (including RAG queries) uses it:
 
 ```bash
 export KB_ID=7d0f5a3e-2c1b-4e9a-9a51-0f6f7c1d2b3a
 ```
 
-## Step 3: Register a Document
+## Step 2: Register a Document
 
 Registration records the document's metadata and a reference to its stored file. It does not upload or read the file.
 
@@ -95,20 +69,14 @@ curl -s -X POST $KS/api/kb/$KB_ID/documents \
   }'
 ```
 
-Response (`201 Created`):
+Response (`201 Created`) — the document starts as `registered`:
 
 ```json
 {
   "data": {
     "id": "3b8e1c2d-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
     "kbId": "7d0f5a3e-2c1b-4e9a-9a51-0f6f7c1d2b3a",
-    "metadata": {
-      "title": "Platform Specification",
-      "mimeType": "application/pdf",
-      "authorNames": ["Platform Team"],
-      "sourceUri": "https://example.com/spec.pdf",
-      "pageCount": 42
-    },
+    "metadata": { "title": "Platform Specification", "mimeType": "application/pdf", "authorNames": ["Platform Team"], "sourceUri": "https://example.com/spec.pdf", "pageCount": 42 },
     "blobPath": "<path-of-the-stored-file>",
     "status": "registered",
     "uploadedAt": "2026-08-21T09:06:00.000Z",
@@ -121,9 +89,9 @@ Response (`201 Created`):
 export DOC_ID=3b8e1c2d-4f5a-4b6c-8d7e-9f0a1b2c3d4e
 ```
 
-> **Financial filings:** you can also pass `issuer`, `fiscal_year`, `fiscal_period` (`Q1`–`Q4` or `FY`), and `document_type` inside `metadata`. They are filterable immediately and are forwarded to the RAG agent bundle at ingestion time.
+> **Financial filings:** you can also pass `issuer`, `fiscal_year`, `fiscal_period` (`Q1`–`Q4` or `FY`), and `document_type` in `metadata`. They are filterable immediately and carried through ingestion.
 
-## Step 4: Trigger Ingestion
+## Step 3: Trigger Ingestion
 
 ```bash
 curl -s -X POST $KS/api/kb/$KB_ID/documents/$DOC_ID/ingest
@@ -132,60 +100,38 @@ curl -s -X POST $KS/api/kb/$KB_ID/documents/$DOC_ID/ingest
 Response (`202 Accepted`):
 
 ```json
-{
-  "data": {
-    "jobId": "c4d5e6f7-0a1b-4c2d-9e3f-5a6b7c8d9e0f",
-    "status": "queued",
-    "message": "Ingestion queued"
-  }
-}
+{ "data": { "jobId": "c4d5e6f7-0a1b-4c2d-9e3f-5a6b7c8d9e0f", "status": "queued", "message": "Ingestion queued" } }
 ```
 
-The service forwarded the request to the RAG agent bundle's `/api/kb-ingest` endpoint and marked the document `queued`. If the bundle could not be reached you get a `502` problem response instead and the document stays `registered` — fix the connectivity and retry the same call.
+- `502` means the RAG agent bundle could not be reached; the document keeps its status, so retry the same call.
+- `409 ingestion_in_flight` means the document is already `queued` or `complete`.
 
-Triggering again while the document is `queued` or `complete` returns `409`:
+## Step 4: Poll Until Complete
 
-```json
-{
-  "type": "https://firefoundry.io/errors/conflict",
-  "title": "Conflict",
-  "status": 409,
-  "detail": "Document is already in state \"queued\"",
-  "code": "ingestion_in_flight"
-}
-```
-
-## Step 5: Poll the Document Status
+Ingestion runs in the background. Poll the document until `status` is `complete` or `failed`:
 
 ```bash
-curl -s $KS/api/kb/$KB_ID/documents/$DOC_ID | jq '.data | {status, jobId, entityCount, edgeCount, error}'
-```
+while true; do
+  STATUS=$(curl -s $KS/api/kb/$KB_ID/documents/$DOC_ID | jq -r '.data.status')
+  echo "status: $STATUS"
+  [ "$STATUS" = "complete" ] || [ "$STATUS" = "failed" ] && break
+  sleep 5
+done
 
-While the bundle works:
+curl -s $KS/api/kb/$KB_ID/documents/$DOC_ID | jq '.data | {status, entityCount, edgeCount, error}'
+```
 
 ```json
-{ "status": "queued", "jobId": "c4d5e6f7-0a1b-4c2d-9e3f-5a6b7c8d9e0f" }
+{ "status": "complete", "entityCount": 812, "edgeCount": 1964, "error": null }
 ```
 
-After the bundle's callback:
+If `status` is `failed`, `error` holds the reason; fix the cause (for example a wrong `blobPath`) and trigger again with Step 3.
 
-```json
-{
-  "status": "complete",
-  "jobId": "c4d5e6f7-0a1b-4c2d-9e3f-5a6b7c8d9e0f",
-  "entityCount": 812,
-  "edgeCount": 1964
-}
-```
-
-If ingestion failed, `status` is `failed` and `error` holds the bundle's message. A `failed` document can be re-triggered with Step 4.
-
-## Step 6: Inspect the Document's Capabilities
-
-For documents ingested with the structured pipeline, the capability summary tells you how the document can be navigated:
+## Step 5: Inspect What the Document Offers
 
 ```bash
-curl -s $KS/api/kb/$KB_ID/documents/$DOC_ID/capabilities | jq '.data | {ingestion_version, counts: .capabilities.counts, flags: .capabilities.flags}'
+curl -s $KS/api/kb/$KB_ID/documents/$DOC_ID/capabilities \
+  | jq '.data | {ingestion_version, counts: .capabilities.counts, flags: .capabilities.flags}'
 ```
 
 ```json
@@ -203,18 +149,18 @@ curl -s $KS/api/kb/$KB_ID/documents/$DOC_ID/capabilities | jq '.data | {ingestio
 }
 ```
 
-A document ingested without the structured pipeline returns `{ "ingestion_version": "v1", "capabilities": null }` — it can still be queried through the RAG agent bundle, but section and page routes will not find anything for it.
+A response of `{ "ingestion_version": "v1", "capabilities": null }` means the document can be queried but not navigated by section or page.
 
-## Step 7: Fetch a Page or Section
+## Step 6: Navigate Pages and Sections
 
-Fetch a page by 0-based physical index, by printed label, or by id:
+Fetch a page by 0-based physical index or by printed label:
 
 ```bash
-curl -s $KS/api/kb/$KB_ID/pages/0      | jq '.data | {physical_page_index, page_label, chunks: (.chunks | length)}'
-curl -s $KS/api/kb/$KB_ID/pages/iii    | jq '.data.page_label'
+curl -s $KS/api/kb/$KB_ID/pages/0   | jq '.data | {physical_page_index, page_label, chunks: (.chunks | length)}'
+curl -s $KS/api/kb/$KB_ID/pages/iii | jq '.data.page_label'
 ```
 
-If a reference matches more than one page, the response is `409` with the candidates:
+If the reference matches more than one page, you get `409` with candidates — retry with the chosen `id`:
 
 ```json
 {
@@ -229,17 +175,34 @@ If a reference matches more than one page, the response is `409` with the candid
 }
 ```
 
-Retry with the chosen `id`. To read a whole section (with its child sections, chunks, and spanned pages), use a section id — for example one from a page's `sections` array:
+Read a whole section (child sections, chunks, spanned pages) using a section id from a page's `sections` array:
 
 ```bash
 SECTION_ID=$(curl -s $KS/api/kb/$KB_ID/pages/0 | jq -r '.data.sections[0].id')
-curl -s $KS/api/kb/$KB_ID/sections/$SECTION_ID | jq '.data | {heading, depth, children: (.children | length), chunks: (.chunks | length)}'
+curl -s $KS/api/kb/$KB_ID/sections/$SECTION_ID \
+  | jq '.data | {heading, depth, children: (.children | length), chunks: (.chunks | length)}'
 ```
+
+## Step 7: Ask Questions
+
+Questions go to the RAG agent bundle, scoped by KB id:
+
+```bash
+curl -s -X POST "https://<gateway-host>/api/rag-query" \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"query\": \"What are the platform's availability requirements?\",
+    \"kbIds\": [\"$KB_ID\"],
+    \"maxTokens\": 4096
+  }" | jq '{context, sources: [.sources[] | {title, relevance}]}'
+```
+
+The response contains assembled `context` to put into your prompt and `sources` for citations. See [RAG Agent Bundle](../../system-agents/rag-agent.md) for all query options (search mode, detail level, metadata filters).
 
 ## Step 8: List and Filter Documents
 
 ```bash
-# All documents (capped at 200, no pagination metadata)
+# All documents (at most 200; compare total with the number returned)
 curl -s $KS/api/kb/$KB_ID/documents | jq '{total, count: (.data | length)}'
 
 # Filtered and paginated
@@ -250,51 +213,66 @@ curl -s "$KS/api/kb/$KB_ID/documents?mime_type=application/pdf&has_tables=true&p
 curl -s "$KS/api/kb/$KB_ID/documents?issuer=ACME&fiscal_year_min=2023&fiscal_year_max=2025&document_type=10-K"
 ```
 
-Any query parameter switches the endpoint into filtered mode, which adds `page` and `size` to the response.
+Any query parameter switches the endpoint to filtered mode, which adds `page` and `size` to the response.
 
-## Step 9: Ask Questions
-
-Question answering is not part of the Knowledge Service. Send queries to the RAG agent bundle's `/api/rag-query` endpoint with the KB id in `kbIds` — see [RAG Agent Bundle](../../system-agents/rag-agent.md).
-
-## Step 10: Clean Up
+## Step 9: Clean Up
 
 ```bash
-# Delete a single document and everything ingested from it
-curl -s -o /dev/null -w '%{http_code}\n' -X DELETE $KS/api/kb/$KB_ID/documents/$DOC_ID
-# 204
+# Delete one document and everything ingested from it
+curl -s -o /dev/null -w '%{http_code}\n' -X DELETE $KS/api/kb/$KB_ID/documents/$DOC_ID   # 204
 
 # Delete the whole knowledge base
-curl -s -o /dev/null -w '%{http_code}\n' -X DELETE $KS/api/kb/$KB_ID
-# 204
+curl -s -o /dev/null -w '%{http_code}\n' -X DELETE $KS/api/kb/$KB_ID                     # 204
 ```
 
-Both are hard deletes. If they return `500` with a message about admin auth, the service needs `ENTITY_SERVICE_ADMIN_API_KEY` — see [Operations](./operations.md#security).
+Deletes are permanent.
 
-## Using the TypeScript Client
+## From an Agent Bundle (TypeScript)
 
-TypeScript applications and agent bundles can use the `@firebrandanalytics/kb-client` package, which is generated from the service's OpenAPI specification:
+TypeScript bundles can use `@firebrandanalytics/kb-client`, which is generated from the service's OpenAPI document. Configure the service URL through an environment variable on your bundle (for example `KNOWLEDGE_SERVICE_URL=http://firefoundry-core-knowledge-service.<namespace>.svc.cluster.local:8080`).
 
 ```typescript
 import { KnowledgeBaseClient } from "@firebrandanalytics/kb-client";
 
-const kb = new KnowledgeBaseClient({
-  baseUrl: process.env.KNOWLEDGE_SERVICE_URL!,
-});
+const kbUrl = process.env.KNOWLEDGE_SERVICE_URL!;
+const kb = new KnowledgeBaseClient({ baseUrl: kbUrl });
 
+// 1. Create the KB once and persist created.id with your app's data
 const created = await kb.createKnowledgeBase({ name: "engineering-docs" });
+
+// 2. Register a file you already stored in working memory
 const doc = await kb.registerDocument(created.id, {
   metadata: { title: "spec.pdf", mimeType: "application/pdf" },
   blobPath: "<path-of-the-stored-file>",
 });
-const trigger = await kb.triggerIngestion(created.id, doc.id);
-// trigger.jobId correlates with the bundle's callback; trigger.status is "queued"
+
+// 3. Trigger ingestion (status is "queued")
+await kb.triggerIngestion(created.id, doc.id);
+
+// 4. Poll until complete or failed
+async function waitForIngestion(kbId: string, docId: string, timeoutMs = 15 * 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const res = await fetch(`${kbUrl}/api/kb/${kbId}/documents/${docId}`);
+    if (!res.ok) throw new Error(`status check failed: ${res.status}`);
+    const { data } = await res.json();
+    if (data.status === "complete") return data;
+    if (data.status === "failed") throw new Error(`ingestion failed: ${data.error}`);
+    await new Promise((r) => setTimeout(r, 5_000));
+  }
+  throw new Error("ingestion did not finish in time");
+}
+
+await waitForIngestion(created.id, doc.id);
 ```
 
-Clients in other languages can be generated from `GET /openapi.json`.
+The client is generated from the same OpenAPI document the [Reference](./reference.md) describes; see its type definitions for the remaining operations (listing, capabilities, sections, pages, delete). Clients in other languages can be generated from `GET /openapi.json`, or you can call the REST API directly.
+
+For long ingestions inside an agent workflow, prefer checking status on a schedule or on the user's next interaction rather than holding a single request open for many minutes.
 
 ## Next Steps
 
-- **[Concepts](./concepts.md)** — Partition layout, lifecycle rules, page addressing, and deletion semantics
+- **[Concepts](./concepts.md)** — Lifecycle rules, page addressing, and app design patterns
 - **[Reference](./reference.md)** — Every endpoint, filter parameter, schema, and error code
-- **[Operations](./operations.md)** — Deploying and configuring the service, and troubleshooting stuck ingestions
-- **[RAG Agent Bundle](../../system-agents/rag-agent.md)** — Ingestion configuration and querying
+- **[Operations](./operations.md)** — Enabling the service and caller-side troubleshooting
+- **[RAG Agent Bundle](../../system-agents/rag-agent.md)** — Ingestion options and querying

@@ -1,200 +1,106 @@
 # Knowledge Service — Operations
 
-Deployment, configuration, health checks, scaling, security, monitoring, and troubleshooting for the Knowledge Service.
+How to enable the Knowledge Service for your app, verify it from an agent bundle, the limits to design around, and how to troubleshoot from the caller's side.
 
-## Deployment
+## Enabling the Service
 
-The Knowledge Service ships as the `knowledge-service` Helm chart and is included as an **opt-in** subchart of the `firefoundry-core` umbrella chart. It is disabled by default; enable it alongside the [RAG agent bundle](../../system-agents/rag-agent.md).
-
-### Enabling in firefoundry-core
+The Knowledge Service is an **opt-in** component of the `firefoundry-core` Helm chart and is disabled by default. It only does useful work together with the [RAG agent bundle](../../system-agents/rag-agent.md), which performs ingestion and answers queries, so enable both.
 
 ```yaml
 # firefoundry-core values override
 knowledge-service:
   enabled: true
-  image:
-    tag: "0.2.0"            # the chart default is 0.1.0; pin the version you run
   configMap:
     data:
-      # Point at your RAG agent bundle release. Agent-bundle releases follow
-      # the pattern <bundleName>-agent-bundle and listen on port 3000.
+      # Base URL (including port) of the RAG agent bundle in your environment.
+      # Agent-bundle releases are named <bundleName>-agent-bundle and listen on port 3000.
       RAG_AGENT_BUNDLE_URL: "http://rag-agent-bundle-agent-bundle:3000"
-      # Recommended: keep the trigger call short (see "Ingestion trigger window")
-      RAG_BUNDLE_TIMEOUT_MS: "5000"
 ```
 
-With a release named `firefoundry-core`, the service is reachable in-cluster at `http://firefoundry-core-knowledge-service.<namespace>.svc.cluster.local:8080`.
+The RAG agent bundle, in turn, must be configured with the Knowledge Service's URL so it can report ingestion results; without that, documents stay `queued`. See the [RAG Agent Bundle](../../system-agents/rag-agent.md#configuration) configuration.
 
-### Chart defaults
+With a release named `firefoundry-core`, the service is reachable in-cluster at:
 
-| Value | Default | Notes |
+```
+http://firefoundry-core-knowledge-service.<namespace>.svc.cluster.local:8080
+```
+
+It is cluster-internal by default (no ingress). Browser or external clients reach it through the platform gateway.
+
+### Settings an app team may touch
+
+| Setting | Default | When to change it |
 |---|---|---|
-| `enabled` (umbrella) | `false` | Opt-in |
-| `replicaCount` | `1` | |
-| `image.tag` | `0.1.0` | Override to the release you intend to run |
-| `service.type` | `ClusterIP` | HTTP only (`service.grpc.enabled: false`) |
-| `service.http.port` / `targetPort` | `8080` / `8080` | |
-| `global.externalAccess` | `false` | Not exposed outside the cluster |
-| `global.authentication.required` | `false` | |
-| `ingress.enabled` | `false` | Cluster-internal; expose through the gateway if needed |
-| `resources.requests` | `cpu: 100m`, `memory: 256Mi` | |
-| `resources.limits` | `cpu: 500m`, `memory: 512Mi` | |
-| `autoscaling.enabled` | `false` | `minReplicas: 1`, `maxReplicas: 5`, `targetCPUUtilizationPercentage: 80` |
-| `secret.enabled` | `false` | Enable to supply `ENTITY_SERVICE_ADMIN_API_KEY` |
-| `envFrom` | `[]` | Reference shared ConfigMaps/Secrets |
+| `knowledge-service.enabled` | `false` | Set `true` to use knowledge bases |
+| `configMap.data.RAG_AGENT_BUNDLE_URL` | `http://rag-agent-bundle-agent-bundle:3000` | Your RAG agent bundle release has a different name or port |
+| `configMap.data.CAPABILITIES_CACHE_TTL_SECONDS` | `60` | Lower it (or `0`) if your app re-ingests documents and needs capability summaries to refresh immediately |
+| `configMap.data.LOG_LEVEL` | `info` | `debug` while diagnosing |
+| `replicaCount` / `autoscaling.enabled` | `1` / `false` | Heavy navigation or delete traffic; the service is stateless and scales horizontally |
 
-### Default ConfigMap
+Everything else (storage connection, credentials, service identity) is set by your environment administrator.
+
+## Wiring It Into Your Bundle
+
+Give your bundle the service URL through its own configuration, for example:
 
 ```yaml
+# your agent bundle's values
 configMap:
-  enabled: true
   data:
-    PORT: "8080"
-    NODE_ENV: "production"
-    LOG_LEVEL: "info"
-    SERVICE_NAME: "knowledge-service"
-    KNOWLEDGE_SERVICE_BUNDLE_ID: "c1d2e3f4-5a6b-7c8d-9e0f-112233445566"
-    APPLICATION_ID: "a1b2c3d4-5e6f-7a8b-9c0d-eeff00112233"
-    REMOTE_ENTITY_SERVICE_URL: "http://firefoundry-core-entity-service"
-    REMOTE_ENTITY_SERVICE_PORT: "8080"
-    USE_REMOTE_ENTITY_CLIENT: "true"
-    RAG_AGENT_BUNDLE_URL: "http://rag-agent-bundle-agent-bundle:3000"
+    KNOWLEDGE_SERVICE_URL: "http://firefoundry-core-knowledge-service.<namespace>.svc.cluster.local:8080"
 ```
 
-Each `configMap.data` and `secret.data` entry is injected as an individual environment variable; these take precedence over anything supplied through `envFrom`.
+and read it when constructing the client (see [Getting Started](./getting-started.md#from-an-agent-bundle-typescript)). Your bundle also needs the RAG agent bundle's URL to call `/api/rag-query`.
 
-### Container image
+## Verifying Reachability
 
-- Node.js 20 (Alpine), multi-stage build
-- Runs as non-root user `app` (UID 1001)
-- Exposes port `8080`
-- Built-in Docker `HEALTHCHECK` against `/health`
-- Graceful shutdown on `SIGTERM`, `SIGINT`, `SIGQUIT`: stops accepting connections and lets in-flight requests finish
+From your bundle's pod (or a port-forward):
 
-## Configuration
+```bash
+KS=http://firefoundry-core-knowledge-service.<namespace>.svc.cluster.local:8080
 
-The full list of environment variables is in the [Reference](./reference.md#environment-variables). The ones that matter operationally:
-
-### Required
-
-| Variable | Purpose |
-|---|---|
-| `REMOTE_ENTITY_SERVICE_URL` | Entity Service base URL (no port). Must be a valid URL. |
-| `RAG_AGENT_BUNDLE_URL` | RAG agent bundle base URL including port. Must be a valid URL. |
-
-The process exits at startup if either is missing or malformed.
-
-### Service identity
-
-`KNOWLEDGE_SERVICE_BUNDLE_ID` and `APPLICATION_ID` identify the entities the service writes. They have built-in defaults and must stay **stable** for the lifetime of an environment; change them only when standing up a new environment with no existing knowledge bases.
-
-### Ingestion trigger window
-
-`RAG_BUNDLE_TIMEOUT_MS` controls how long `POST …/ingest` waits for the RAG agent bundle's response before returning `202`:
-
-- If the bundle responds with 2xx inside the window, or the window elapses while the request is still pending, the trigger succeeds and the request continues in the background.
-- If the connection fails or the bundle returns non-2xx inside the window, the trigger returns `502` and the document status is unchanged.
-
-The default (`300000`, 5 minutes) accommodates bundles that run the ingestion pipeline synchronously inside `/api/kb-ingest`, but it means the trigger call can block for that long. When the bundle returns immediately with a workflow handle, a window of a few seconds gives callers a prompt `202` while still catching connection errors. The service records `queued` only after the window resolves, so a short window also avoids a completion callback arriving before the `queued` status is written.
-
-### Callbacks from the RAG agent bundle
-
-The Knowledge Service does not send a callback URL to the bundle. Configure the RAG agent bundle's Knowledge Service endpoint so it can reach `POST /api/kb/ingestion-callback` on this service (for example `http://firefoundry-core-knowledge-service.<namespace>.svc.cluster.local:8080`). See the [RAG Agent Bundle](../../system-agents/rag-agent.md) configuration.
-
-### Capabilities cache
-
-`CAPABILITIES_CACHE_TTL_SECONDS` (default `60`) sets the in-memory cache TTL for capability responses. The cache is per replica, bounded at 1024 entries, and invalidated when a document or KB is deleted through the service. Set it to `0` to disable caching.
-
-## Health Checks
-
-| Endpoint | Probe | Behavior |
-|---|---|---|
-| `GET /health` | Liveness | Returns `200 {"status":"healthy"}` while the process is serving |
-| `GET /ready` | Readiness | Returns `200 {"status":"ready"}`; deliberately does **not** check the Entity Service, so a transient dependency outage does not take pods out of rotation. Dependency failures surface per request as `503`. |
-| `GET /status` | Diagnostics | Version, environment, start time, uptime |
-
-Chart probe settings:
-
-```yaml
-livenessProbe:
-  httpGet: { path: /health, port: 8080 }
-  initialDelaySeconds: 20
-  periodSeconds: 10
-  timeoutSeconds: 5
-  failureThreshold: 3
-readinessProbe:
-  httpGet: { path: /ready, port: 8080 }
-  initialDelaySeconds: 10
-  periodSeconds: 5
-  timeoutSeconds: 3
-  failureThreshold: 3
+curl -s $KS/health          # { "status": "healthy", ... } — the process is up
+curl -s $KS/status          # version, uptime
+curl -s $KS/api/kb | jq '.total'   # end-to-end check, including storage
 ```
 
-Because readiness does not reflect dependencies, verify end-to-end health with a real call such as `GET /api/kb`.
+`/ready` does not check the service's dependencies, so use a real call such as `GET /api/kb` to confirm the service can do work. To confirm ingestion is wired end to end, register a small document, trigger it, and check it reaches `complete` ([Getting Started](./getting-started.md)).
 
-## Scaling
+## Limits and Behavior
 
-- **Stateless**: all durable state is in the Entity Service, so replicas can be added freely. Enable `autoscaling` for CPU-based horizontal scaling.
-- **Per-replica cache**: the only in-memory state is the capabilities cache; with several replicas a capability response may be up to one TTL stale on some replicas after a re-ingestion.
-- **Heavy operations**: cascade deletes of large documents or knowledge bases issue many Entity Service calls (bounded concurrency of 8, with automatic retry on database deadlocks). Section-subtree and page requests also fan out to several Entity Service calls. Size the Entity Service accordingly.
-- **Long trigger calls**: with a long `RAG_BUNDLE_TIMEOUT_MS`, each in-flight trigger holds a request open; shorten the window if many ingestions are started concurrently.
-- **List limits**: unfiltered list endpoints cap at 200 items; direct clients to filtered, paginated listing for large KBs.
-
-## Security
-
-- **No in-service authentication** in 0.2.0. All endpoints, including `POST /api/kb/ingestion-callback`, accept unauthenticated requests. The chart defaults to `ClusterIP`, no ingress, and `externalAccess: false`. Keep the service cluster-internal and expose it only through the platform gateway with authentication enabled.
-- **Restrict the callback path**: the callback endpoint can mark any document `complete` or `failed`. Use Kubernetes NetworkPolicies (or gateway routing rules) so that only the RAG agent bundle can reach `/api/kb/ingestion-callback`.
-- **Entity Service admin key**: cascade deletes call the Entity Service admin API (`DELETE /admin/node/{id}`), authenticated with `X-API-Key`. If the Entity Service has an admin key configured, supply it to the Knowledge Service as `ENTITY_SERVICE_ADMIN_API_KEY` from a Kubernetes Secret — for example via `secret.enabled: true` with the key under `secret.data`, or via `envFrom` referencing an existing Secret. Without it, deletes fail with `500` ("entity service admin auth misconfigured"). Never put the key in the ConfigMap.
-- **Input hardening**: path ids are validated as UUIDs; numeric filter values are bounded; publication-date filters accept only strict ISO-8601 strings before they reach Entity Service queries.
-- **Blob access**: the service never reads the file behind `blobPath`; access control for the stored file is enforced where it is stored and by the RAG agent bundle that reads it.
-
-## Monitoring
-
-### Logs
-
-The service logs structured JSON through the shared FireFoundry logging library. Key events:
-
-| Log message | Meaning |
+| Behavior | Design around it by |
 |---|---|
-| `request` (with `requestId`, `method`, `path`, `status`, `durationMs`) | One line per API request; probes (`/`, `/health`, `/ready`, `/status`) are excluded |
-| `RagBundleClient.triggerIngestion fire` / `fired (immediate 2xx)` / `fired (timeout window)` | Trigger sent to the bundle and how it resolved |
-| `RagBundleClient: bundle returned non-2xx after fire` | The bundle eventually failed after the trigger window closed; expect a `failed` callback or a stuck `queued` document |
-| `Ingestion callback jobId mismatch` | Callback for an older job; usually a re-trigger |
-| `KnowledgeProvider.handleIngestionCallback` | Callback applied, with final status |
-| `EntityServiceClient: transient deadlock, retrying with backoff` | Cascade delete hit a database deadlock and is retrying |
-| `…partition created but KnowledgeBase entity creation failed — partition is leaked` | KB creation half-failed; an empty, unreachable partition remains |
-| `Entity admin auth failed` | `ENTITY_SERVICE_ADMIN_API_KEY` missing or wrong |
-
-Set `APPLICATIONINSIGHTS_CONNECTION_STRING` to forward telemetry, and `LOG_LEVEL=debug` for more detail. Correlate client reports with logs using the `X-Request-Id` response header.
-
-### Useful signals
-
-- Count of documents in `queued` older than your expected ingestion time (poll `GET /api/kb/{kbId}/documents` and compare `updatedAt`)
-- Rate of `502` from the trigger endpoint (bundle availability)
-- Rate of `503` across endpoints (Entity Service availability)
+| No authentication in 0.2.0; every caller that can reach the service can see and change every KB | Keeping KB ids in your app's own data and only passing the right ones; reaching the service from your bundle, not directly from browsers |
+| Unfiltered list endpoints return at most 200 items | Using filter parameters with `page` / `size` (max 200 per page) for large KBs |
+| Ingestion is asynchronous and can take minutes for large documents | Polling document status every few seconds with an overall timeout; showing a "processing" state in your UI |
+| Triggering is allowed only from `registered` or `failed` | Deleting and re-registering to re-ingest a completed document |
+| Capability summaries can be up to about a minute stale after re-ingestion | Re-fetching after a short delay |
+| Page and section lookups are scoped to the KB, not a document | Preferring page ids over labels in multi-document KBs; handling `409` disambiguation |
+| Deletes are permanent and can take a while for large documents or KBs | Confirming with the user; retrying the same `DELETE` if it fails part-way |
+| Request bodies up to 10 MB; no file upload | Storing files in working memory and passing `blobPath` |
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Resolution |
+| Symptom | Likely cause | What to do |
 |---|---|---|
-| Pod exits at startup with a validation error | `REMOTE_ENTITY_SERVICE_URL` or `RAG_AGENT_BUNDLE_URL` missing or not a valid URL; malformed UUID in identity variables | Set the variables in `configMap.data` with full `http://…` URLs |
-| All API calls return `503` | Entity Service unreachable or wrong URL/port | Check `REMOTE_ENTITY_SERVICE_URL`/`PORT` and Entity Service health; `/ready` will still report ready |
-| Trigger returns `502` | RAG agent bundle unreachable, wrong URL, or it rejected the request | Check `RAG_AGENT_BUNDLE_URL` (including port — agent bundles typically listen on 3000); read the `detail` field; retry — the document stays `registered`/`failed` |
-| Trigger takes minutes to return | Bundle runs ingestion synchronously and `RAG_BUNDLE_TIMEOUT_MS` is large | Lower `RAG_BUNDLE_TIMEOUT_MS` to a few seconds |
-| Document stuck in `queued` | Bundle never sent the callback (cannot reach the Knowledge Service, crashed, or failed after the trigger window), or the callback landed before `queued` was recorded | Check bundle logs and its Knowledge Service URL setting; check for `bundle returned non-2xx after fire`; shorten `RAG_BUNDLE_TIMEOUT_MS`. The status cannot be edited via `PUT`, so a stuck document is recovered by the bundle re-sending its callback, or by deleting and re-registering it |
-| Trigger returns `409 ingestion_in_flight` | Document is already `queued` or `complete` | Wait for the callback; to re-ingest a `complete` document, delete it and register it again |
-| Callback returns `404 document_not_found` | Document was deleted, or wrong `kbId`/`documentId` | Usually a stale job; safe to ignore |
-| `DELETE` returns `500` mentioning admin auth | Entity Service requires an admin key | Provide `ENTITY_SERVICE_ADMIN_API_KEY` via a Secret |
-| `DELETE` returns `503` part-way | Entity Service outage during a cascade | Retry the same `DELETE`; children are removed before the document, so retries are safe |
-| Capabilities return `ingestion_version: "v1"`, section/page routes return `404` | Document was ingested without the structured pipeline, or ingestion has not completed | Confirm `status: complete`; re-ingest with the structured pipeline |
-| Filtered list returns nothing | Filter fields are not present in the documents' stored metadata | Check `GET …/documents/{docId}` `metadata`; financial fields must be supplied at registration or written by ingestion |
-| Unfiltered list shows fewer documents than `total` | 200-item cap | Use filter parameters with `page`/`size` |
+| Connection refused / DNS failure from your bundle | Service not enabled, or wrong URL / namespace | Check `knowledge-service.enabled` and the in-cluster URL; `curl $KS/health` from the bundle pod |
+| All API calls return `503` | Backing storage temporarily unavailable | Retry with backoff; if it persists, contact your environment administrator |
+| Trigger returns `502` | RAG agent bundle not deployed, wrong `RAG_AGENT_BUNDLE_URL`, or the bundle rejected the request | Read the problem `detail`; check the RAG agent bundle is running and the URL (including port 3000); retry — the document keeps its status |
+| Document stays `queued` well past the expected time | Ingestion did not report back (the RAG agent bundle cannot reach the Knowledge Service, or it crashed) | Check the RAG agent bundle's logs and its Knowledge Service URL setting; delete the document, register it again, and re-trigger |
+| Document is `failed` | Ingestion error, often an unreadable or wrong `blobPath` | Read `error`; fix the cause; trigger again |
+| Trigger returns `409 ingestion_in_flight` | Document is already `queued` or `complete` | Wait for completion; to re-ingest a completed document, delete and re-register it |
+| `DELETE` returns `500` consistently | Deletes are not permitted by the environment's configuration | Contact your environment administrator |
+| `DELETE` returns `503` part-way | Temporary storage outage | Repeat the same `DELETE`; it is safe to retry |
+| Capabilities return `ingestion_version: "v1"`, section/page routes return `404` | Document not yet complete, or ingested without the structured pipeline | Confirm `status: complete`; re-ingest with the structured pipeline |
+| Filtered list returns nothing | Filter fields are not in the documents' metadata (most filters apply only after ingestion) | Inspect `GET …/documents/{docId}` `metadata`; supply financial fields at registration |
+| Unfiltered list shows fewer items than `total` | 200-item cap | Use filter parameters with `page` / `size` |
 | Page lookup returns `409` | The reference matches several pages | Retry with one of the returned `id`s |
-| Capabilities look stale after re-ingestion | Per-replica cache | Wait `CAPABILITIES_CACHE_TTL_SECONDS` or lower it |
+| RAG query returns nothing for a new document | Document not yet `complete`, or wrong `kbIds` | Poll status until `complete`; check the KB id you pass |
+
+When reporting a problem, include the `X-Request-Id` response header.
 
 ## Related
 
-- [Reference](./reference.md) — Endpoints, error codes, and environment variables
-- [Entity Service](../entity-service/README.md) — Storage, admin API, and partitions
-- [RAG Agent Bundle](../../system-agents/rag-agent.md) — Ingestion pipeline and callback configuration
+- [Reference](./reference.md) — Endpoints and error codes
+- [RAG Agent Bundle](../../system-agents/rag-agent.md) — Ingestion pipeline, query endpoint, and configuration
 - [Platform Deployment](../../deployment.md)
