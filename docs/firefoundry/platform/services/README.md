@@ -19,21 +19,26 @@ Each is opt-in — turn it on if your application needs the capability, leave it
 
 - **[Code Sandbox](./code-sandbox/README.md)** — Secure execution environment for agent-generated TypeScript with database adapters and Chart.js.
 - **[Context Service](./context-service/README.md)** — Working memory, blob storage, and conversation persistence for chat-style agents.
+- **[Browser Worker Manager](./browser-worker-manager/README.md)** — Persistent, per-session headless browser pods that agents drive step by step (navigate, snapshot, click, fill, log in, PDF, download), with mounted-secret credential fill and redaction. *Preview.*
 - **[Data Access Service](./data-access/README.md)** — Multi-database SQL access with AST query translation, staged federation, scratch pad, and fine-grained ACL.
+- **[Directory Service](./directory-service/README.md)** — Permissioned document namespace (drives, folders, items with per-item access control) over content stored elsewhere, with delegated read-only import from Microsoft 365 and Box. *Preview.*
 - **[Document Processing Service](./doc-proc-service/README.md)** — Document extraction, generation, and transformation. OCR and table extraction via the Python worker backend.
-- **[Knowledge Service](./knowledge-service/README.md)** — CRUD for knowledge bases and document metadata, with ingestion delegated to the RAG agent bundle.
+- **[Identity Management Service (IMS)](./identity-service/README.md)** — Canonical principals, groups, roles, and permissions with a policy decision endpoint, plus per-realm OpenID Connect sign-in. *Preview.*
+- **[Knowledge Service](./knowledge-service/README.md)** — CRUD for knowledge bases and document metadata over the entity graph, with ingestion delegated to the RAG agent bundle and section/page navigation of ingested documents.
+- **[MCP Gateway](./mcp-gateway/README.md)** — Exposes FireFoundry services as Model Context Protocol tools, resources, and prompts for AI agents such as Claude Code and Virtual Workers. Enabled by default in `firefoundry-core`.
 - **[Notification Service](./notification-service/README.md)** — Cloud-agnostic email and SMS delivery with pluggable provider adapters.
 - **[Skills Service](./skills-service/README.md)** — Skill registry, versioning, and environment-scoped installation for hosted agents.
-- **[Test Harness Service](./test-harness-service/README.md)** — Define, run, and analyze automated tests against agent bundles, with LLM-judged semantic assertions powered by the Test Evaluation Agent.
+- **[Test Harness Service](./test-harness-service/README.md)** — Define, run, and analyze automated tests against agent bundles, and track run history. *Preview* — real bundle execution and LLM-judged assertions via the Test Evaluation Agent are in development.
 - **[Virtual Worker Manager](./virtual-workers/README.md)** — Orchestrates CLI coding agents (Claude Code, Cursor, Gemini, OpenCode) with managed sessions and persistent workspaces.
 - **[Web Search Service](./web-search/README.md)** — Provider-agnostic web search with Bing integration.
 
 ### System Services
 
-Background services that run in every environment but are not normally called by application code. App developers benefit from them indirectly — through the Console UI, CLI tools, or other services that depend on them.
+Background services that are not normally called by application code. App developers benefit from them indirectly — through the Console UI, CLI tools, or other services that depend on them.
 
 - **[Telemetry Service](./telemetry-service/README.md)** — Captures broker LLM calls and other producer-service telemetry. Inspect via the FireFoundry Console or the `ff-telemetry-read` CLI.
-- **[Document Processing Python Worker](./doc-proc-pyworker/README.md)** — ML-based document processing backend that the Document Processing Service delegates to for advanced OCR and table extraction.
+- **[Document Processing Python Worker](./doc-proc-pyworker/README.md)** — Python gRPC backend that the Document Processing Service delegates to for PDF rasterization, structured and table extraction, OCR, upscaling, and colorspace conversion.
+- **[Log Proxy Service](./log-proxy-service/README.md)** — Centralized log ingestion with redaction, optional encryption, durable buffering, OTLP forwarding, search, and live tail. Opt-in. *Preview.*
 
 ## Service Matrix
 
@@ -43,16 +48,21 @@ Background services that run in every environment but are not normally called by
 | [Entity Service](./entity-service/README.md) | Core | Entity graph with vector semantic search | REST |
 | [Code Sandbox](./code-sandbox/README.md) | Optional | Secure code execution with database connectivity | REST |
 | [Context Service](./context-service/README.md) | Optional | Working memory, blob storage, conversation persistence | gRPC |
+| [Browser Worker Manager](./browser-worker-manager/README.md) | Optional | Persistent per-session browser pods for agent site navigation | REST |
 | [Data Access Service](./data-access/README.md) | Optional | Multi-database SQL access with AST queries and ACL | gRPC + REST |
+| [Directory Service](./directory-service/README.md) | Optional | Permissioned document namespace with Microsoft 365 and Box import | REST |
 | [Document Processing](./doc-proc-service/README.md) | Optional | Document extraction, OCR, generation, transformation | REST |
+| [Identity Management Service](./identity-service/README.md) | Optional | Principals, groups, roles, permissions; policy checks; OIDC sign-in | REST + OIDC |
 | [Knowledge Service](./knowledge-service/README.md) | Optional | CRUD for knowledge bases; delegates ingestion to RAG agent | REST |
+| [MCP Gateway](./mcp-gateway/README.md) | Optional | FireFoundry services as MCP tools, resources, and prompts | MCP (JSON-RPC over HTTP) + REST |
 | [Notification Service](./notification-service/README.md) | Optional | Email and SMS delivery with pluggable providers | REST |
 | [Skills Service](./skills-service/README.md) | Optional | Skill registry, versioning, and environment-scoped installation | REST |
-| [Test Harness Service](./test-harness-service/README.md) | Optional | Test suite management, execution, results, scheduled runs | REST |
+| [Test Harness Service](./test-harness-service/README.md) | Optional | Test suite management, execution, results, run history | REST |
 | [Virtual Worker Manager](./virtual-workers/README.md) | Optional | CLI coding agent orchestration with managed sessions | REST |
 | [Web Search Service](./web-search/README.md) | Optional | Provider-agnostic web search with Bing integration | REST |
-| [Telemetry Service](./telemetry-service/README.md) | System | Telemetry capture; consumed via Console UI or `ff-telemetry-read` CLI | gRPC + REST |
-| [Document Processing Python Worker](./doc-proc-pyworker/README.md) | System | ML-based backend that Document Processing delegates to | gRPC |
+| [Telemetry Service](./telemetry-service/README.md) | System | Telemetry capture; consumed via Console UI or `ff-telemetry-read` CLI | Connect RPC + REST |
+| [Document Processing Python Worker](./doc-proc-pyworker/README.md) | System | Python backend that Document Processing delegates to | gRPC |
+| [Log Proxy Service](./log-proxy-service/README.md) | System | Log ingestion, redaction, buffering, OTLP forwarding, search | gRPC + REST + WebSocket |
 
 ## How Services Fit Together
 
