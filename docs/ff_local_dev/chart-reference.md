@@ -7,7 +7,7 @@ This document provides comprehensive configuration options for the `firefoundry-
 The `firefoundry-core` chart deploys FireFoundry's AI application services as a cohesive stack. It includes:
 
 - **Core Services**: FF Broker, Context Service, Code Sandbox, Entity Service
-- **Optional Services**: Web Search, Document Processing, Virtual Worker Manager, MCP Gateway, Log Proxy
+- **Optional Services**: Web Search, Document Processing, Virtual Worker Manager, MCP Gateway (enabled by default), Log Proxy (opt-in)
 - **Bundled Dependencies**: PostgreSQL and MinIO (optional, for self-contained deployments)
 
 ## Chart Information
@@ -151,25 +151,28 @@ CLI-based AI coding agent orchestration (Claude Code, Codex, etc.).
 
 ### MCP Gateway
 
-Model Context Protocol gateway for external tool integration.
+Model Context Protocol gateway that exposes FireFoundry services as MCP tools. Enabled by default in `firefoundry-core`. See [MCP Gateway — Operations](../firefoundry/platform/services/mcp-gateway/operations.md).
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `mcp-gateway.enabled` | Enable MCP Gateway | `true` |
-| `mcp-gateway.image.tag` | Image version | `0.1.1` |
-| `mcp-gateway.secret.data.API_KEY` | Gateway API key | Required |
-| `mcp-gateway.secret.data.ENTITY_SERVICE_URL` | Entity service URL | Auto-configured |
+| `mcp-gateway.image.tag` | Image version | `0.1.2` |
+| `mcp-gateway.secret.data.API_KEY` | Key clients send in the `X-Api-Key` header | Placeholder (`changeme-api-key`) — set your own |
+| `mcp-gateway.secret.data.AGENT_BUNDLE_ID` | Agent bundle the entity tools are scoped to | Placeholder — set for your app |
+| `mcp-gateway.secret.data.ENTITY_GRAPH_NAME` | Entity graph the entity tools use | Placeholder — set for your app |
+| `mcp-gateway.secret.data.ENTITY_SERVICE_URL` | Entity service URL | `http://firefoundry-core-entity-service:8080` |
 
 ### Log Proxy Service
 
-Centralized log aggregation and streaming.
+Centralized log aggregation, search, and live tail. An opt-in system service: disabled by default in `firefoundry-core`. See [Log Proxy Service — Operations](../firefoundry/platform/services/log-proxy-service/operations.md).
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `log-proxy-service.enabled` | Enable Log Proxy | `false` |
-| `log-proxy-service.image.tag` | Image version | `0.1.0` |
-| `log-proxy-service.secret.data.ADMIN_API_KEY` | Admin API key | Required |
-| `log-proxy-service.secret.data.SEARCH_API_KEY` | Search API key | Required |
+| `log-proxy-service.image.tag` | Image version | `0.1.1` |
+| `log-proxy-service.secret.data.ADMIN_API_KEY` | Admin API key (manage streams) | Placeholder (`changeme-admin-api-key`) — optional, but set your own |
+| `log-proxy-service.secret.data.SEARCH_API_KEY` | Search API key (falls back to the admin key if unset) | Placeholder (`changeme-search-api-key`) — optional, but set your own |
+| `log-proxy-service.secret.data.WS_API_KEY` | Live-tail API key (falls back to the admin key if unset) | Placeholder (`changeme-ws-api-key`) — optional, but set your own |
 | `log-proxy-service.persistence.size` | Buffer storage size | `10Gi` |
 
 ---
@@ -366,6 +369,7 @@ log-proxy-service:
     data:
       ADMIN_API_KEY: "your-admin-key"
       SEARCH_API_KEY: "your-search-key"
+      WS_API_KEY: "your-websocket-key"
 ```
 
 ---

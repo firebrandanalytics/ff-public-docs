@@ -530,7 +530,7 @@ export REMOTE_ENTITY_SERVICE_URL=http://localhost
 export REMOTE_ENTITY_SERVICE_PORT=8180
 export USE_REMOTE_ENTITY_CLIENT=true
 export LLM_BROKER_HOST=localhost
-export LLM_BROKER_PORT=50052
+export LLM_BROKER_PORT=50051
 export DAS_URL=http://localhost:8080
 export PORT=3001
 

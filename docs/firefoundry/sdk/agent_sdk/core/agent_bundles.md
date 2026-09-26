@@ -1176,8 +1176,9 @@ const client = new RemoteAgentBundleClient(
 **Setup:**
 ```bash
 # Port forward platform services
-kubectl port-forward svc/context-service 50051:50051
-kubectl port-forward svc/broker-service 50052:50052
+kubectl port-forward svc/firefoundry-core-context-service 50051:50051
+# Broker gRPC listens on 50051 in-cluster; map it to local 50052 (set LLM_BROKER_PORT=50052)
+kubectl port-forward svc/firefoundry-core-ff-broker 50052:50051
 
 # Run agent bundle locally
 cd packages/agent-bundle

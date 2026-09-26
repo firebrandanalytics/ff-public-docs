@@ -134,7 +134,7 @@ Access control is enforced by the Data Access Service, not by the gateway.
 
 ## Knowledge Base Adapter
 
-RAG queries and ingestion jobs against the knowledge base ingestion and RAG query APIs. See also the [Knowledge Service](../knowledge-service/README.md).
+RAG queries and ingestion jobs against the standalone knowledge-base ingestion and RAG query services (`/api/v1/ingestion/jobs`, `/api/v1/query`, `/api/v1/chunks`, `/api/v1/embeddings/models`). These are an earlier knowledge-base API: the adapter is **not compatible with the current [Knowledge Service](../knowledge-service/README.md)** or the [RAG agent bundle](../../system-agents/rag-agent.md), and it stays disabled unless the gateway is pointed at those older services. For knowledge bases created with the Knowledge Service, use the Knowledge Service API (or `@firebrandanalytics/kb-client`) to manage and ingest documents, and the RAG agent bundle's `POST /api/rag-query` endpoint to ask questions.
 
 | Tool | Description | Arguments |
 |------|-------------|-----------|

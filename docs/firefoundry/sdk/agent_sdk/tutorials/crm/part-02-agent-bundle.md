@@ -598,7 +598,7 @@ ff-sdk-cli health --url http://localhost:3000
 If the health check returns `healthy: true`, your bundle is correctly wired up to the entity service and ready for API endpoints. If it fails, check:
 - Port-forwards are active (`procman list` or `ss -tlnp`)
 - Entity service is reachable on port 8180
-- Broker is reachable on port 50052
+- Broker is reachable on local port 50052 (port-forwarded to the broker Service's gRPC port 50051)
 - Console output for initialization errors (edge registration failures are OK on first run)
 
 ---

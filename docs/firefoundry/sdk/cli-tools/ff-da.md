@@ -27,7 +27,7 @@ The tool auto-configures from environment variables or a `.env` file in the curr
 For remote DAS in Kubernetes:
 
 ```bash
-kubectl port-forward -n ff-dev svc/ff-data-access 8080:8080
+kubectl port-forward -n ff-dev svc/firefoundry-core-data-access 8080:8080
 ```
 
 ### Global Options

@@ -21,7 +21,8 @@ The bundle needs connections to three services:
 | `REMOTE_ENTITY_SERVICE_URL` | Entity service base URL (no port) | `http://localhost` |
 | `REMOTE_ENTITY_SERVICE_PORT` | Entity service port | `8180` |
 | `USE_REMOTE_ENTITY_CLIENT` | Enable remote entity client | `true` |
-| `BROKER_URL` | Broker gRPC endpoint | `localhost:50052` |
+| `LLM_BROKER_HOST` | Broker gRPC host | `localhost` |
+| `LLM_BROKER_PORT` | Broker gRPC port | `50051` |
 | `MODEL_POOL_NAME` | LLM model pool | `firebrand-gpt-5.2-failover` |
 | `FF_DATA_SERVICE_URL` | Data Access Service URL | `http://localhost:8080` |
 | `PORT` | Bundle HTTP server port | `3001` |
@@ -39,7 +40,8 @@ REMOTE_ENTITY_SERVICE_PORT=8180
 USE_REMOTE_ENTITY_CLIENT=true
 
 # Broker
-BROKER_URL=localhost:50052
+LLM_BROKER_HOST=localhost
+LLM_BROKER_PORT=50051
 MODEL_POOL_NAME=firebrand-gpt-5.2-failover
 
 # Data Access Service
@@ -58,10 +60,10 @@ If you're running locally against a remote FireFoundry cluster, port-forward the
 kubectl port-forward -n ff-dev svc/firefoundry-core-entity-service 8180:8080
 
 # Broker — routes LLM requests to model pools
-kubectl port-forward -n ff-dev svc/ff-broker 50052:50052
+kubectl port-forward -n ff-dev svc/firefoundry-core-ff-broker 50051:50051
 
 # Data Access Service — database schema, dictionary, EXPLAIN
-kubectl port-forward -n ff-dev svc/ff-data-access 8080:8080
+kubectl port-forward -n ff-dev svc/firefoundry-core-data-access 8080:8080
 ```
 
 Each command blocks a terminal. Run them in separate terminals or use a process manager like `procman`.
@@ -212,14 +214,14 @@ Use `ff-telemetry-read` to see exactly what the LLM did — which tools it calle
 ff-telemetry-read broker recent --limit 1
 
 # Get the full trace including tool calls
-ff-telemetry-read broker trace <request-id>
+ff-telemetry-read trace get <broker-request-id>
 ```
 
 The trace shows the complete tool call sequence:
 
 ```bash
-# List all tool calls for the most recent request
-ff-telemetry-read tool-call recent --limit 10
+# List the tool calls in that trace, in order
+ff-telemetry-read trace get <broker-request-id> | jq '.llm_requests[].tool_calls[] | {tool_name, status}'
 ```
 
 You should see tool invocations for `explain_query`, `get_dictionary_tables`, `get_dictionary_columns`, and `get_schema`. If you see fewer tool calls than expected, the LLM may be skipping steps — review the system prompt ordering in Part 4.
@@ -230,12 +232,12 @@ You should see tool invocations for `explain_query`, `get_dictionary_tables`, `g
 |---------|-------|-----|
 | `Unsupported protocol undefined:` | Missing entity service env vars | Set `REMOTE_ENTITY_SERVICE_URL`, `REMOTE_ENTITY_SERVICE_PORT`, `USE_REMOTE_ENTITY_CLIENT=true` |
 | `Error: get_semantic_label not implemented` | `ComposeMixins` prototype chain issue | Add the `thread_try.semantic_label_function` workaround in the bot constructor (see Part 4) |
-| `ECONNREFUSED localhost:50052` | Broker not port-forwarded | Run `kubectl port-forward -n ff-dev svc/ff-broker 50052:50052` |
-| `ECONNREFUSED localhost:8080` | DAS not port-forwarded | Run `kubectl port-forward -n ff-dev svc/ff-data-access 8080:8080` |
+| `ECONNREFUSED localhost:50051` | Broker not port-forwarded | Run `kubectl port-forward -n ff-dev svc/firefoundry-core-ff-broker 50051:50051` |
+| `ECONNREFUSED localhost:8080` | DAS not port-forwarded | Run `kubectl port-forward -n ff-dev svc/firefoundry-core-data-access 8080:8080` |
 | `ECONNREFUSED localhost:8180` | Entity service not port-forwarded | Run `kubectl port-forward -n ff-dev svc/firefoundry-core-entity-service 8180:8080` |
 | Bot completes but `data.result` is null | `entity.run()` returned null | Check that the bot produces structured output (Zod schema match) |
 | Zod validation fails repeatedly | LLM uses wrong field names | Add explicit field name instructions to the system prompt (see Part 4) |
-| `MockBrokerClient` in logs | SDK created mock client (no broker URL) | Set `BROKER_URL=localhost:50052` in environment |
+| `MockBrokerClient` in logs | SDK created mock client (no broker settings) | Set `LLM_BROKER_HOST=localhost` and `LLM_BROKER_PORT=50051` in environment |
 | `AxiosError: Request failed with status 403` | DAS permission denied | Check `FF_FUNCTION_NAME` and `FF_FUNCTION_NAMESPACE` env vars, or DAS ACL configuration |
 | Tool returns empty tables/columns | FireKicks not configured in DAS | Run `ff-da connections` to check; see [FireKicks Tutorial](../../../../platform/services/data-access/firekicks/README.md) |
 | Port 3001 already in use | Another process using the port | Change `PORT` env var or stop the other process |

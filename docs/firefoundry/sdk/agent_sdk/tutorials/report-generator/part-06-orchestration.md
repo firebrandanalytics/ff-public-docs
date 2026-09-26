@@ -601,7 +601,11 @@ Stage 2 should complete almost instantly because the child entity's result is al
 Check the LLM call that was made during Stage 2:
 
 ```bash
-ff-telemetry-read calls list --entity-id <report-generation-entity-id>
+# Find the broker requests made for the entity
+ff-telemetry-read trace by-breadcrumb ReportGenerationEntity <report-generation-entity-id>
+
+# Then view the prompt and response for one of the returned broker requests
+ff-telemetry-read trace get <broker-request-id> | jq '.llm_requests[] | {request: .request_data, response: .response_data}'
 ```
 
 This shows the broker request made by `ReportGenerationBot`, including the prompt that was sent and the LLM's response.

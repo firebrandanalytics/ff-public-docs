@@ -58,7 +58,7 @@ Services use standard Kubernetes DNS:
 {service-name}.{namespace}.svc.cluster.local:{port}
 ```
 
-Example: `ff-broker.ff-dev.svc.cluster.local:8080`
+Example: `firefoundry-core-ff-broker.ff-dev.svc.cluster.local:50051`
 
 ## When to Use Cluster Diagnostics
 
@@ -433,7 +433,7 @@ Test connectivity between environment and control plane:
 
 ```bash
 # From an agent bundle pod, test broker connectivity
-kubectl exec -n ff-dev <agent-pod> -- curl -s http://ff-broker:8080/health
+kubectl exec -n ff-dev <agent-pod> -- curl -s http://firefoundry-core-ff-broker:3000/health
 
 # Test context service
 kubectl exec -n ff-dev <agent-pod> -- curl -s http://context-service:8080/health

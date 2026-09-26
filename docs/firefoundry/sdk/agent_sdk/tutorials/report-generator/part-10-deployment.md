@@ -256,7 +256,8 @@ List child entities (the wrapped entity and review steps):
 
 ```bash
 # Get outgoing edges from the workflow entity
-ff-eg-read edges from $ENTITY_ID```
+ff-eg-read edges from $ENTITY_ID
+```
 
 You should see `Calls` edges to:
 - `wrapped_0` (ReportEntity) -- the main workflow orchestrator
@@ -267,7 +268,8 @@ If you rejected and revised, you will also see `wrapped_1`, `review_1`, etc.
 Drill into the ReportEntity to see its children:
 
 ```bash
-ff-eg-read edges from <wrapped-0-id>```
+ff-eg-read edges from <wrapped-0-id>
+```
 
 This shows the `Calls` edge to `ReportGenerationEntity` (the AI generation step).
 
@@ -277,7 +279,8 @@ When reviewing entities that participate in the feedback loop, inspect the `conf
 
 ```bash
 # Inspect the ReportEntity (wrapped_0)
-ff-eg-read node get <wrapped-0-id>```
+ff-eg-read node get <wrapped-0-id>
+```
 
 In the response, look for the separation between `data` and `config`:
 
@@ -316,7 +319,8 @@ Check that the original document, extracted text, and final PDF were stored in w
 
 ```bash
 # List working memory records for the workflow entity
-ff-wm-read list --entity-id $ENTITY_ID```
+ff-wm-read list --entity-id $ENTITY_ID
+```
 
 You should see:
 - The original uploaded document (`stage: original_upload`)
@@ -324,7 +328,8 @@ You should see:
 
 ```bash
 # List working memory records for the ReportEntity (wrapped_0)
-ff-wm-read list --entity-id <wrapped-0-id>```
+ff-wm-read list --entity-id <wrapped-0-id>
+```
 
 You should see:
 - The extracted text (`stage: text_extraction`)
@@ -334,7 +339,8 @@ Download the generated PDF to verify it:
 
 ```bash
 ff-wm-read download <pdf-working-memory-id> \
-  --output ./generated-report.pdf```
+  --output ./generated-report.pdf
+```
 
 Open `generated-report.pdf` to confirm the report was generated correctly with the expected content, formatting, and orientation.
 
@@ -343,8 +349,9 @@ Open `generated-report.pdf` to confirm the report was generated correctly with t
 Verify that the LLM broker was called correctly:
 
 ```bash
-# List recent telemetry events for this entity
-ff-telemetry-read traces --entity-id $ENTITY_ID```
+# List broker request traces for this workflow entity (matched by breadcrumb)
+ff-telemetry-read trace by-breadcrumb ReportReviewWorkflowEntity $ENTITY_ID
+```
 
 Check:
 - The model pool used (`firebrand_completion_default`)
@@ -355,8 +362,9 @@ Check:
 If you ran a revision cycle, you should see multiple LLM calls -- one per iteration. The second call's prompt should include the feedback section injected by `FeedbackBotMixin`.
 
 ```bash
-# Get detailed trace for a specific call
-ff-telemetry-read trace <trace-id>```
+# Get the full trace (LLM calls and tool calls) for one broker request
+ff-telemetry-read trace get <broker-request-id>
+```
 
 This shows the full prompt that was sent to the LLM, which is invaluable for debugging prompt issues.
 
@@ -417,7 +425,8 @@ ff-sdk-cli invoke <review-step-id> \
 If you have lost the ReviewStep entity ID, find it via the entity graph:
 
 ```bash
-ff-eg-read edges from $ENTITY_ID```
+ff-eg-read edges from $ENTITY_ID
+```
 
 Look for the `ReviewStep` child entity.
 
@@ -648,7 +657,7 @@ configMap:
 
     # LLM Broker connection
     LLM_BROKER_HOST: firefoundry-core-ff-broker.ff-dev.svc.cluster.local
-    LLM_BROKER_PORT: '50052'
+    LLM_BROKER_PORT: '50051'
 
     # Context service (working memory / file storage)
     CONTEXT_SERVICE_ADDRESS: http://firefoundry-core-context-service.ff-dev.svc.cluster.local:50051
@@ -667,7 +676,7 @@ configMap:
 | Variable | Purpose | Example |
 |----------|---------|---------|
 | `LLM_BROKER_HOST` | gRPC host for the LLM broker service | `firefoundry-core-ff-broker.ff-dev.svc.cluster.local` |
-| `LLM_BROKER_PORT` | gRPC port for the LLM broker service | `50052` |
+| `LLM_BROKER_PORT` | gRPC port for the LLM broker service | `50051` |
 | `CONTEXT_SERVICE_ADDRESS` | HTTP address for the context service (working memory) | `http://firefoundry-core-context-service.ff-dev.svc.cluster.local:50051` |
 | `DOC_PROC_SERVICE_URL` | HTTP address for the document processing service | `http://firefoundry-core-doc-proc-service.ff-dev.svc.cluster.local:8081` |
 | `PG_SERVER` | PostgreSQL server hostname | `firebrand-ai4bi-pg` |

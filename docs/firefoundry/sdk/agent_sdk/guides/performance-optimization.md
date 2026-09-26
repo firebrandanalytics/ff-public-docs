@@ -548,11 +548,14 @@ Use `ff-telemetry-read` to analyze real execution times:
 # View recent broker request latencies
 ff-telemetry-read broker recent --limit 20
 
-# Find slow requests (> 30s)
-ff-telemetry-read broker slow --threshold 30000
+# Requests from one entity type (e.g., a specific bot's workflow entity) in a time window
+ff-telemetry-read broker search \
+  --breadcrumb-type <EntityType> \
+  --start-time 2024-01-01T10:00:00Z \
+  --end-time 2024-01-01T11:00:00Z
 
-# Analyze token usage by bot
-ff-telemetry-read llm by-bot --app-id $APP_ID
+# Token usage for the LLM calls behind one broker request
+ff-telemetry-read llm by-broker <broker-request-id> | jq '.[] | {model: .model_name, tokens: .total_tokens}'
 
 # Trace a specific request end-to-end
 ff-telemetry-read trace get <broker-request-id>

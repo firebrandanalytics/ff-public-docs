@@ -197,14 +197,14 @@ ff-telemetry-read trace get <broker-request-id>
 # Find all requests for a specific entity
 ff-telemetry-read trace by-breadcrumb AnalysisEntity <entity-id>
 
-# Analyze LLM call patterns
-ff-telemetry-read llm recent --limit 20
+# Analyze LLM call patterns by provider
+ff-telemetry-read llm search --provider-name anthropic --size 20
 
 # Find LLM errors
-ff-telemetry-read llm errors --limit 10
+ff-telemetry-read llm search --status failed --size 10
 
-# View tool call activity
-ff-telemetry-read tool recent --limit 10
+# Find failed tool calls
+ff-telemetry-read tool search --status failed --size 10
 ```
 
 ### Token Usage Analysis
@@ -212,11 +212,15 @@ ff-telemetry-read tool recent --limit 10
 Monitor token consumption to identify expensive operations:
 
 ```bash
-# View token usage for recent requests
-ff-telemetry-read broker recent --limit 20 --fields id,model,prompt_tokens,completion_tokens,total_tokens
+# Token usage per LLM call for one broker request
+ff-telemetry-read llm by-broker <broker-request-id> | jq '.[] | {model: .model_name, tokens: .total_tokens}'
 
-# Find high-token requests
-ff-telemetry-read broker recent --sort total_tokens --desc --limit 10
+# Total tokens across a full trace
+ff-telemetry-read trace get <broker-request-id> | jq '[.llm_requests[].total_tokens] | add'
+
+# Highest-token LLM calls on one page of recent Anthropic requests (sorting is done by jq, not the CLI)
+ff-telemetry-read llm search --provider-name anthropic --size 50 \
+  | jq '.items | sort_by(.total_tokens) | reverse | .[:10] | .[] | {id, model: .model_name, tokens: .total_tokens}'
 ```
 
 High token counts on specific bots suggest prompts that need optimization (see [Performance & Optimization](performance-optimization.md)).
@@ -288,7 +292,7 @@ ff-telemetry-read trace get <broker-request-id>
 ff-telemetry-read trace by-breadcrumb <EntityType> <entity-id>
 
 # Failed request analysis
-ff-telemetry-read broker failed --limit 5 --verbose
+ff-telemetry-read broker failed --limit 5
 ```
 
 ---
@@ -332,8 +336,8 @@ ff-telemetry-read trace get <broker-request-id>
 **Model returned empty or truncated response:**
 
 ```bash
-# Check token counts
-ff-telemetry-read llm recent --fields id,prompt_tokens,completion_tokens
+# Check token counts for the LLM calls behind the request
+ff-telemetry-read llm by-broker <broker-request-id> | jq '.[] | {id, model: .model_name, tokens: .total_tokens}'
 # If completion_tokens is very high, output may have been truncated
 # Fix: request shorter output, use a model with higher token limit
 ```
@@ -352,11 +356,12 @@ ff-telemetry-read broker failed --limit 10
 Extract the prompt from telemetry and replay it:
 
 ```bash
-# Get the full trace with prompt content
-ff-telemetry-read trace get <broker-request-id> --verbose
+# Get the full trace, including request_data (the prompt sent to the provider)
+ff-telemetry-read trace get <broker-request-id> | jq .
 
 # Use ff-brk to replay the exact prompt
-ff-brk chat --model-pool firebrand_completion_default \
+ff-brk complete --model-pool firebrand_completion_default \
+  --semantic-label "replay" \
   --system "extracted system prompt" \
   --message "extracted user message"
 ```
@@ -506,7 +511,7 @@ ff-telemetry-read broker failed --limit 20
 # Look for patterns: same bot, specific input types, specific model
 
 # Check the actual LLM output
-ff-telemetry-read trace get <request-id> --verbose
+ff-telemetry-read trace get <broker-request-id> | jq '.llm_requests[] | {status, response: .response_data}'
 ```
 
 **Common causes:**
@@ -522,14 +527,14 @@ ff-telemetry-read trace get <request-id> --verbose
 
 **Diagnosis:**
 ```bash
-# Check for slow broker requests
-ff-telemetry-read broker recent --sort duration --desc --limit 10
+# Pull recent broker requests and compare their timestamps
+ff-telemetry-read broker recent --limit 50 | jq .
 
 # Check pod resource usage
 kubectl top pods -n ff-env -l app=main-bundle
 
-# Check if the broker is queuing requests
-ff-telemetry-read broker recent --fields id,queued_at,started_at,completed_at
+# Inspect one slow request in full (timestamps, LLM calls, tool calls)
+ff-telemetry-read trace get <broker-request-id> | jq .
 ```
 
 **Common causes:**

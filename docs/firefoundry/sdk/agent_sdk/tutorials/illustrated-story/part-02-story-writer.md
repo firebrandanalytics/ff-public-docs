@@ -630,7 +630,10 @@ ff-eg-read node io <entity-id>
 ff-eg-read node progress <entity-id>
 
 # See the full LLM request including rendered prompt and schema docs
-ff-telemetry-read broker-requests --entity-id <entity-id>
+ff-telemetry-read trace by-breadcrumb StoryWriterEntity <entity-id>
+
+# Then view the prompt and response for one of the returned broker requests
+ff-telemetry-read trace get <broker-request-id> | jq '.llm_requests[] | {request: .request_data, response: .response_data}'
 ```
 
 The `ff-telemetry-read` output is especially informative here. You should see the five prompt sections rendered in order, followed by the schema documentation that `StructuredOutputBotMixin` injected. This lets you verify that the LLM received all the instructions you intended.

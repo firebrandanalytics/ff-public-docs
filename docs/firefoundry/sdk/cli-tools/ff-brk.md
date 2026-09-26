@@ -23,12 +23,18 @@ The tool connects to the FF Broker gRPC service. Auto-configures from environmen
 | `FF_BROKER_HOST` | Broker service host | `localhost` |
 | `FF_BROKER_PORT` | Broker service gRPC port | `50099` |
 
+The CLI's built-in port default (`50099`) does not match the broker Service, which listens for gRPC on port **50051**. Set `FF_BROKER_PORT=50051` (in your environment or `.env`) or pass `--port 50051` on each command.
+
 ### Port-Forward Setup
 
-For local development, port-forward the broker service:
+For local development, port-forward the broker service. With `firefoundry-core` installed under the release name `firefoundry-core`, the Service is `firefoundry-core-ff-broker`; replace `ff-test` with your environment's namespace:
 
 ```bash
-kubectl port-forward -n firefoundry-home svc/ff-broker 50099:50099
+kubectl port-forward -n ff-test svc/firefoundry-core-ff-broker 50051:50051
+
+# In .env (or pass --port 50051)
+FF_BROKER_HOST=localhost
+FF_BROKER_PORT=50051
 ```
 
 ## Quick Reference
@@ -167,7 +173,7 @@ done
 **Human-readable output (default):**
 
 ```
-Sending completion request to localhost:50099
+Sending completion request to localhost:50051
   Model pool: gpt-4o
   Semantic label: test-request
   Message: "What is the capital of France?"
@@ -240,8 +246,9 @@ After sending a request, use `ff-telemetry-read` to find it in the telemetry dat
 # Send a request with a unique label
 ff-brk complete -m gpt-4o -l "trace-test-$(date +%s)" --msg "Hello"
 
-# Then query telemetry for that request
-ff-telemetry-read broker-requests --semantic-label "trace-test-*" --limit 1
+# Then find the most recent broker request and view its full trace
+ff-telemetry-read broker recent --limit 1
+ff-telemetry-read trace get <broker-request-id>
 ```
 
 ## Troubleshooting

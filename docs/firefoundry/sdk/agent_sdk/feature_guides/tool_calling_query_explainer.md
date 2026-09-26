@@ -885,7 +885,7 @@ startServer();
 | `DAS_IDENTITY` | `user:admin` | DAS identity header |
 | `MODEL_POOL_NAME` | `firebrand-gpt-5.2-failover` | LLM model pool |
 | `LLM_BROKER_HOST` | `localhost` | Broker gRPC host |
-| `LLM_BROKER_PORT` | `50052` | Broker gRPC port |
+| `LLM_BROKER_PORT` | `50051` | Broker gRPC port |
 | `REMOTE_ENTITY_SERVICE_URL` | (required) | Entity service URL |
 | `REMOTE_ENTITY_SERVICE_PORT` | `8080` | Entity service port |
 | `USE_REMOTE_ENTITY_CLIENT` | `true` | Enable remote entity client |
@@ -899,10 +899,10 @@ For local development, port-forward the platform services:
 kubectl port-forward -n ff-dev svc/firefoundry-core-entity-service 8180:8080
 
 # Broker
-kubectl port-forward -n ff-dev svc/firefoundry-core-ff-broker 50052:50052
+kubectl port-forward -n ff-dev svc/firefoundry-core-ff-broker 50051:50051
 
 # Data Access Service (if running in-cluster)
-kubectl port-forward -n ff-dev svc/ff-data-access 8080:8080
+kubectl port-forward -n ff-dev svc/firefoundry-core-data-access 8080:8080
 ```
 
 ### Starting the Bundle
@@ -913,7 +913,7 @@ export REMOTE_ENTITY_SERVICE_URL=http://localhost
 export REMOTE_ENTITY_SERVICE_PORT=8180
 export USE_REMOTE_ENTITY_CLIENT=true
 export LLM_BROKER_HOST=localhost
-export LLM_BROKER_PORT=50052
+export LLM_BROKER_PORT=50051
 export DAS_URL=http://localhost:8080
 export PORT=3001
 

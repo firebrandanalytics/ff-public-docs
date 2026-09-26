@@ -27,7 +27,7 @@ An **adapter** exposes one FireFoundry service as MCP tools. Each adapter has a 
 | `sandbox` | [Code Sandbox](../code-sandbox/README.md) | 1 |
 | `websearch` | [Web Search](../web-search/README.md) | 3 |
 | `dataaccess` | [Data Access Service](../data-access/README.md) | 7 |
-| `knowledgebase` | Knowledge base ingestion and RAG query APIs | 7 |
+| `knowledgebase` | Earlier standalone KB ingestion and RAG query APIs (not the current Knowledge Service — see [Tools](./tools.md#knowledge-base-adapter)) | 7 |
 | `skills` | [Skills Service](../skills-service/README.md) | 3 |
 | `grpc` | Your own gRPC services | dynamic |
 | `a2a-client` | Remote A2A agents | dynamic |

@@ -216,7 +216,7 @@ ff-telemetry-read broker search \
 
 ```bash
 # Unique error messages with counts
-ff-telemetry-read broker failed --size 100 | jq '.items[].error_message' | sort | uniq -c | sort -rn
+ff-telemetry-read broker failed --limit 100 | jq '.items[].error_message' | sort | uniq -c | sort -rn
 
 # LLM error messages
 ff-telemetry-read llm search --status failed --size 100 | jq '.items[].error_message' | sort | uniq -c | sort -rn
@@ -226,17 +226,17 @@ ff-telemetry-read llm search --status failed --size 100 | jq '.items[].error_mes
 
 ```bash
 # Errors over time
-ff-telemetry-read broker failed --size 100 | jq '.items[] | {time: .created_at, error: .error_message}'
+ff-telemetry-read broker failed --limit 100 | jq '.items[] | {time: .created_at, error: .error_message}'
 ```
 
 ### Error-Entity Correlation
 
 ```bash
 # Which entities are failing most?
-ff-telemetry-read broker failed --size 100 | jq '.items[].breadcrumbs[0].entity_type' | sort | uniq -c | sort -rn
+ff-telemetry-read broker failed --limit 100 | jq '.items[].breadcrumbs[0].entity_type' | sort | uniq -c | sort -rn
 
 # Get entity IDs for failed requests
-ff-telemetry-read broker failed --size 100 | jq '.items[] | {entity: .breadcrumbs[0].entity_id, error: .error_message}'
+ff-telemetry-read broker failed --limit 100 | jq '.items[] | {entity: .breadcrumbs[0].entity_id, error: .error_message}'
 ```
 
 ## Performance Analysis

@@ -96,7 +96,7 @@ export class ImageService {
   constructor() {
     this.brokerClient = new SimplifiedBrokerClient({
       host: process.env.LLM_BROKER_HOST || 'localhost',
-      port: parseInt(process.env.LLM_BROKER_PORT || '50052'),
+      port: parseInt(process.env.LLM_BROKER_PORT || '50051'),
     });
   }
 
@@ -194,14 +194,14 @@ The `SimplifiedBrokerClient` is the high-level client for communicating with the
 ```typescript
 this.brokerClient = new SimplifiedBrokerClient({
   host: process.env.LLM_BROKER_HOST || 'localhost',
-  port: parseInt(process.env.LLM_BROKER_PORT || '50052'),
+  port: parseInt(process.env.LLM_BROKER_PORT || '50051'),
 });
 ```
 
-The broker client connects over gRPC (port 50052 by default). In a deployed cluster, this points to the in-cluster broker service. For local development, you port-forward the broker:
+The broker client connects over gRPC (port 50051 by default). In a deployed cluster, this points to the in-cluster broker service. For local development, you port-forward the broker:
 
 ```bash
-kubectl port-forward svc/firefoundry-core-broker -n ff-dev 50052:50052
+kubectl port-forward svc/firefoundry-core-ff-broker -n ff-dev 50051:50051
 ```
 
 ### The generateImage() Method
@@ -468,16 +468,16 @@ The `ImageService` depends on two sets of environment variables -- one for the b
 
 ```
 LLM_BROKER_HOST=localhost
-LLM_BROKER_PORT=50052
+LLM_BROKER_PORT=50051
 ```
 
 For local development with port-forwarding:
 
 ```bash
-kubectl port-forward svc/firefoundry-core-broker -n ff-dev 50052:50052
+kubectl port-forward svc/firefoundry-core-ff-broker -n ff-dev 50051:50051
 ```
 
-In a deployed cluster, these are typically set to the in-cluster service address (e.g., `firefoundry-core-broker.ff-dev.svc.cluster.local`).
+In a deployed cluster, these are typically set to the in-cluster service address (e.g., `firefoundry-core-ff-broker.ff-dev.svc.cluster.local`).
 
 ### Blob Storage
 
@@ -497,7 +497,7 @@ Add these to your `apps/story-bundle/.env` file (or your deployment's ConfigMap)
 ```
 # Broker service (image generation)
 LLM_BROKER_HOST=localhost
-LLM_BROKER_PORT=50052
+LLM_BROKER_PORT=50051
 
 # Blob storage (image retrieval)
 BLOB_STORAGE_PROVIDER=azure

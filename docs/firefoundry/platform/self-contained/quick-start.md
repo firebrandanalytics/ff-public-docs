@@ -65,8 +65,10 @@ kubectl get pods -n ff-core
 # Context Service (gRPC)
 kubectl port-forward svc/firefoundry-core-context-service 50051:50051 -n ff-core
 
-# FF Broker (HTTP/gRPC)
-kubectl port-forward svc/firefoundry-core-ff-broker 8080:8080 -n ff-core
+# FF Broker (gRPC; the Service listens on 50051, mapped to local 50052
+# so it doesn't clash with the Context Service forward above; a bundle running
+# locally would use LLM_BROKER_PORT=50052)
+kubectl port-forward svc/firefoundry-core-ff-broker 50052:50051 -n ff-core
 
 # MinIO Console (optional, for debugging)
 kubectl port-forward svc/firefoundry-core-minio 9001:9001 -n ff-core

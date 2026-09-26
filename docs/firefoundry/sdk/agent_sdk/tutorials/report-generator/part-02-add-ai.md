@@ -430,7 +430,11 @@ ff-eg-read node progress <entity-id>
 To see the actual prompt that was sent to the LLM, including the injected schema:
 
 ```bash
-ff-telemetry-read broker-requests --entity-id <entity-id>
+# Find the broker requests made for the entity
+ff-telemetry-read trace by-breadcrumb ReportGenerationEntity <entity-id>
+
+# Then view the prompt and response for one of the returned broker requests
+ff-telemetry-read trace get <broker-request-id> | jq '.llm_requests[] | {request: .request_data, response: .response_data}'
 ```
 
 This shows the full request/response, including how `StructuredOutputBotMixin` injected the Zod schema description into the system prompt.

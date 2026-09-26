@@ -132,6 +132,8 @@ The agent is configured via environment variables (see the bundle's `.env.templa
 - **Ingestion tuning** — Render concurrency, relationship extraction confidence floor, whether to extract typed relationships
 - **Storage** — Blob storage bucket, database connection (where applicable)
 
+> **Knowledge Service URL is required for Knowledge Service ingestion.** When ingestion is triggered through the [Knowledge Service](../services/knowledge-service/README.md), the RAG agent bundle reports the result back to the Knowledge Service when it finishes. Configure the bundle's knowledge service endpoint with the Knowledge Service's in-cluster URL (for a `firefoundry-core` release, `http://firefoundry-core-knowledge-service.<namespace>.svc.cluster.local:8080`); without it, ingestion never completes from the Knowledge Service's point of view and documents stay `queued`. See [Knowledge Service — Operations](../services/knowledge-service/operations.md#enabling-the-service).
+
 ## Repository
 
 Source code: [ff-app-system / rag-agent-bundle](https://github.com/firebrandanalytics/ff-app-system/tree/main/apps/rag-agent-bundle)

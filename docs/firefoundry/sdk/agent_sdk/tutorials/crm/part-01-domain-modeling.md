@@ -195,8 +195,9 @@ To run this bundle locally, you'll need port-forwards to the platform services:
 # Entity service (default port 8180)
 kubectl port-forward -n ff-dev svc/firefoundry-core-entity-service 8180:8080 &
 
-# Broker (default port 50052)
-kubectl port-forward -n ff-dev svc/firefoundry-core-ff-broker 50052:50052 &
+# Broker (Service gRPC port 50051, mapped to local 50052 so it doesn't clash with the
+# context service; set LLM_BROKER_HOST=localhost and LLM_BROKER_PORT=50052 for the local bundle)
+kubectl port-forward -n ff-dev svc/firefoundry-core-ff-broker 50052:50051 &
 
 # Context service (default port 50051)
 kubectl port-forward -n ff-dev svc/firefoundry-core-context-service 50051:50051 &
@@ -205,7 +206,7 @@ kubectl port-forward -n ff-dev svc/firefoundry-core-context-service 50051:50051 
 Or use `procman` if available:
 ```bash
 procman start entity-svc -- kubectl port-forward -n ff-dev svc/firefoundry-core-entity-service 8180:8080
-procman start broker -- kubectl port-forward -n ff-dev svc/firefoundry-core-ff-broker 50052:50052
+procman start broker -- kubectl port-forward -n ff-dev svc/firefoundry-core-ff-broker 50052:50051
 procman start context-svc -- kubectl port-forward -n ff-dev svc/firefoundry-core-context-service 50051:50051
 ```
 

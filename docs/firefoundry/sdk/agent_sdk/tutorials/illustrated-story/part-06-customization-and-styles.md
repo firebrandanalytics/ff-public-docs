@@ -1168,7 +1168,11 @@ This tests the default fallback behavior. Only `style` is specified, so:
 Use `ff-telemetry-read` to see the actual prompt sent to the LLM:
 
 ```bash
-ff-telemetry-read broker-requests --entity-id <story-writer-entity-id>
+# Find the broker requests made for the entity
+ff-telemetry-read trace by-breadcrumb StoryWriterEntity <story-writer-entity-id>
+
+# Then view the prompt and response for one of the returned broker requests
+ff-telemetry-read trace get <broker-request-id> | jq '.llm_requests[] | {request: .request_data, response: .response_data}'
 ```
 
 Look for the three dynamic sections in the rendered prompt:

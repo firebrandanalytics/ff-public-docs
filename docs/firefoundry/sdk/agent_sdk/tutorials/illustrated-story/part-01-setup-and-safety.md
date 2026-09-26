@@ -744,10 +744,13 @@ ff-eg-read node io <entity-id>
 ff-eg-read node progress <entity-id>
 
 # See the actual prompt sent to the LLM (including injected schema)
-ff-telemetry-read broker-requests --entity-id <entity-id>
+ff-telemetry-read trace by-breadcrumb ContentSafetyCheckEntity <entity-id>
+
+# Then view the prompt and response for one of the returned broker requests
+ff-telemetry-read trace get <broker-request-id> | jq '.llm_requests[] | {request: .request_data, response: .response_data}'
 ```
 
-The `broker-requests` output will show the full prompt, including the schema documentation that `StructuredOutputBotMixin` injected. This is useful for verifying that the schema and prompt sections appear correctly.
+The trace's `request_data` shows the full prompt, including the schema documentation that `StructuredOutputBotMixin` injected. This is useful for verifying that the schema and prompt sections appear correctly.
 
 ---
 

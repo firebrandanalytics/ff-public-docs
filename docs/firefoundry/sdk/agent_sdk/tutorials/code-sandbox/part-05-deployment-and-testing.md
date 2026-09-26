@@ -62,8 +62,8 @@ The agent bundle needs several environment variables to connect to platform serv
 
 | Variable | Purpose | Example |
 |----------|---------|---------|
-| `LLM_BROKER_HOST` | LLM broker service hostname | `ff-llm-broker` |
-| `LLM_BROKER_PORT` | LLM broker service port | `8080` |
+| `LLM_BROKER_HOST` | LLM broker service hostname | `firefoundry-core-ff-broker` |
+| `LLM_BROKER_PORT` | LLM broker service gRPC port | `50051` |
 | `CODE_SANDBOX_URL` | Code Sandbox Service URL | `http://ff-code-sandbox:8080` |
 | `DATA_ACCESS_URL` | Data Access Service URL | `http://ff-data-access:8080` |
 | `CODE_SANDBOX_TS_PROFILE` | TypeScript profile name (optional) | `finance-typescript` |
@@ -233,10 +233,11 @@ This returns the actual TypeScript or Python code that the LLM generated and the
 The telemetry system records every LLM call, including the full prompt and response:
 
 ```bash
-ff-telemetry-read list-requests \
-  --bot DemoDataScienceBot \
-  --limit 5 \
-  --url http://localhost:3001
+# Most recent broker requests (the bot's LLM calls)
+ff-telemetry-read broker recent --limit 5
+
+# Full prompt and response for one of them
+ff-telemetry-read trace get <broker-request-id> | jq '.llm_requests[] | {request: .request_data, response: .response_data}'
 ```
 
 This shows:
@@ -288,7 +289,8 @@ If you see `loaded schema with 0 tables`, the DAS connection exists but returned
 **Check the full prompt via telemetry:**
 
 ```bash
-ff-telemetry-read list-requests --bot DemoDataScienceBot --limit 1 --url http://localhost:3001
+ff-telemetry-read broker recent --limit 1
+ff-telemetry-read trace get <broker-request-id> | jq '.llm_requests[].request_data'
 ```
 
 Look for the "Database Schema" section in the system prompt. If it's missing, the schema wasn't loaded correctly.

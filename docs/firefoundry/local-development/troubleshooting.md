@@ -200,13 +200,13 @@ Services can't communicate with each other
 
 ```bash
 # Test service connectivity
-kubectl run test-pod --image=busybox -it --rm -- nslookup firefoundry-ff-broker.ff-dev.svc.cluster.local
+kubectl run test-pod --image=busybox -it --rm -- nslookup firefoundry-core-ff-broker.ff-dev.svc.cluster.local
 
 # Check service endpoints
 kubectl get endpoints -n ff-dev
 
 # Test port forwarding
-kubectl port-forward svc/firefoundry-ff-broker 50061:50061 -n ff-dev
+kubectl port-forward svc/firefoundry-core-ff-broker 50051:50051 -n ff-dev
 ```
 
 ## Helm Installation and Timeout Errors

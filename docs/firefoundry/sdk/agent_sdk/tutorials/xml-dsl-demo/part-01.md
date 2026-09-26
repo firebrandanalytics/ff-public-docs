@@ -68,7 +68,7 @@ docker run \
   -e PG_DATABASE=ff_dev \
   -e PG_PASSWORD=your_password \
   -e LLM_BROKER_HOST=$LLM_BROKER_HOST \
-  -e LLM_BROKER_PORT=${LLM_BROKER_PORT:-8080} \
+  -e LLM_BROKER_PORT=${LLM_BROKER_PORT:-50051} \
   -e USE_REMOTE_ENTITY_CLIENT=true \
   -p 3000:3000 \
   firebrandanalytics/xml-bundle-server:latest

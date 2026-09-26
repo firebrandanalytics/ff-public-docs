@@ -415,10 +415,17 @@ When validation fails, the mixin returns the validation errors to the bot framew
 You can inspect validation failures via `ff-telemetry-read`:
 
 ```bash
-ff-telemetry-read calls list --entity-id <entity-id>
+# Failed broker requests for the entity
+ff-telemetry-read broker search \
+  --breadcrumb-type ReportGenerationEntity \
+  --breadcrumb-id <entity-id> \
+  --has-error
+
+# Full trace for one of them
+ff-telemetry-read trace get <broker-request-id>
 ```
 
-Look for calls with `status: "error"` and check the error details for Zod validation messages.
+Check the error details and the LLM responses in the trace for Zod validation messages.
 
 ### Making Schemas More Resilient
 
@@ -586,7 +593,11 @@ The `VALUE` event at the end should contain a JSON object with exactly two field
 To see exactly what schema documentation the LLM received, use `ff-telemetry-read` to view the full prompt:
 
 ```bash
-ff-telemetry-read calls list --entity-id <report-generation-entity-id>
+# Find the broker requests made for the entity
+ff-telemetry-read trace by-breadcrumb ReportGenerationEntity <report-generation-entity-id>
+
+# Then view the prompt and response for one of the returned broker requests
+ff-telemetry-read trace get <broker-request-id> | jq '.llm_requests[] | {request: .request_data, response: .response_data}'
 ```
 
 Look for the system message that contains the schema documentation. It should read something like:

@@ -772,7 +772,7 @@ export PG_SERVER="your-postgres-host"
 export PG_DATABASE="your-database-name"
 export PG_PASSWORD="your-password"
 export LLM_BROKER_HOST="your-broker-host"
-export LLM_BROKER_PORT="your-broker-port"
+export LLM_BROKER_PORT="50051"  # broker gRPC Service port
 ```
 
 Start the server:

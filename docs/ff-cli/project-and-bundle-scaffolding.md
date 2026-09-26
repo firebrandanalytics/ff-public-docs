@@ -231,7 +231,7 @@ export PG_SERVER="localhost"
 export PG_DATABASE="firefoundry"
 export PG_PASSWORD="password"
 export LLM_BROKER_HOST="localhost"
-export LLM_BROKER_PORT="8080"
+export LLM_BROKER_PORT="50051"
 
 docker-compose up
 ```
@@ -805,7 +805,7 @@ export PG_DATABASE="firefoundry"
 export PG_PASSWORD="your_password"
 export PG_INSERT_PASSWORD="your_password"
 export LLM_BROKER_HOST="localhost"
-export LLM_BROKER_PORT="8080"
+export LLM_BROKER_PORT="50051"
 
 # 6. Start development environment
 pnpm run dev

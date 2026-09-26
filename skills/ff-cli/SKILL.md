@@ -272,13 +272,10 @@ ff-cli env broker-config show <name>
 ff-cli env broker-config list
 ```
 
-**Known bug**: `ff-cli env broker-secret add` reports success but may not update the Kubernetes secret value (ff-cli-go#48). Workaround:
-```bash
-# Manually patch the secret
-kubectl patch secret firefoundry-core-ff-broker-secret -n <namespace> \
-  --type merge -p "{\"data\":{\"GOOGLE_API_KEY\":\"$(echo -n '<key>' | base64)\"}}"
-kubectl rollout restart deployment/firefoundry-core-ff-broker -n <namespace>
-```
+**Known bug**: `ff-cli env broker-secret add` reports success but may not update the stored secret value (ff-cli-go#48). `ff-cli env broker-secret` is the only supported way to set broker credentials; do not edit or patch the broker's Kubernetes secret directly. If provider calls still fail with authentication errors after adding a key:
+1. Re-run `ff-cli env broker-secret add <env-name> --key <KEY_NAME> --value <key> -y` with the exact key name the model pool's `env_var_name` references.
+2. Send a test request (`ff-brk complete --port 50051 -m <pool> -l smoke-test --msg "ping"`).
+3. If it still fails, contact your environment administrator to update the broker secret and restart the broker.
 
 ### Profile Management
 
@@ -589,7 +586,7 @@ ff-cli apps list
 
 | Issue | Workaround |
 |-|-|
-| `env broker-secret add` doesn't update K8s secret (ff-cli-go#48) | Use `kubectl patch secret` + `kubectl rollout restart` |
+| `env broker-secret add` may not update the stored secret (ff-cli-go#48) | Re-run `ff-cli env broker-secret add`; if the key still doesn't take effect, contact your environment administrator (don't patch the secret directly) |
 | `application register` URL construction bug (ff-cli-go#28) | Use `--mode internal --internal-port 8081` |
 | `ops deploy` auto-builds with `latest` tag regardless of values.yaml | Use `kubectl rollout restart` if pod doesn't pick up changes |
 | System application `a0000000-...` not auto-seeded (ff-services-entity#9) | Create manually via entity-service API (see ff-local-dev skill) |

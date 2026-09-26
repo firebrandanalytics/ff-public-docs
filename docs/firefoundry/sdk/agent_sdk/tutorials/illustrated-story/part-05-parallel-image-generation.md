@@ -122,7 +122,7 @@ import type {
 
 const brokerClient = new SimplifiedBrokerClient({
   host: process.env.LLM_BROKER_HOST || 'localhost',
-  port: parseInt(process.env.LLM_BROKER_PORT || '50052'),
+  port: parseInt(process.env.LLM_BROKER_PORT || '50051'),
 });
 
 // ─── Quality/aspect ratio mapping ───────────────────────────

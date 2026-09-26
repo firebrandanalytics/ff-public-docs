@@ -275,7 +275,7 @@ import { BrokerClient } from '@firebrandanalytics/ff-agent-sdk/client';
 
 // Create broker client
 const brokerClient = new BrokerClient({
-  endpoint: 'http://ff-broker:50061'
+  endpoint: 'http://firefoundry-core-ff-broker:50051'
 });
 
 // Define class with AI decorators

@@ -497,7 +497,7 @@ ff-cli env broker-config create --name gemini_completion
 kubectl get secret firefoundry-core-ff-broker-secret -n <namespace> \
   -o jsonpath='{.data.GOOGLE_API_KEY}' | base64 -d
 ```
-If the old value persists, use `kubectl patch secret` directly.
+If the old value persists, re-run `ff-cli env broker-secret add ... -y`; if it still doesn't take effect, contact your environment administrator. Don't patch the broker secret directly.
 
 ### Environment Configuration Pattern
 

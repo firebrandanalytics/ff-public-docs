@@ -185,7 +185,7 @@ Before writing any code, verify that DAS is reachable and the FireKicks dataset 
 
 ```bash
 # Port-forward DAS if needed
-kubectl port-forward -n ff-dev svc/ff-data-access 8080:8080
+kubectl port-forward -n ff-dev svc/firefoundry-core-data-access 8080:8080
 ```
 
 ```bash

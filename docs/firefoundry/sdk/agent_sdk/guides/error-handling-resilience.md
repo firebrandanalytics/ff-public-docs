@@ -561,7 +561,13 @@ FireFoundry automatically records telemetry for every LLM call through the Broke
 
 ```bash
 # Find failed broker requests for a specific entity
-ff-telemetry-read --entity-id $ENTITY_ID --status error
+ff-telemetry-read broker search \
+  --breadcrumb-type <EntityType> \
+  --breadcrumb-id $ENTITY_ID \
+  --has-error
+
+# Then inspect one failure in full
+ff-telemetry-read trace get <broker-request-id>
 ```
 
 ---

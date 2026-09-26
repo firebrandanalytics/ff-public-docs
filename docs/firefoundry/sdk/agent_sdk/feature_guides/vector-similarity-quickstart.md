@@ -177,7 +177,7 @@ The working demo is implemented in the `med-iq/apps/doc-iq` project.
 ```bash
 cd /path/to/med-iq
 export LLM_BROKER_HOST=localhost
-export LLM_BROKER_PORT=50061
+export LLM_BROKER_PORT=50051
 pnpm --filter doc-iq run dev
 ```
 

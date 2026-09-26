@@ -31,7 +31,7 @@ This separation allows you to:
 
 ### Core Services (ff-dev namespace)
 
-- **LLM Broker**: `firefoundry-ff-broker.ff-dev.svc.cluster.local:50061` (gRPC)
+- **LLM Broker**: `firefoundry-core-ff-broker.ff-dev.svc.cluster.local:50051` (gRPC)
 
   - Routes requests to appropriate AI models
   - Handles load balancing and failover
