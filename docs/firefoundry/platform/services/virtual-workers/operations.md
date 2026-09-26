@@ -16,10 +16,10 @@ Before your app can start sessions, your environment administrator also provides
 
 - **CLI credentials** for the engines your workers use (for example, a Claude Code token), stored in the environment for VWM to hand to workspaces.
 - **VW-capable runtime images** in a registry the cluster can pull from.
-- **Blob storage** for skill packages, if you use skills.
 - **Git access** for your knowledge-base and session repositories, if they are private.
+- **MCP Gateway and Skills Service**, if your workers use platform tools or skills. VWM has no skill store of its own; workers read [Skills Service](../skills-service/README.md) skills through the gateway (see [Concepts — Skills](./concepts.md#skills)).
 
-Once VWM is running, your app team manages its own **runtimes, workers, and skills** through the [Admin API](./reference.md#admin-api) (see [Getting Started](./getting-started.md)).
+Once VWM is running, your app team manages its own **runtimes and workers** through the [Admin API](./reference.md#admin-api) (see [Getting Started](./getting-started.md)).
 
 ## Settings an App Team May Ask For
 
@@ -63,9 +63,8 @@ Then run a one-prompt smoke test: create a session for a worker, wait for `activ
 | Idle suspension | Sessions suspend after the inactivity window and resume on the next request, with a short delay. |
 | Maximum session duration | The worker's `timeout` (default 3600 s). Long jobs should be split across sessions or use a longer worker timeout. |
 | Prompt timeout | Set `timeout` per prompt; long agentic tasks can take many minutes. Prefer streaming for user-facing work. |
-| Conversation resume | Only Claude Code and OpenCode continue the CLI conversation across prompts; with Codex and Gemini, restate context or reference files. |
+| Conversation resume | Claude Code, Cursor and OpenCode continue the CLI conversation across prompts; with Codex, restate context or reference files. The Gemini CLI has been retired: new or updated workers can't use `gemini`. |
 | Parallel prompts | Sub-sessions share one filesystem — avoid writing the same files from parallel prompts. |
-| Skill package size | Max 50 MB per `.skill` upload. |
 | Knowledge base writes | Read-only during a session except `learnings/`; changes go to a per-session branch for review. |
 | Access | Internal to the cluster by default. |
 

@@ -6,7 +6,7 @@
 
 A Virtual Worker is a **virtual team member** — a managed AI agent with a defined role, institutional knowledge, specialized skills, and the ability to learn and improve over time. It's the difference between opening a fresh AI chat session and working with a colleague who knows your company, your codebase, and your engineering standards.
 
-The underlying CLI coding agent (Claude Code, Codex, Gemini, OpenCode) is just the execution engine — the raw capability to read code, reason about problems, and produce output. A Virtual Worker wraps that engine with everything needed to make it effective in *your* organization:
+The underlying CLI coding agent (Claude Code, Codex, Cursor, OpenCode) is just the execution engine — the raw capability to read code, reason about problems, and produce output. A Virtual Worker wraps that engine with everything needed to make it effective in *your* organization:
 
 - **Identity and role** — who this worker is and what they specialize in
 - **Institutional knowledge** — company context, product details, engineering guidelines, tribal knowledge
@@ -35,9 +35,9 @@ Bob's identity is composed from several pieces managed by VWM:
 Worker Definition (Bob)
 ├── Role & Instructions (agentMd)    → "You are a backend/DevOps engineer..."
 ├── Knowledge Base (worker repo)     → COMPANY.md, PRODUCTS.md, GUIDELINES.md, TECH_STACK.md
-├── Skills (tool packages)           → security-scanner, deployment-validator, etc.
-├── MCP Connections                  → Entity graph, working memory, doc processing
-├── CLI Engine                       → Claude Code (or Codex, Gemini, OpenCode)
+├── MCP Connections                  → Entity graph, working memory, doc processing,
+│                                       Skills Service skills (via the MCP Gateway)
+├── CLI Engine                       → Claude Code (or Codex, Cursor, OpenCode)
 └── Runtime Environment              → Container image with the right tools installed
 ```
 
@@ -74,16 +74,16 @@ Cloud coding agents are excellent for quick, self-contained tasks: fixing a bug 
 | **Environment control** | Fixed sandbox | Custom container images with your tools, dependencies, and runtimes |
 | **Institutional knowledge** | None — fresh each session | Git-backed knowledge base with company context, guidelines, tribal knowledge |
 | **Learning** | None | Auto-learning captures knowledge from each session for future use |
-| **Skills & tools** | Limited to what's pre-installed | Versioned skill packages, MCP integration with platform services |
+| **Skills & tools** | Limited to what's pre-installed | Platform Skills Service skills and other platform services through the MCP Gateway |
 | **Platform integration** | Standalone | Connects to entity graphs, working memory, document processing, and other FireFoundry services |
-| **Multi-CLI support** | Single provider | Claude Code, Codex, Gemini, OpenCode through a single API |
+| **Multi-CLI support** | Single provider | Claude Code, Codex, Cursor, OpenCode through a single API |
 | **Programmatic access** | Varies | Full REST API with SSE streaming, designed for automation and orchestration |
 
 ### Beyond self-hosted coding agents
 
 It's tempting to think of Virtual Workers as just "self-hosted Claude Code" or "self-hosted Codex." That's part of the picture — and even that alone solves real problems around network access, security, and environment control. But the Virtual Worker concept goes further.
 
-The knowledge base, auto-learning, skills system, and platform integration transform a generic coding agent into a **specialized team member**. A cloud coding agent is a tool you use; a Virtual Worker is a colleague you work with. The difference grows over time as the worker accumulates knowledge, and it compounds across your organization as different workers specialize in different domains.
+The knowledge base, auto-learning, skills, and platform integration transform a generic coding agent into a **specialized team member**. A cloud coding agent is a tool you use; a Virtual Worker is a colleague you work with. The difference grows over time as the worker accumulates knowledge, and it compounds across your organization as different workers specialize in different domains.
 
 VWM's CLI-agnostic architecture also means it isn't tied to any single provider's agent. As new coding agents emerge or improve, they can be added as adapters without changing how your workers, sessions, or knowledge bases operate.
 
@@ -98,11 +98,10 @@ Multiple sessions can run from the same worker definition simultaneously, each w
 Workers are configured with:
 
 - **Name and description** — who this worker is and what they do
-- **CLI type** — which coding agent engine to use (`claude-code`, `codex`, `gemini`, `opencode`)
+- **CLI type** — which coding agent engine to use (`claude-code`, `codex`, `cursor`, `opencode`)
 - **Instructions** (`agentMd`) — the worker's role definition, merged with platform-wide system instructions
 - **Knowledge base** (`workerRepoUrl`) — a git repository containing the worker's institutional knowledge
-- **Skills** — versioned tool packages that extend the worker's capabilities
-- **MCP servers** — connections to FireFoundry platform services (entity graph, working memory, etc.)
+- **MCP servers** — connections to FireFoundry platform services (entity graph, working memory, skills, etc.) through the MCP Gateway
 - **Model configuration** — provider, model, temperature, and token limits
 - **Auto-learning** — whether to capture knowledge at the end of each session
 
@@ -112,7 +111,7 @@ Workers are configured with:
 |------------|-----------|--------------------------------------|
 | Claude Code | `claude-code` | Yes |
 | Codex CLI | `codex` | Not supported — don't rely on the CLI remembering earlier prompts (workspace files persist) |
-| Gemini CLI | `gemini` | Not supported — don't rely on the CLI remembering earlier prompts (workspace files persist) |
+| Cursor | `cursor` | Yes |
 | OpenCode | `opencode` | Yes |
 
 If your app relies on the worker remembering earlier prompts in the same session, choose an engine with resume support, or restate the needed context in each prompt (for example, by pointing the worker at files it wrote earlier).
@@ -123,7 +122,7 @@ If your app relies on the worker remembering earlier prompts in the same session
 
 A **Session** is a stateful interaction with a virtual worker — it's the equivalent of sitting down with a team member to work on a task.
 
-When you create a session, VWM provisions a container with the worker's full context: instructions, knowledge base, skills, and MCP connections. The workspace persists for the lifetime of the session, so the worker maintains context across multiple prompts and can pick up where it left off.
+When you create a session, VWM provisions a container with the worker's full context: instructions, knowledge base, and MCP connections. The workspace persists for the lifetime of the session, so the worker maintains context across multiple prompts and can pick up where it left off.
 
 ### Session Lifecycle
 
@@ -229,11 +228,11 @@ Each session makes the worker slightly more knowledgeable. A worker that's been 
 
 ## Skills
 
-**Skills** are versioned tool packages that give workers specialized capabilities beyond what the base CLI agent provides. They're distributed as zip files, downloaded from blob storage during session bootstrap, and extracted into the workspace.
+Workers get **skills** — reusable instructions and supporting files — from the platform [Skills Service](../skills-service/README.md), not from VWM itself. VWM does not store, upload, or assign skill packages.
 
-Skills can include anything the worker might need: custom scripts, configuration templates, reference data, MCP tool definitions, or specialized prompts. Platform-wide **system skills** are automatically included in every session, while other skills are assigned per worker.
+To give a worker access to Skills Service skills (including skills your agents publish and update at runtime), include the [MCP Gateway](../mcp-gateway/clients.md#virtual-workers) in the worker's `mcpServers`. The CLI agent can then call the gateway's `skills_list`, `skills_read`, and `skills_read_file` tools to discover a skill and read its content on demand. It helps to mention in the worker's `agentMd` which skills are relevant, so the agent knows to look for them. See [Skills in Agent Bundles](../../../sdk/agent_sdk/feature_guides/skills.md#virtual-workers).
 
-These skill packages are managed through VWM's own [Admin API](./reference.md#skills) and are separate from the platform [Skills Service](../skills-service/README.md). To let a worker use Skills Service skills (including skills your agents publish and update at runtime), include the [MCP Gateway](../mcp-gateway/clients.md#virtual-workers) in the worker's `mcpServers`; the CLI agent can then call `skills_list`, `skills_read`, and `skills_read_file`. See [Skills in Agent Bundles](../../../sdk/agent_sdk/feature_guides/skills.md#virtual-workers).
+Native delivery of Skills Service skills into the worker workspace by VWM is planned; until then, the MCP Gateway is the way workers reach skills.
 
 ---
 

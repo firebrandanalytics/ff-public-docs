@@ -272,10 +272,11 @@ const provider = resolver.asProvider();  // pass to SkillBotMixin or SkillPrompt
 
 ### Virtual workers
 
-`VWSkillResolver` builds prompts on the **bundle side**, for example for a planner bot that writes the task for a worker. It does not install anything into a worker's workspace. The CLI agent inside a [virtual worker](../../../platform/services/virtual-workers/README.md) can get skills in two ways:
+`VWSkillResolver` builds prompts on the **bundle side**, for example for a planner bot that writes the task for a worker. Despite its name, it does not install anything into a worker's workspace, and the Virtual Worker Manager does not deliver skills itself: VWM has no skill store or skill admin API of its own.
 
-- **Skills Service skills:** add the MCP Gateway to the worker's `mcpServers` (see [MCP Gateway — Connecting Clients](../../../platform/services/mcp-gateway/clients.md#virtual-workers)). The CLI agent then calls `skills_list`, `skills_read`, and `skills_read_file` like any other agent.
-- **VWM skill packages:** packages assigned to the worker through the Virtual Worker Manager admin API are unpacked into the workspace when a session starts (see [VWM Concepts — Skills](../../../platform/services/virtual-workers/concepts.md#skills)).
+The CLI agent inside a [virtual worker](../../../platform/services/virtual-workers/README.md) gets Skills Service skills through the MCP Gateway. Add the gateway to the worker's `mcpServers` (see [MCP Gateway — Connecting Clients](../../../platform/services/mcp-gateway/clients.md#virtual-workers)); the CLI agent then calls `skills_list`, `skills_read`, and `skills_read_file` like any other agent. Without the gateway in `mcpServers`, a worker has no access to platform skills. See [VWM Concepts — Skills](../../../platform/services/virtual-workers/concepts.md#skills).
+
+Native delivery of Skills Service skills into worker workspaces by VWM is planned. Until it ships, use the MCP Gateway path.
 
 ---
 

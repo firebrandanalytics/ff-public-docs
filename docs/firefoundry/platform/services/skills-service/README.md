@@ -84,5 +84,5 @@ Source code: [ff-services-skills](https://github.com/firebrandanalytics/ff-servi
 - [Platform Services Overview](../README.md) — Overview of all FireFoundry services
 - [MCP Gateway](../mcp-gateway/README.md) — Exposes skills to agents as MCP tools
 - [Skills in Agent Bundles](../../../sdk/agent_sdk/feature_guides/skills.md) — Agent SDK support for loading and publishing skills
-- [Virtual Worker Manager](../virtual-workers/README.md) — Virtual workers consume skills at runtime
+- [Virtual Worker Manager](../virtual-workers/README.md) — Virtual workers consume skills at runtime through the MCP Gateway
 - [Platform Architecture](../../architecture.md)

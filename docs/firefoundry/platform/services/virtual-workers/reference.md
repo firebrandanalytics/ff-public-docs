@@ -11,7 +11,7 @@ Complete REST API reference for the Virtual Worker Manager service.
 
 VWM is internal to the cluster by default (not routed through the external gateway). All request and response bodies are JSON unless noted. The Agent SDK wraps this API — see the [Virtual Worker SDK Feature Guide](../../../sdk/agent_sdk/feature_guides/virtual-worker-sdk.md).
 
-The **Session API** is what your app calls at run time. The **Admin API** manages your app's workers, runtimes, and skills.
+The **Session API** is what your app calls at run time. The **Admin API** manages your app's workers and runtimes.
 
 ---
 
@@ -339,7 +339,7 @@ POST /admin/workers
 | `name` | string | Yes | Unique name (1-100 chars) |
 | `description` | string | No | Purpose description |
 | `runtimeId` | UUID | Yes | Runtime to use |
-| `cliType` | enum | Yes | `claude-code`, `codex`, `gemini`, `opencode` |
+| `cliType` | enum | Yes | `claude-code`, `codex`, `cursor`, `opencode` (`gemini` is retired and rejected for new or updated workers) |
 | `agentMd` | string | No | Worker-specific instructions |
 | `modelConfig` | object | No | LLM configuration |
 | `modelConfig.provider` | string | No | Provider name |
@@ -368,34 +368,6 @@ PUT /admin/workers/:id
 
 ```
 DELETE /admin/workers/:id
-```
-
-**Response:** `204 No Content`
-
----
-
-### Worker Skills
-
-#### List Worker Skills
-
-```
-GET /admin/workers/:id/skills
-```
-
-**Response:** `200 OK` — Array of skill objects assigned to the worker.
-
-#### Assign Skill to Worker
-
-```
-POST /admin/workers/:id/skills/:skillId
-```
-
-**Response:** `204 No Content`
-
-#### Remove Skill from Worker
-
-```
-DELETE /admin/workers/:id/skills/:skillId
 ```
 
 **Response:** `204 No Content`
@@ -481,63 +453,7 @@ DELETE /admin/runtimes/:id
 
 ### Skills
 
-#### List Skills
-
-```
-GET /admin/skills
-```
-
-#### Get Skill by ID
-
-```
-GET /admin/skills/:id
-```
-
-#### Get Skill by Name and Version
-
-```
-GET /admin/skills/by-name/:name/version/:version
-```
-
-#### Upload Skill
-
-Upload a `.skill` (zip) package with metadata as query parameters.
-
-```
-POST /admin/skills?name=<name>&version=<version>&description=<desc>&targetPath=<path>&isSystem=<bool>&defaultInclude=<bool>
-Content-Type: application/octet-stream
-```
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `name` | string | Yes | Skill name (1-100 chars) |
-| `version` | string | Yes | Semver version |
-| `description` | string | No | Skill description |
-| `targetPath` | string | No | Extraction path (default: `.`) |
-| `isSystem` | boolean | No | System-level skill (default: `false`) |
-| `defaultInclude` | boolean | No | Auto-include for all workers (default: `false`) |
-
-**Request Body:** Raw binary `.skill` file (max 50MB).
-
-**Response:** `201 Created`
-
-#### Update Skill Metadata
-
-```
-PUT /admin/skills/:id
-```
-
-**Request Body:** Partial skill fields (JSON).
-
-**Response:** `200 OK`
-
-#### Delete Skill
-
-```
-DELETE /admin/skills/:id
-```
-
-**Response:** `204 No Content`
+VWM has no skill endpoints. Workers read skills from the platform [Skills Service](../skills-service/README.md) through the MCP Gateway's `skills_list`, `skills_read`, and `skills_read_file` tools when the worker's `mcpServers` includes the gateway. See [Concepts — Skills](./concepts.md#skills) and [Skills in Agent Bundles](../../../sdk/agent_sdk/feature_guides/skills.md).
 
 ---
 
@@ -562,7 +478,7 @@ DELETE /admin/skills/:id
   "details": [
     {
       "path": "cliType",
-      "message": "Invalid enum value. Expected 'claude-code' | 'codex' | 'gemini' | 'opencode'",
+      "message": "Invalid enum value. Expected 'claude-code' | 'codex' | 'cursor' | 'opencode'",
       "code": "invalid_enum_value"
     }
   ]
@@ -606,7 +522,7 @@ DELETE /admin/skills/:id
 |----------|-------|----------|--------------|
 | Claude Code | `claude-code` | Anthropic | Conversation resume within a session, tool use, streaming |
 | Codex CLI | `codex` | OpenAI | Code-focused execution; no conversation resume |
-| Gemini CLI | `gemini` | Google | Multi-modal capabilities; no conversation resume |
+| Cursor | `cursor` | Anysphere | Conversation resume within a session |
 | OpenCode | `opencode` | Various | Conversation resume within a session |
 
 ---

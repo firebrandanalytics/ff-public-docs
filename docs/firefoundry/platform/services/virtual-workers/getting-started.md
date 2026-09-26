@@ -60,19 +60,9 @@ curl -X POST $VWM/admin/workers \
 
 `mcpServers` gives the worker FireFoundry platform tools through the [MCP Gateway](../mcp-gateway/README.md); omit it if the worker doesn't need them.
 
-### Optional: add a skill
+### Optional: give the worker skills
 
-```bash
-# Upload a skill package (zip, max 50MB)
-curl -X POST "$VWM/admin/skills?name=security-scanner&version=1.0.0&description=SAST%20tool" \
-  -H "Content-Type: application/octet-stream" \
-  --data-binary @security-scanner-1.0.0.skill
-
-# Assign it to the worker
-curl -X POST $VWM/admin/workers/<worker-id>/skills/<skill-id>
-```
-
-This installs a VWM skill package into the worker's workspace. Skills stored in the platform [Skills Service](../skills-service/README.md) reach the worker through the MCP Gateway's `skills_*` tools when `mcpServers` includes the gateway (see [Concepts — Skills](./concepts.md#skills)).
+VWM does not host skills itself. Skills live in the platform [Skills Service](../skills-service/README.md), and a worker reads them through the MCP Gateway: with the gateway in `mcpServers` (as above), the CLI agent can call `skills_list`, `skills_read`, and `skills_read_file`. Publish the skills your worker needs to the Skills Service, and point the worker at them in `agentMd`. See [Concepts — Skills](./concepts.md#skills) and [Skills in Agent Bundles](../../../sdk/agent_sdk/feature_guides/skills.md).
 
 ---
 

@@ -10,7 +10,7 @@ All request and response bodies are JSON unless noted. JSON request bodies are l
 
 ## Consumer API (`/v1`)
 
-Read-only endpoints for agent bundles, virtual workers, and the MCP Gateway. They serve the environment the service is configured for and take no environment parameter.
+Read-only endpoints for agent bundles and the MCP Gateway (virtual workers reach them through the gateway's `skills_*` tools). They serve the environment the service is configured for and take no environment parameter.
 
 ### Identity Header
 

@@ -22,7 +22,7 @@ This guide covers the Virtual Worker (VW) SDK, which provides a session-first AP
 
 ### What Is a Virtual Worker?
 
-A Virtual Worker is a VWM-managed AI coding agent (Claude Code, Codex, Gemini, etc.) running in an isolated container with its own filesystem workspace. The VW SDK provides a TypeScript API for creating sessions, executing prompts, and managing files on these workers.
+A Virtual Worker is a VWM-managed AI coding agent (Claude Code, Codex, Cursor, etc.) running in an isolated container with its own filesystem workspace. The VW SDK provides a TypeScript API for creating sessions, executing prompts, and managing files on these workers.
 
 ### Session-First Model
 

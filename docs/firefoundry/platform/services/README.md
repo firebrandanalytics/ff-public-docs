@@ -29,7 +29,7 @@ Each is opt-in — turn it on if your application needs the capability, leave it
 - **[Notification Service](./notification-service/README.md)** — Cloud-agnostic email and SMS delivery with pluggable provider adapters.
 - **[Skills Service](./skills-service/README.md)** — Versioned, access-controlled skills that agents load at runtime (usually through the MCP Gateway) — and that agents can create and update themselves, making skills one of FireFoundry's main learning loops.
 - **[Test Harness Service](./test-harness-service/README.md)** — Define, run, and analyze automated tests against agent bundles, and track run history. *Preview* — real bundle execution and LLM-judged assertions via the Test Evaluation Agent are in development.
-- **[Virtual Worker Manager](./virtual-workers/README.md)** — Orchestrates CLI coding agents (Claude Code, Cursor, Gemini, OpenCode) with managed sessions and persistent workspaces.
+- **[Virtual Worker Manager](./virtual-workers/README.md)** — Orchestrates CLI coding agents (Claude Code, Codex, Cursor, OpenCode) with managed sessions and persistent workspaces.
 - **[Web Search Service](./web-search/README.md)** — Web search and page fetching for agents, backed by the Brave Search API.
 
 ### System Services
