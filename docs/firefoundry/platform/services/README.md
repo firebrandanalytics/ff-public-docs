@@ -30,14 +30,14 @@ Each is opt-in — turn it on if your application needs the capability, leave it
 - **[Skills Service](./skills-service/README.md)** — Skill registry, versioning, and environment-scoped installation for hosted agents.
 - **[Test Harness Service](./test-harness-service/README.md)** — Define, run, and analyze automated tests against agent bundles, and track run history. *Preview* — real bundle execution and LLM-judged assertions via the Test Evaluation Agent are in development.
 - **[Virtual Worker Manager](./virtual-workers/README.md)** — Orchestrates CLI coding agents (Claude Code, Cursor, Gemini, OpenCode) with managed sessions and persistent workspaces.
-- **[Web Search Service](./web-search/README.md)** — Provider-agnostic web search with Bing integration.
+- **[Web Search Service](./web-search/README.md)** — Web search and page fetching for agents, backed by the Brave Search API.
 
 ### System Services
 
 Background services that are not normally called by application code. App developers benefit from them indirectly — through the Console UI, CLI tools, or other services that depend on them.
 
 - **[Telemetry Service](./telemetry-service/README.md)** — Captures broker LLM calls and other producer-service telemetry. Inspect via the FireFoundry Console or the `ff-telemetry-read` CLI.
-- **[Document Processing Python Worker](./doc-proc-pyworker/README.md)** — Python gRPC backend that the Document Processing Service delegates to for PDF rasterization, structured and table extraction, OCR, upscaling, and colorspace conversion.
+- **[Document Processing Python Worker](./doc-proc-pyworker/README.md)** — Unlocks advanced Document Processing Service capabilities (PDF to images, structured and table extraction, OCR, upscaling, colorspace conversion) when enabled in your environment. Apps use these through the Document Processing Service API.
 - **[Log Proxy Service](./log-proxy-service/README.md)** — Centralized log ingestion with redaction, optional encryption, durable buffering, OTLP forwarding, search, and live tail. Opt-in. *Preview.*
 
 ## Service Matrix
@@ -59,9 +59,9 @@ Background services that are not normally called by application code. App develo
 | [Skills Service](./skills-service/README.md) | Optional | Skill registry, versioning, and environment-scoped installation | REST |
 | [Test Harness Service](./test-harness-service/README.md) | Optional | Test suite management, execution, results, run history | REST |
 | [Virtual Worker Manager](./virtual-workers/README.md) | Optional | CLI coding agent orchestration with managed sessions | REST |
-| [Web Search Service](./web-search/README.md) | Optional | Provider-agnostic web search with Bing integration | REST |
+| [Web Search Service](./web-search/README.md) | Optional | Web search and page fetching for agents, backed by the Brave Search API | REST |
 | [Telemetry Service](./telemetry-service/README.md) | System | Telemetry capture; consumed via Console UI or `ff-telemetry-read` CLI | Connect RPC + REST |
-| [Document Processing Python Worker](./doc-proc-pyworker/README.md) | System | Python backend that Document Processing delegates to | gRPC |
+| [Document Processing Python Worker](./doc-proc-pyworker/README.md) | System | Enables advanced Document Processing capabilities (used via that service) | — |
 | [Log Proxy Service](./log-proxy-service/README.md) | System | Log ingestion, redaction, buffering, OTLP forwarding, search | gRPC + REST + WebSocket |
 
 ## How Services Fit Together
