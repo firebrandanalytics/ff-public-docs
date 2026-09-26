@@ -72,6 +72,8 @@ curl -X POST "$VWM/admin/skills?name=security-scanner&version=1.0.0&description=
 curl -X POST $VWM/admin/workers/<worker-id>/skills/<skill-id>
 ```
 
+This installs a VWM skill package into the worker's workspace. Skills stored in the platform [Skills Service](../skills-service/README.md) reach the worker through the MCP Gateway's `skills_*` tools when `mcpServers` includes the gateway (see [Concepts — Skills](./concepts.md#skills)).
+
 ---
 
 ## Step 3: Use the Worker from Your Agent Bundle (SDK)

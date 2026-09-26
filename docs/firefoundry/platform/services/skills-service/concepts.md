@@ -1,6 +1,6 @@
 # Skills Service — Concepts
 
-This page explains what a skill is, how you package and version one, the difference between custom and registry skills, and how your agents discover skills and are authorized to read them.
+This page explains what a skill is, how you package and version one, the difference between custom and registry skills, how your agents discover skills and are authorized to read them, and how agents can publish skills themselves.
 
 ## What Is a Skill?
 
@@ -10,7 +10,8 @@ Typical ways to use skills in an app:
 
 - **Keep prompts small.** Put long procedures and policies in a skill; the bot lists available skills and reads only the one it needs.
 - **Share know-how across bots.** Several bots in one bundle can read the same skill instead of duplicating instructions.
-- **Change behavior without redeploying.** Upload a new skill version and activate it; agents pick it up on their next read.
+- **Change behavior without redeploying.** Upload a new skill version; agents pick it up on their next read.
+- **Let agents learn.** Agents can publish a new skill version when they find a procedure that works, so later runs start from it. See [Skills as a Learning Loop](#skills-as-a-learning-loop).
 - **Progressive disclosure.** Keep `SKILL.md` short and put detail in `references/` files the agent reads with a file-level call only when needed.
 
 ## Skill Zip Format
@@ -79,7 +80,7 @@ The service parses the zip when you upload it. Agents receive this parsed JSON (
 
 ## Custom Skills
 
-**Custom skills** are the skills you author for your environment. They live only in that environment.
+**Custom skills** are the skills you (or your agents) author for your environment. They live only in that environment. People usually manage them in the FF Console; automation and agents use the admin API.
 
 - A custom skill has an `environment_id`, a `name` (unique within the environment), `description`, `skill_type` (default `general`), `tags`, and a `status`.
 - **Status** is `draft` (default), `active`, or `deprecated`. Only `active` custom skills appear in consumer listings, so you can upload and review a draft before agents see it.
@@ -154,6 +155,36 @@ Grants for `bot` and `worker` grantees can be recorded but do not affect what co
 ## Bot Dependencies
 
 A **bot dependency** records that a bot depends on a skill, optionally with a `version_constraint` such as `^1.0.0`. There is one record per bot and skill; creating it again updates the constraint. These records are informational — useful for your own deployment checks — and the service does not enforce them.
+
+## How Agents Consume Skills
+
+| Consumer | How it reads skills |
+|----------|---------------------|
+| Bots (LLM-driven) | Call the [MCP Gateway](../mcp-gateway/tools.md#skills-adapter) tools `skills_list`, `skills_read`, `skills_read_file`; the model picks the skill it needs |
+| Agent bundle code | Calls the same gateway tools (or `/v1` directly) and renders skills into prompts with Agent SDK utilities |
+| Virtual workers | The CLI agent calls the gateway tools when the worker's MCP connections include the gateway |
+| People and scripts | FF Console; `ff-cli skills svc-*` to see what an application sees |
+
+The MCP Gateway is the usual path: it forwards the caller's identity so grants apply, and it returns the same `SkillDefinition` JSON as `/v1`. How to wire each option into a bundle, and which SDK utilities help, is covered in the Agent SDK guide [Skills in Agent Bundles](../../../sdk/agent_sdk/feature_guides/skills.md).
+
+## Skills as a Learning Loop
+
+Because a skill is versioned data rather than code, an agent can improve it:
+
+1. An agent reads a skill (`skills_read`) and does its work.
+2. When the outcome is confirmed good, a capture step in your bundle distills what worked into an updated `SKILL.md`.
+3. The bundle uploads it as a new version (`POST /admin/custom/:id/versions`), or as a new custom skill (`POST /admin/custom`).
+4. Every later read returns the new version.
+
+Design points:
+
+- **Writes use the admin API.** The MCP Gateway's skills tools are read-only; there is no MCP tool for creating or updating skills.
+- **New versions are live immediately.** Versions have no draft stage. To keep a human in the loop, write to a separate candidate skill that your application is not granted, and publish reviewed content from the FF Console.
+- **New skills need a grant** if your application uses access grants (see [Access Grants](#access-grants)).
+- **Rollback is a re-upload.** There is no way to re-activate an old version; keep the previous content so you can upload it again.
+- **Guard the write path.** The admin API has no per-caller authorization (see [Operations — Security](./operations.md#security)); keep skill writes in a deterministic, validated step of your bundle rather than exposing them to the model as a free-form tool.
+
+A complete worked example is in [Skills in Agent Bundles — The Learning Loop](../../../sdk/agent_sdk/feature_guides/skills.md#the-learning-loop-agents-that-write-skills).
 
 ## Current Limitations
 

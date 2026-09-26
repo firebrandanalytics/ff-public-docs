@@ -22,6 +22,10 @@ Each guide assumes familiarity with the basic Entity-Bot-Prompt architecture cov
 
 - **[Graph Traversal](graph_traversal.md)** - Navigate entity relationships and connections through typed edges to build complex queries, find related entities, and implement graph-based workflows.
 
+### Skills
+
+- **[Skills in Agent Bundles](skills.md)** - How bots, bundle code, and virtual workers load skills from the Skills Service (mostly through the MCP Gateway), the SDK's skill providers, `SkillBotMixin`, and skill prompt groups, and how agents publish new skill versions so later runs learn from earlier ones.
+
 ### Virtual Workers
 
 - **[Virtual Worker SDK](virtual-worker-sdk.md)** - Session-first API for interacting with VWM-managed AI coding agents (Claude Code, Codex, Gemini). Covers standalone usage, entity integration with VWSessionEntity, streaming, file operations, crash recovery, and working memory bridging.

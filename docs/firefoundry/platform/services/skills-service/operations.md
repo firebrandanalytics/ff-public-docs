@@ -16,6 +16,8 @@ skills-service:
       ENVIRONMENT_ID: "<environment-uuid>"
 ```
 
+If you create environments with `ff-cli`, the built-in `full-self-contained` environment template enables the Skills Service together with the MCP Gateway.
+
 Two things are required for full functionality:
 
 - **`ENVIRONMENT_ID`** — Without it, agents see only registry skills; custom skills and installations are not served. Use the same UUID as the `environment_id` in your admin calls.
@@ -50,7 +52,7 @@ See [MCP Gateway — Operations](../mcp-gateway/operations.md).
      -H "X-On-Behalf-Of: app=<your-app-id>; bundle=<your-bundle-id>"
    ```
 
-   You should see your active custom skills and any registry skills your app can see.
+   You should see your active custom skills and any registry skills your app can see. From a workstation, `ff-cli skills svc-list` with `FF_ON_BEHALF_OF` set does the same check (see [ff-cli skills](../../../../ff-cli/skills.md)).
 3. **Content is readable:** `GET /v1/skills/<name>/files` lists the skill's files. A `500` here means blob storage is not configured in your environment.
 4. **Over MCP:** call `skills_list` through the MCP Gateway and confirm the same skills appear.
 
@@ -74,6 +76,7 @@ See [MCP Gateway — Operations](../mcp-gateway/operations.md).
 - **Identity header** — The consumer API trusts `X-On-Behalf-Of` as sent. It should be set by your bundle or the MCP Gateway, never passed through from end users.
 - **Admin API** — Has no per-caller authorization. Anyone who can reach `/admin` can upload, delete, and grant skills. The service is cluster-internal by default (no ingress); call the admin API only from trusted tooling such as the FF Console or your CI scripts.
 - **Skill content is agent instructions** — Treat the ability to upload or activate a skill as equivalent to the ability to change your agents' behavior, and review skills before activating them.
+- **Agents that publish skills** — A bundle that writes skills (the [learning loop](./concepts.md#skills-as-a-learning-loop)) holds the same power as any admin client. Keep the write in a deterministic, validated step, publish to a candidate skill when you want human review, and don't expose the admin API to the model as a free-form tool.
 
 ## Troubleshooting
 
@@ -90,3 +93,6 @@ See [MCP Gateway — Operations](../mcp-gateway/operations.md).
 | `POST /admin/custom` with a file returns `500` but the skill exists | The skill was created but its first version failed to upload | Fix the cause, then upload with `POST /admin/custom/:id/versions` |
 | File read or download returns `500` | Blob storage is not configured in your environment | Ask your environment administrator to configure blob storage |
 | MCP `skills_*` tools missing | The MCP Gateway's skills adapter is not configured | Set `SKILLS_SERVICE_URL` on the MCP Gateway |
+| `skills_list` returns `[]` for LLM tool calls but not for direct calls | The caller identity isn't reaching the gateway on that path | Ask your environment administrator how the broker forwards `X-On-Behalf-Of` to the gateway |
+| A bundle's SDK skill provider yields no skills | Provider misconfigured or not sending identity; SDK providers log a warning and return nothing | See [Skills in Agent Bundles — Troubleshooting](../../../sdk/agent_sdk/feature_guides/skills.md#troubleshooting) |
+| An agent-published version isn't picked up | A bundle-side cache is holding the old skill | Clear the cache; the service and gateway always return the latest upload |

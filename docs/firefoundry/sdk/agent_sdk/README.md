@@ -165,6 +165,9 @@ Learn specific capabilities and patterns for advanced use cases:
 ### Advanced Bot Patterns
 - **[Advanced Bot Mixin Patterns](feature_guides/advanced-bot-mixin-patterns.md)** - DataValidationBotMixin, WorkingMemoryBotMixin, custom composition, building custom mixins
 
+### Skills & Learning Agents
+- **[Skills in Agent Bundles](feature_guides/skills.md)** - Load skills through the MCP Gateway or SDK providers, render them with `SkillBotMixin`, and let agents publish improved skill versions (the skills learning loop)
+
 ---
 
 ## Utilities & Helpers

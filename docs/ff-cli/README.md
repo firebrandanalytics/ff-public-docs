@@ -18,6 +18,9 @@ The `ff-cli` tool provides command-line interfaces for managing FireFoundry proj
 ### Deployment & Operations
 - **[Operations Commands](ops.md)** - Build, install, upgrade, and manage agent bundle deployments using Docker and Helm
 
+### Skills
+- **[Skills Commands](skills.md)** - Install FireFoundry skills for Claude Code and Cursor, and inspect the skills an application sees in the Skills Service
+
 ## Quick Start
 
 ### Creating Projects

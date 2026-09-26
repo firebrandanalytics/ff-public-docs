@@ -1,12 +1,14 @@
 # Skills Service — Getting Started
 
-This guide walks you through authoring a custom skill for your application, uploading and activating it, granting it to your application, and reading it the way your agents do — over REST and through the MCP Gateway. It ends with installing a registry skill into your environment.
+This guide walks you through authoring a custom skill for your application, publishing and granting it, and reading it the way your agents do. It ends with installing a registry skill into your environment.
+
+**Console, CLI, or API?** Day to day, most teams create, version, activate, and grant skills in the **FF Console**, and use [`ff-cli skills svc-*`](../../../../ff-cli/skills.md) to check what an application sees. This guide uses the REST admin API with `curl` so that every step is visible. The console covers the same operations, and these are the same calls an agent makes when it [publishes a skill itself](./concepts.md#skills-as-a-learning-loop).
 
 ## Prerequisites
 
 - The Skills Service enabled in your environment (see [Operations](./operations.md#enabling-the-service)), with blob storage configured in your environment — uploads and file reads require it
 - Your **environment ID** (the UUID the Skills Service is configured to serve) and your **application ID**; your environment administrator can provide both
-- `curl`, `zip`, and optionally `jq`
+- `curl`, `zip`, and optionally `jq` and [`ff-cli`](../../../../ff-cli/README.md)
 
 For local work against a cluster, port-forward the service:
 
@@ -117,7 +119,7 @@ curl -s -X POST $SKILLS/admin/custom/$SKILL_ID/versions \
   -F 'metadata={"version":"0.2.0"}'
 ```
 
-Agents always read the most recently uploaded version of a custom skill.
+Agents always read the most recently uploaded version of a custom skill. This upload is also the call an agent makes in the [learning loop](./concepts.md#skills-as-a-learning-loop) when it publishes an improved version.
 
 ## Step 5: Activate It
 
@@ -145,9 +147,44 @@ curl -s -X POST $SKILLS/admin/access-grants \
   }"
 ```
 
-## Step 7: Discover Skills as an Agent
+## Step 7: Check What Your Application Sees
 
-Consumer calls must carry an `X-On-Behalf-Of` identity with at least `app` and `bundle`. Without it the listing is empty.
+Every read carries an `X-On-Behalf-Of` identity with at least `app` and `bundle`, and results are filtered by that application's grants. Without an identity, listings are empty. The quickest check is `ff-cli`:
+
+```bash
+export SKILLS_SERVICE_URL=$SKILLS
+export FF_ON_BEHALF_OF="app=$APP_ID; bundle=support-bundle"
+
+ff-cli skills svc-list --tags support
+ff-cli skills svc-read ticket-triage
+```
+
+## Step 8: Read Skills Through the MCP Gateway
+
+Most agents read skills through the [MCP Gateway](../mcp-gateway/README.md). With its skills adapter enabled, agents get three tools, and the gateway forwards the caller's `X-On-Behalf-Of` identity so grants apply:
+
+| Tool | Use |
+|------|-----|
+| `skills_list` | Discover skills (metadata only); optional `tags`, `name` (glob) |
+| `skills_read` | Load a skill's full instructions; `name` |
+| `skills_read_file` | Read one companion file; `name`, `path` (for example `references/routing.md`) |
+
+A typical agent loop: call `skills_list`, pick a skill by its description, call `skills_read`, then `skills_read_file` for any reference it needs. To try it by hand (see [MCP Gateway — Getting Started](../mcp-gateway/getting-started.md) for `MCP_URL` and `MCP_KEY`):
+
+```bash
+curl -s -X POST $MCP_URL/mcp/skills \
+  -H "Content-Type: application/json" -H "X-Api-Key: $MCP_KEY" \
+  -H "X-On-Behalf-Of: app=$APP_ID; bundle=support-bundle" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+       "params":{"name":"skills_read","arguments":{"name":"ticket-triage"}}}' \
+  | jq -r '.result.content[0].text'
+```
+
+To wire this into a bundle (LLM tool calls, `SkillBotMixin`, virtual workers), see [Skills in Agent Bundles](../../../sdk/agent_sdk/feature_guides/skills.md).
+
+## Step 9: Read Skills over REST (Optional)
+
+Code that doesn't use MCP can call the consumer API directly and set the identity header itself:
 
 ```bash
 ON_BEHALF="app=$APP_ID; bundle=support-bundle"
@@ -173,18 +210,6 @@ Response (content omitted by default):
 ]
 ```
 
-Other variants:
-
-```bash
-# Glob filter on name
-curl -s "$SKILLS/v1/skills?name=ticket*" -H "X-On-Behalf-Of: $ON_BEHALF"
-
-# Everything this app can see, with full content
-curl -s "$SKILLS/v1/skills/manifest?include=content" -H "X-On-Behalf-Of: $ON_BEHALF"
-```
-
-## Step 8: Read the Skill, a Mode, and a File
-
 ```bash
 # Full instructions
 curl -s "$SKILLS/v1/skills/ticket-triage?include=content" -H "X-On-Behalf-Of: $ON_BEHALF"
@@ -193,29 +218,18 @@ curl -s "$SKILLS/v1/skills/ticket-triage?include=content" -H "X-On-Behalf-Of: $O
 curl -s "$SKILLS/v1/skills/ticket-triage/modes/escalation" -H "X-On-Behalf-Of: $ON_BEHALF"
 # {"name":"escalation","description":"Rules for escalating urgent tickets","content":"Escalate when ..."}
 
-# Files in the skill
+# Files in the skill, and one file returned raw
 curl -s "$SKILLS/v1/skills/ticket-triage/files" -H "X-On-Behalf-Of: $ON_BEHALF"
-
-# One file, returned raw
 curl -s "$SKILLS/v1/skills/ticket-triage/files/references/routing.md" -H "X-On-Behalf-Of: $ON_BEHALF"
+
+# Everything this app can see, with full content
+curl -s "$SKILLS/v1/skills/manifest?include=content" -H "X-On-Behalf-Of: $ON_BEHALF"
 
 # The whole zip (for example, to unpack into a worker's workspace)
 curl -s -o ticket-triage.zip "$SKILLS/v1/skills/ticket-triage/download" -H "X-On-Behalf-Of: $ON_BEHALF"
 ```
 
 A request from an application that has grants but not for this skill returns `403 {"error":"Access denied"}`.
-
-## Step 9: Read Skills Through the MCP Gateway
-
-MCP-capable agents don't need to call REST directly. With the skills adapter enabled on the [MCP Gateway](../mcp-gateway/README.md), agents get three tools, and the gateway forwards the agent's `X-On-Behalf-Of` identity so grants apply:
-
-| Tool | Use |
-|------|-----|
-| `skills_list` | Discover skills (metadata only); optional `tags`, `name` |
-| `skills_read` | Load a skill's full instructions; `name` |
-| `skills_read_file` | Read one companion file; `name`, `path` (for example `references/routing.md`) |
-
-A typical agent loop: call `skills_list`, pick a skill by its description, call `skills_read`, then `skills_read_file` for any reference it needs. See [MCP Gateway — Tools](../mcp-gateway/tools.md#skills-adapter).
 
 ## Step 10 (Optional): Install a Registry Skill
 
@@ -237,6 +251,7 @@ Installing again for the same entry replaces the pinned version. If your applica
 
 ## Next Steps
 
+- **[Skills in Agent Bundles](../../../sdk/agent_sdk/feature_guides/skills.md)** — Load skills from bots and virtual workers, and let agents publish improved versions
 - **[Concepts](./concepts.md)** — How listings are assembled and how grants work
 - **[Reference](./reference.md)** — All endpoints, fields, and error responses
 - **[Operations](./operations.md)** — Enabling the service, verifying from a bundle, limits, and troubleshooting

@@ -1,6 +1,8 @@
 # Skills Service — Reference
 
-Reference for the Skills Service REST API: the consumer API your agents call, the admin API your team uses to manage skills, data shapes, and errors.
+Reference for the Skills Service REST API: the consumer API your agents call, the admin API used to manage skills, data shapes, and errors.
+
+Most teams manage skills in the FF Console and inspect them with [`ff-cli skills svc-*`](../../../../ff-cli/skills.md), and most agents read skills through the [MCP Gateway](#mcp-tools). Call the REST API directly for automation (CI publishing), for bundle code that doesn't use MCP, and for agents that publish skills themselves ([learning loop](./concepts.md#skills-as-a-learning-loop)).
 
 **Base URL (in-cluster):** `http://firefoundry-core-skills-service.<namespace>.svc.cluster.local:8080`
 
@@ -105,11 +107,13 @@ Returns the zip with `Content-Type: application/zip` and `Content-Disposition: a
 
 ### MCP Tools
 
-The [MCP Gateway](../mcp-gateway/tools.md#skills-adapter) exposes the consumer API as `skills_list`, `skills_read`, and `skills_read_file`, forwarding the caller's `X-On-Behalf-Of` header.
+The [MCP Gateway](../mcp-gateway/tools.md#skills-adapter) exposes the consumer API as `skills_list` (`GET /v1/skills`), `skills_read` (`GET /v1/skills/:name?include=content`), and `skills_read_file` (`GET /v1/skills/:name/files/<path>`), forwarding the caller's `X-On-Behalf-Of` header. There are no MCP tools for the admin API. For using these from bots, bundle code, and virtual workers, see [Skills in Agent Bundles](../../../sdk/agent_sdk/feature_guides/skills.md).
 
 ## Admin API (`/admin`)
 
-Endpoints for managing skills in your environment: custom skills, installations, access grants, and bot dependencies, plus the registry catalog. The admin API does not read `X-On-Behalf-Of` and performs no per-caller authorization — call it only from trusted tooling.
+Endpoints for managing skills in your environment: custom skills, installations, access grants, and bot dependencies, plus the registry catalog. The admin API does not read `X-On-Behalf-Of` and performs no per-caller authorization. Call it only from trusted tooling, such as CI scripts or a validated publishing step in your own agent bundle.
+
+For an agent publishing what it learned, the relevant calls are `POST /admin/custom` (new skill, optionally with its first zip), `POST /admin/custom/:id/versions` (new version), `PUT /admin/custom/:id` (status), and `POST /admin/access-grants` (make a new skill visible to an app that uses grants).
 
 ### Custom Skills
 

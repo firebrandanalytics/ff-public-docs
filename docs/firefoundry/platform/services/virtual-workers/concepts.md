@@ -233,6 +233,8 @@ Each session makes the worker slightly more knowledgeable. A worker that's been 
 
 Skills can include anything the worker might need: custom scripts, configuration templates, reference data, MCP tool definitions, or specialized prompts. Platform-wide **system skills** are automatically included in every session, while other skills are assigned per worker.
 
+These skill packages are managed through VWM's own [Admin API](./reference.md#skills) and are separate from the platform [Skills Service](../skills-service/README.md). To let a worker use Skills Service skills (including skills your agents publish and update at runtime), include the [MCP Gateway](../mcp-gateway/clients.md#virtual-workers) in the worker's `mcpServers`; the CLI agent can then call `skills_list`, `skills_read`, and `skills_read_file`. See [Skills in Agent Bundles](../../../sdk/agent_sdk/feature_guides/skills.md#virtual-workers).
+
 ---
 
 ## Runtimes
