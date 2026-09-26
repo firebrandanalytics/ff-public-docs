@@ -1,213 +1,117 @@
 # FF Broker — Concepts
 
-This page explains the core concepts that underpin the FF Broker's model orchestration, provider management, and request routing.
+This page explains the ideas you need to design an app around the FF Broker: model pools, how a deployment is chosen, what failover means for your code, and how semantic labels and breadcrumbs connect broker calls to your app.
 
-## Model Groups
+## Model Pools
 
-A **model group** is a named collection of model deployments that can serve the same type of request. When an agent sends a request to the broker, it specifies a **model pool** name (which maps to a model group), and the broker selects the best deployment from that group.
-
-### Why Model Groups?
-
-Model groups decouple agent logic from specific model deployments:
-- An agent requests "production" quality, not "gpt-4-turbo on Azure East US"
-- The broker can add, remove, or rebalance deployments without changing agent code
-- Failover happens automatically within the group
-
-### Model Group Structure
+A **model pool** (also called a *model group*) is a named set of model deployments that can serve the same kind of request. Your code names the pool; the broker decides which deployment in the pool serves each call.
 
 ```
-Model Group: "production-gpt4"
-├── Resource 1: gpt-4-turbo (Azure East US)
-│   ├── intelligence_weight: 9
-│   ├── cost_weight: 6
-│   └── provider: Azure OpenAI
-├── Resource 2: gpt-4-turbo (Azure West US)
-│   ├── intelligence_weight: 9
-│   ├── cost_weight: 6
-│   └── provider: Azure OpenAI
-└── Resource 3: gpt-4 (OpenAI Direct)
-    ├── intelligence_weight: 9
-    ├── cost_weight: 7
-    └── provider: OpenAI
+Model pool: "production-completion"
+├── gpt-4o            (Azure OpenAI, East US)
+├── gpt-4o            (Azure OpenAI, West US)
+└── gemini-2.5-pro    (Google AI Studio)
 ```
 
-Each resource in a model group has:
-- A **deployed model** (specific model version on a specific provider)
-- **Intelligence weight** (1-10): How capable the model is
-- **Cost weight** (1-10): Relative cost per token (lower = cheaper)
-- **Provider account**: Authentication credentials for the provider
+Pools decouple your agent logic from specific models:
 
-## Selection Strategies
+- A bot asks for `production-completion`, not "gpt-4o on Azure East US".
+- Deployments can be added, removed, or swapped in the environment without changing or redeploying your bundle.
+- Failover happens inside the pool, so a second deployment makes a pool more resilient.
 
-When multiple models are available in a group, the broker uses a **selection strategy** to pick the best one for each request.
+In the Agent SDK, a bot's `model_pool_name` is the pool name. For embeddings and image generation you pass the pool (or, for embeddings, the model group ID) on the client call. See [Getting Started](./getting-started.md) for both paths.
 
-### CostIntelligenceStrategy (Default)
+### Designing your pools
 
-The default strategy scores each resource using a weighted formula:
+Pools are cheap; create one per *purpose* rather than one per model:
 
-```
-score = (intelligence/10 × intelligence_weight) + (cost/10 × cost_weight)
-```
+| Pool (example) | Used by | Why separate |
+|----------------|---------|--------------|
+| `extraction_fast` | High-volume structured extraction bots | Small, cheap models; spread load across deployments |
+| `reasoning_premium` | Planning / review bots | Most capable models; fewer calls |
+| `embeddings_small` | Indexing and similarity search | Embedding models only |
+| `image_generation` | Illustration features | Image models only |
 
-Where `intelligence_weight` and `cost_weight` come from the request's `modelSelectionCriteria`:
-- Higher `qualitySensitivity` → prefer more capable models
-- Higher `costSensitivity` → prefer cheaper models
+Because the pool name is the contract between your code and the environment, keep the same pool names across dev, staging, and production environments, and let each environment map them to whatever models it has.
 
-The resource with the highest score wins.
+A pool can only serve requests its models support: a completion request to a pool that holds only embedding models, or an image request to a text-only pool, fails.
 
-### Performance-Aware Selection
+## Deployment Selection
 
-When the `PERFORMANCE_ROUTING` feature flag is enabled, the broker adjusts scores based on real-time performance data:
-- Deployments with elevated error rates get score penalties
-- Deployments with high latency get score penalties
-- Degraded deployments may be excluded entirely
+When a pool has more than one deployment, the broker chooses one per request.
 
-See [Industrial Subsystems — Performance Routing](./industrial.md#performance-routing) for details.
+- **Pool strategy** — each pool is created with a selection strategy. `round_robin` spreads calls across deployments; `failover` prefers deployments in their configured order and moves down the list on failure.
+- **Cost/quality preference** — a completion request can include `modelSelectionCriteria` (and an embedding request a `scorePreference`) to lean toward more capable or cheaper deployments within the pool. If your app has both "draft" and "final" quality steps, you can either use two pools or one pool with different preferences.
+- **Model hint** — the `model` field on a completion request is a hint, not a guarantee. If your code depends on a specific model, put only that model in the pool.
 
-## Failover Policy
+Check which model actually served a call in the response (`model`) or in telemetry.
 
-The **ProviderFailoverPolicy** handles failures automatically. When a request to the selected provider fails:
+## Failover
 
-1. The error is classified (rate limit, timeout, server error, auth failure, etc.)
-2. If the error is retryable, the failover policy selects the next-best resource from the group
-3. The request is retried with the new provider
-4. If all resources are exhausted, the error is returned to the client
+When a call to the selected deployment fails, the broker classifies the error and either retries on another deployment in the pool or returns the error to you.
 
-### Failover Behavior by Error Type
+| Provider error | What the broker does |
+|----------------|----------------------|
+| Rate limit (429) | Tries another deployment |
+| Timeout | Tries another deployment |
+| Server error (5xx) | Tries another deployment |
+| Auth failure (401/403) | Tries another deployment |
+| Invalid request (400) | Returns the error (no retry) |
+| Content filter | Returns the error (no retry) |
 
-| Error Type | Behavior |
-|-----------|----------|
-| Rate limit (429) | Failover to next resource |
-| Timeout | Failover to next resource |
-| Server error (5xx) | Failover to next resource |
-| Auth failure (401/403) | Failover to next resource |
-| Invalid request (400) | Return error to client (no retry) |
-| Content filter | Return error to client (no retry) |
+If every deployment in the pool fails, your code receives the error. What this means for your app:
 
-## Provider Architecture
-
-The broker uses a factory-based provider architecture with clear separation of concerns.
-
-### Provider Types
-
-| Type | Description | Examples |
-|------|-------------|---------|
-| **Completion** | Chat completion with streaming | Azure OpenAI GPT, Gemini, Grok |
-| **Embedding** | Text-to-vector embeddings | Azure OpenAI Text Embedding |
-| **Image Generation** | Text-to-image with blob storage | OpenAI GPT Image, Gemini Image |
-
-### Provider Lifecycle
-
-```
-Request arrives
-    │
-    ▼
-ProviderFactoryRegistry
-    │ (selects factory by ModelType)
-    ▼
-CompletionProviderFactory / EmbeddingProviderFactory / ImageGenerationProviderFactory
-    │ (creates or retrieves cached provider)
-    ▼
-ModelProviderRegistry
-    │ (caches instances with TTL)
-    ▼
-Concrete Provider (e.g., OpenAI_GPT_Provider)
-    │ (executes request via ProviderClientFactory)
-    ▼
-External API (Azure, OpenAI, Google, xAI)
-```
-
-### Provider Dependencies
-
-All providers receive a shared `ProviderDependencies` object:
-
-- **ErrorHandler**: Maps provider-specific errors to gRPC status codes
-- **CredentialResolver**: Resolves API keys from the database
-- **ProviderClientFactory**: Creates HTTP/gRPC clients for external APIs
-- **DatabaseConfigManager**: Loads deployment configurations from the database
-- **McpRegistryService**: (Optional) MCP tool integration
-- **McpExecutionService**: (Optional) MCP tool execution
+- A single-deployment pool has no failover. Use at least two deployments (ideally on different providers or regions) for anything user-facing.
+- Invalid requests and content-filter rejections are not retried — handle them in your code (fix the prompt, surface a message to the user).
+- Failover can change which model answers. If your prompts depend on one model family's behavior, keep the pool homogeneous.
 
 ## Semantic Labels
 
-A **semantic label** is a string tag that describes the purpose of a request (e.g., `"customer_support_query"`, `"code_generation"`, `"document_summary"`). Semantic labels are used by several industrial subsystems:
+A **semantic label** is a short string naming the purpose of a request, such as `invoice_extraction` or `customer_support_reply`. Bots supply one through `get_semantic_label_impl()` (required in SDK v4); direct client calls pass `semanticLabel`.
 
-- **Output Prediction**: Learns expected output token counts per label
-- **Usage Profiling**: Tracks request patterns per label over time
-- **Priority Routing**: Can map labels to priority tiers
+Labels are how you find and group your calls in telemetry, and they are the key for mock-cache lookups in tests. Some environment-level routing features also learn per label (see below). Use stable, descriptive labels — one per logical task, not per request.
 
-Semantic labels are optional but recommended for production workloads. They enable the broker to make smarter decisions without requiring per-request configuration.
+## Breadcrumbs
 
-## Request Tracking
-
-Every request through the broker is tracked with comprehensive telemetry:
-
-### Tracked Metrics
-
-| Metric | Description |
-|--------|-------------|
-| `broker_request_id` | Unique ID for the broker request |
-| `model_pool` | Model group used |
-| `selected_model` | Actual model selected |
-| `provider` | Provider that served the request |
-| `input_tokens` | Tokens in the prompt |
-| `output_tokens` | Tokens in the response |
-| `total_tokens` | Total tokens consumed |
-| `latency_ms` | End-to-end latency |
-| `ttft_ms` | Time to first token (streaming) |
-| `status` | Success/failure status |
-| `error_code` | gRPC error code if failed |
-| `semantic_label` | Request semantic label |
-| `breadcrumbs` | Correlation IDs from the client |
-
-### Breadcrumbs
-
-Breadcrumbs are correlation IDs passed by the client that link broker requests back to the originating agent, entity, and user. They enable end-to-end tracing across the platform.
+**Breadcrumbs** are correlation IDs attached to a request — entity type, entity ID, and correlation ID. When a bot runs inside an entity, the SDK carries the entity's breadcrumbs onto the broker call. They let you trace a broker call back to the entity that caused it in the Console and with `ff-telemetry-read trace by-breadcrumb <EntityType> <entity-id>` (see [Monitoring and Debugging](../../../sdk/agent_sdk/guides/monitoring-debugging.md)).
 
 ## Streaming
 
-The broker uses **async generators** for streaming responses. When a client requests a streaming completion:
+Chat completions are streamed: the broker forwards each chunk from the provider as it arrives, and the final chunk carries token usage. Bots consume the stream for you; with the broker client you iterate the stream directly.
 
-1. The broker opens a stream to the selected provider
-2. Each token chunk is yielded back to the client as it arrives
-3. If stream instrumentation is enabled, metrics are collected per-chunk (TTFT, throughput, token counts)
-4. On completion, final metrics are recorded to the tracking service
+## Structured Output and Tools
 
-### PullChain Pipeline (Industrial)
+- **Structured output** — supply a JSON schema as `responseFormat` and the broker requests schema-constrained output (using the provider's native support where available). The SDK's `StructuredOutputBotMixin` does this from a Zod schema and validates the result.
+- **Tools** — supply `tools` and `toolChoice`; tool invocations come back as `toolCalls` on the response chunks, and your code (or the SDK's tool-calling bots) executes them and continues the conversation.
 
-When stream instrumentation is enabled, the broker wraps the provider's async generator in a **PullChain** — a composable pipeline that adds metrics collection without modifying the provider code:
+## Embeddings and Image Generation
 
-```
-Provider Stream → Turnstile (concurrency) → TTFT Timer → Token Counter → Client
-```
+- **Embeddings** — single and batch requests return float vectors plus usage. Store them on entities for similarity search (see the [Vector Similarity Quickstart](../../../sdk/agent_sdk/feature_guides/vector-similarity-quickstart.md)).
+- **Image generation** — the broker generates images with the pool's image model, stores them in the environment's blob storage, and returns references (blob ID, object key, format, size) rather than raw bytes. See the [Illustrated Story tutorial](../../../sdk/agent_sdk/tutorials/illustrated-story/part-03-image-generation.md).
 
-See [Industrial Subsystems — Stream Instrumentation](./industrial.md#stream-instrumentation) for details.
+## Mock Cache
 
-## Database Configuration
+For deterministic tests, a request can carry a **mock cache ID**. The broker then returns a cached response instead of calling the provider, so integration tests get repeatable results and don't spend tokens. `ff-brk complete --mock-cache-id <id>` uses this.
 
-The broker's behavior is primarily configured through the database, not environment variables. This enables runtime reconfiguration without restarts.
+## Environment-Level Routing Features
 
-### Configuration Hierarchy
+Your environment administrator can turn on additional capacity and routing features. They are off by default. You don't call them directly, but when they are on they change what your app experiences:
 
-```
-brk_registry (global)
-├── Models: Available model definitions
-├── Providers: Provider metadata (Azure, OpenAI, etc.)
-└── Capabilities: What each model supports
+| Feature | Effect your app sees | Design implication |
+|---------|----------------------|--------------------|
+| **Capacity limits** | Each deployment accepts a bounded number of concurrent calls; excess calls are rejected immediately with `RESOURCE_EXHAUSTED` rather than queued | Bound your own fan-out (for example, parallel bot calls) and retry with backoff |
+| **Quotas** | Token-per-minute / request-per-minute limits; exceeding them returns `RESOURCE_EXHAUSTED` naming the quota | Retry after the quota window resets; spread batch work over time |
+| **Performance routing** | Slow or error-prone deployments are avoided automatically | None; latency improves during provider incidents |
+| **Sticky routing** | Consecutive calls for the same entity go to the same deployment, improving provider prompt-cache hit rates | Pass entity breadcrumbs (the SDK does this) and keep stable prompt content (system prompt, shared context) at the start of the prompt |
+| **QoS tiers** | Requests are assigned a tier — `ECONOMY`, `STANDARD` (default), `PREMIUM`, or `CRITICAL` — that limits which models are eligible | Agree with your administrator which tier your workloads need |
+| **Priority routing** | Under heavy load, higher-priority requests are served first | Latency-sensitive work should use a higher tier or priority |
+| **Output prediction** | The broker learns typical output size per semantic label to estimate quota use | Use consistent semantic labels |
 
-brk_customer (per-instance)
-├── Customer accounts
-├── Provider accounts (API keys)
-└── Deployed models (model + provider + endpoint)
+Ask your environment administrator which of these are enabled before load-testing or sizing a high-volume workload.
 
-brk_routing (per-instance)
-├── Model groups (named collections)
-├── Model group resources (model → group mapping)
-└── Selection strategy configurations
+## Related
 
-brk_tracking (per-instance)
-├── Completion requests (telemetry)
-└── Completion metrics (aggregated stats)
-```
-
-The **DatabaseConfigManager** loads and caches this configuration, refreshing periodically or on demand via the HTTP admin API.
+- [Overview](./README.md)
+- [Getting Started](./getting-started.md)
+- [Reference](./reference.md)
+- [Operations](./operations.md)

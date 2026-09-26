@@ -1,338 +1,113 @@
-# FF Broker — Operations Guide
+# FF Broker — Operations for App Builders
 
-This guide covers day-to-day operations for the FF Broker including feature flag management, admin APIs, monitoring, and production rollout planning.
+How to enable and configure the broker for your app, verify your bundle can reach it, the limits to design around, and how to troubleshoot from the caller's side.
 
-## Feature Flag Management
+## Enabling the Broker
 
-All industrial subsystems are controlled by feature flags that can be set via environment variables at startup and overridden at runtime via the HTTP admin API.
-
-### Environment Variables
-
-Feature flags use the `BROKER_FF_` prefix. Set them in your deployment configuration:
-
-```bash
-# In Kubernetes deployment.yaml or Helm values
-BROKER_FF_CAPACITY_GATING=true
-BROKER_FF_STREAM_INSTRUMENTATION=true
-BROKER_FF_PERFORMANCE_ROUTING=true
-BROKER_FF_QOS_SWITCHING=false
-BROKER_FF_PRIORITY_ROUTING=false
-BROKER_FF_STICKY_ROUTING=false
-BROKER_FF_QUOTA_ENFORCEMENT=false
-BROKER_FF_OUTPUT_PREDICTION=false
-BROKER_FF_COMPILED_CHAIN=false
-```
-
-### Runtime Override API
-
-Override flags at runtime without restarting the service:
-
-```bash
-# View all flag states
-GET /api/industrial/flags
-
-# Override a single flag
-PUT /api/industrial/flags/capacity_gating
-{"enabled": true}
-
-# Clear override (revert to env value)
-DELETE /api/industrial/flags/capacity_gating
-
-# Bulk override multiple flags
-POST /api/industrial/flags/bulk
-{
-  "capacity_gating": true,
-  "stream_instrumentation": true,
-  "performance_routing": false
-}
-
-# Clear all overrides
-DELETE /api/industrial/flags
-```
-
-**Important**: Runtime overrides are ephemeral — they reset when the service restarts. For persistent changes, update the environment variables.
-
-### Recommended Rollout Sequence
-
-Enable industrial subsystems in this recommended order for a safe, gradual rollout:
-
-#### Phase 1: Observability (Low Risk)
-```bash
-BROKER_FF_STREAM_INSTRUMENTATION=true   # Collect TTFT/throughput metrics
-BROKER_FF_OUTPUT_PREDICTION=true        # Start learning output patterns
-```
-
-These are read-only subsystems that observe but don't affect request routing.
-
-#### Phase 2: Capacity Protection (Medium Risk)
-```bash
-BROKER_FF_CAPACITY_GATING=true          # Prevent provider overload
-BROKER_FF_PERFORMANCE_ROUTING=true      # Avoid degraded deployments
-```
-
-These subsystems affect routing decisions but fail-safe to the default behavior.
-
-#### Phase 3: Optimization (Medium Risk)
-```bash
-BROKER_FF_STICKY_ROUTING=true           # Improve prompt cache hit rates
-BROKER_FF_COMPILED_CHAIN=true           # Reduce stream overhead
-```
-
-These subsystems optimize performance without changing correctness.
-
-#### Phase 4: Policy Enforcement (Higher Risk)
-```bash
-BROKER_FF_QOS_SWITCHING=true            # Enable QoS tier differentiation
-BROKER_FF_QUOTA_ENFORCEMENT=true        # Replace legacy QuotaTracker
-BROKER_FF_PRIORITY_ROUTING=true         # Enable priority queuing
-```
-
-These subsystems can reject or reorder requests. Ensure monitoring is in place before enabling.
-
-## Admin API Endpoints
-
-### Feature Flags
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/industrial/flags` | Get all flag states |
-| PUT | `/api/industrial/flags/:flag` | Set flag override (`{"enabled": true}`) |
-| DELETE | `/api/industrial/flags/:flag` | Clear flag override |
-| POST | `/api/industrial/flags/bulk` | Bulk override flags |
-| DELETE | `/api/industrial/flags` | Clear all overrides |
-
-### Capacity Management
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/industrial/capacity` | Aggregate capacity stats |
-| GET | `/api/industrial/capacity/:id` | Per-deployment stats |
-| POST | `/api/industrial/capacity/:id/register` | Register deployment (`{"concurrencyLimit": 10}`) |
-| PUT | `/api/industrial/capacity/:id/limits` | Update limits (`{"concurrencyLimit": 20}`) |
-
-### Performance Monitoring
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/industrial/performance` | All deployment stats + degraded list |
-| GET | `/api/industrial/performance/:id` | Single deployment stats |
-
-### Usage Patterns
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/industrial/usage` | All tracked labels with profile summaries |
-| GET | `/api/industrial/usage/:label` | Full weekly profile for a label |
-
-### QoS Tiers
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/industrial/qos` | Tier definitions and constraints |
-| POST | `/api/industrial/qos/resolve` | Resolve tier for a request |
-
-### PTU Advisory
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/industrial/ptu` | PTU deployment registry |
-| GET | `/api/industrial/ptu/recommendations` | Scale recommendations |
-| GET | `/api/industrial/ptu/:name/headroom` | Headroom analysis (`?currentTpm=50000`) |
-
-### Combined Status
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/industrial/status` | All subsystem statuses in one response |
-
-Example response:
-```json
-{
-  "flags": {
-    "capacity_gating": {"enabled": true, "source": "env"},
-    "stream_instrumentation": {"enabled": true, "source": "override"},
-    "performance_routing": {"enabled": false, "source": "env"}
-  },
-  "capacityGating": {
-    "enabled": true,
-    "available": true,
-    "stats": {"totalInFlight": 5, "totalRejected": 0}
-  },
-  "performanceRouting": {
-    "enabled": false,
-    "available": false
-  },
-  "qosSwitching": {
-    "enabled": false,
-    "available": false
-  },
-  "usagePatterns": {
-    "enabled": true,
-    "available": true,
-    "trackedLabels": 12
-  },
-  "ptuAdvisory": {
-    "available": false,
-    "registeredDeployments": 0
-  }
-}
-```
-
-## Monitoring
-
-### Key Metrics to Watch
-
-#### Request-Level Metrics
-- **Request rate**: Requests per second by model group
-- **Error rate**: Failures per second, broken down by error type
-- **Latency (p50, p95, p99)**: End-to-end request latency
-- **TTFT**: Time to first token for streaming requests
-- **Token usage**: Input/output tokens per request
-
-#### Industrial Metrics
-- **Capacity utilization**: In-flight requests vs limits per deployment
-- **Rejection rate**: Requests rejected by capacity gating
-- **Degraded deployments**: Count of deployments in degraded state
-- **Quota utilization**: TPM/RPM usage vs limits
-- **Sticky routing hit rate**: Cache hits vs misses
-- **Priority queue depth**: Pending requests in priority queue
-
-#### System Metrics
-- **Memory usage**: Node.js heap and RSS
-- **CPU usage**: Process CPU utilization
-- **Database connections**: Active/idle pool connections
-- **gRPC stream count**: Active streaming connections
-
-### Health Checks
-
-```bash
-# HTTP health check
-curl http://broker:3000/health
-
-# Industrial status (comprehensive)
-curl http://broker:3000/api/industrial/status
-
-# Performance metrics
-curl http://broker:3000/api/industrial/performance
-
-# Capacity metrics
-curl http://broker:3000/api/industrial/capacity
-```
-
-### Kubernetes Probes
+The broker is part of `firefoundry-core` and is **enabled by default**:
 
 ```yaml
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 3000
-  initialDelaySeconds: 30
-  periodSeconds: 10
-
-readinessProbe:
-  httpGet:
-    path: /health
-    port: 3000
-  initialDelaySeconds: 5
-  periodSeconds: 5
+# firefoundry-core values
+ff-broker:
+  enabled: true
 ```
+
+Your environment administrator installs and upgrades it. What your app team configures is:
+
+| What | How |
+|------|-----|
+| Provider credentials | `ff-cli env broker-secret add <env> --key <NAME> --value <key> -y` |
+| Model pools | `ff-cli env broker-config create <env> -f <pool>.json` (or `POST /api/config/setup`) |
+| Bundle → broker connection | `LLM_BROKER_HOST` / `LLM_BROKER_PORT` in your bundle's Helm values |
+| Advanced routing features (capacity limits, quotas, QoS, sticky routing) | Requested from your environment administrator; see [Concepts](./concepts.md#environment-level-routing-features) |
+
+Keep pool names identical across your environments (dev, staging, production) so the same bundle image runs everywhere.
+
+## Configuring Your Bundle
+
+```yaml
+# helm/values.local.yaml (agent bundle)
+configMap:
+  data:
+    LLM_BROKER_HOST: "firefoundry-core-ff-broker"
+    LLM_BROKER_PORT: "50051"
+```
+
+If your bundle runs in a different namespace from `firefoundry-core`, use the fully qualified host, e.g. `firefoundry-core-ff-broker.<namespace>.svc.cluster.local`. The port must match the broker Service's gRPC port, which is `50051` in a default install — check with `kubectl get svc -n <env> firefoundry-core-ff-broker`.
+
+## Configuration Changes
+
+The broker caches model pool configuration. After you create or change a pool, allow up to about **five minutes** before requests use the new configuration (or ask your administrator to restart the broker). New pools that return `NOT_FOUND` right after creation usually just need this interval.
+
+## Verifying
+
+```bash
+# 1. Broker pod is running
+kubectl get pods -n ff-test -l app.kubernetes.io/name=ff-broker
+
+# 2. HTTP health
+kubectl port-forward -n ff-test svc/firefoundry-core-ff-broker 3000:3000
+curl http://localhost:3000/health
+# {"status":"ok",...}
+
+# 3. Your pool exists
+ff-cli env broker-config show ff-test --model-group gemini_completion
+
+# 4. A real completion through the pool
+kubectl port-forward -n ff-test svc/firefoundry-core-ff-broker 50051:50051
+ff-brk complete --port 50051 -m gemini_completion -l health-check --msg "ping"
+```
+
+Then call an endpoint in your bundle that runs a bot, and confirm the call appears in the Console or via `ff-telemetry-read`.
+
+## Limits and Behavior to Design Around
+
+- **Failover only within a pool.** A single-deployment pool has none. Use two or more deployments for user-facing work.
+- **Non-retryable errors come straight back.** Invalid requests and content-filter rejections are not retried on another deployment.
+- **Model hint is not a pin.** The `model` field doesn't guarantee which model answers; control that through pool membership.
+- **Embeddings use numeric group IDs.** Look the ID up per environment rather than hard-coding it, or pass it in via configuration.
+- **Images are returned by reference.** Generated images live in the environment's blob storage; your code receives blob IDs/keys, not bytes.
+- **Capacity and quota rejections are immediate.** When the environment has capacity limits or quotas enabled, excess calls fail with `RESOURCE_EXHAUSTED` instead of waiting. Bound your parallelism and retry with exponential backoff.
+- **Config propagation delay.** Pool changes can take up to ~5 minutes to apply.
+- **Internal only.** The broker isn't exposed outside the cluster by default; call it from bundles or through a port-forward.
 
 ## Troubleshooting
 
-### Capacity Gating Rejecting Too Many Requests
+### `MockBrokerClient` in bundle logs
 
-**Symptom**: High rate of `RESOURCE_EXHAUSTED` errors from capacity gating.
+The SDK didn't find broker settings and fell back to a mock client. Set `LLM_BROKER_HOST` and `LLM_BROKER_PORT` in the bundle's values file, redeploy, and restart the pod if the image tag didn't change.
 
-**Diagnosis**:
-```bash
-curl http://broker:3000/api/industrial/capacity
-```
+### Bot calls hang or time out
 
-**Solutions**:
-1. Increase concurrency limits: `PUT /api/industrial/capacity/:id/limits {"concurrencyLimit": 20}`
-2. Add more deployments to the model group
-3. Check if a specific deployment is slow (check performance metrics)
+Usually a wrong `LLM_BROKER_PORT`. Confirm the broker Service port (`50051` by default) and match it. The broker speaks gRPC on that port; an HTTP request to it will not work. See also [Local Development Troubleshooting](../../../local-development/troubleshooting.md).
 
-### Performance Routing Excluding Healthy Deployments
+### `NOT_FOUND` for a model pool
 
-**Symptom**: Requests failing because performance routing excluded all deployments.
+- Check the exact pool name: `ff-cli env broker-config list` / `show`.
+- A pool created moments ago may not be routable yet (see [Configuration Changes](#configuration-changes)).
+- Embedding calls need the pool's numeric ID, not its name.
 
-**Diagnosis**:
-```bash
-curl http://broker:3000/api/industrial/performance
-```
+### `PERMISSION_DENIED` or provider auth errors
 
-**Solutions**:
-1. Check if the degradation thresholds are too aggressive
-2. Temporarily disable performance routing: `PUT /api/industrial/flags/performance_routing {"enabled": false}`
-3. Investigate underlying provider issues
+The provider key referenced by the pool's `env_var_name` is missing or wrong. Re-add it with `ff-cli env broker-secret add` using the exact key name, and ask your administrator to restart the broker if the value doesn't take effect.
 
-### Quota Exhaustion
+### Frequent `RESOURCE_EXHAUSTED`
 
-**Symptom**: `RESOURCE_EXHAUSTED` errors mentioning quota.
+- Provider rate limits: add deployments (other regions/providers) to the pool.
+- Environment capacity limits or quotas: reduce concurrent calls from your bundle, spread batch work over time, or ask your administrator to raise limits for your workload.
 
-**Diagnosis**:
-```bash
-# Check which deployment's quota is exceeded
-curl http://broker:3000/api/industrial/status
-```
+### Unexpected model in responses
 
-**Solutions**:
-1. Increase quota limits via admin API
-2. Enable output prediction to improve estimation accuracy
-3. Add more deployments to distribute load
+Failover or load spreading picked another deployment in the pool. If you need one specific model, make it the only member of a dedicated pool.
 
-### Sticky Routing Causing Imbalanced Load
+### Slow responses
 
-**Symptom**: One deployment receives disproportionate traffic.
+Check per-call latency and time-to-first-token in telemetry. Consider a faster model in a separate pool for latency-sensitive steps, and stream responses to users rather than waiting for completion.
 
-**Diagnosis**: Check if many long-running sessions are all sticky to the same deployment.
+## Related
 
-**Solutions**:
-1. Temporarily disable sticky routing: `PUT /api/industrial/flags/sticky_routing {"enabled": false}`
-2. Reduce sticky routing TTL to limit affinity duration
-3. Add more deployments to the pool
-
-## Graceful Shutdown
-
-When the broker receives `SIGTERM`:
-
-1. Stop accepting new gRPC connections
-2. Wait for in-flight streaming requests to complete (with timeout)
-3. Flush tracking metrics to database
-4. Release capacity slots
-5. Close database connections
-6. Exit
-
-**Note**: Full graceful shutdown orchestration for industrial subsystems is planned. Currently, in-flight requests may be interrupted on shutdown. See [issue #58](https://github.com/firebrandanalytics/ff_broker/issues/58).
-
-## Database Maintenance
-
-### Tracking Table Growth
-
-The `brk_tracking.completion_request` table grows with every request. Plan for:
-- **Retention policy**: Archive or delete records older than N days
-- **Partitioning**: Consider partitioning by date for large deployments
-- **Indexes**: Ensure indexes on `created_at`, `broker_request_id`, `semantic_label`
-
-### Configuration Cache
-
-The `DatabaseConfigManager` caches model group configurations with a TTL. After making configuration changes via the admin API, changes take effect after the cache expires (default: 5 minutes) or on the next service restart.
-
-## Security Considerations
-
-### Admin API Access
-
-The industrial admin API endpoints (`/api/industrial/*`) do not currently have authentication. In production:
-- Restrict access via network policies (Kubernetes NetworkPolicy)
-- Place behind an authenticated API gateway
-- Use Kubernetes RBAC to limit who can port-forward to the service
-
-**Note**: Admin API authentication is planned. See [issue #56](https://github.com/firebrandanalytics/ff_broker/issues/56).
-
-### Feature Flag Safety
-
-Runtime feature flag overrides are powerful — they can enable or disable subsystems that reject requests. Treat them with the same care as configuration changes:
-- Log who changed what (audit trail)
-- Test in staging before production
-- Have a rollback plan (clear overrides to revert to env values)
+- [Overview](./README.md)
+- [Getting Started](./getting-started.md)
+- [Reference](./reference.md)
+- [ff-brk CLI](../../../sdk/cli-tools/ff-brk.md)
+- [ff-telemetry-read CLI](../../../sdk/cli-tools/ff-telemetry-read.md)

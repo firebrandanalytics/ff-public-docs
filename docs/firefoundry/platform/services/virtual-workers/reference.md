@@ -1,6 +1,17 @@
 # Virtual Worker Manager — Reference
 
-Complete API reference for the Virtual Worker Manager service.
+Complete REST API reference for the Virtual Worker Manager service.
+
+## Base URL and Access
+
+| Context | Base URL |
+|---------|----------|
+| In-cluster (default `firefoundry-core` install) | `http://firefoundry-core-virtual-worker-manager:8080` (or `...<namespace>.svc.cluster.local:8080` across namespaces) |
+| From your machine | `kubectl port-forward svc/firefoundry-core-virtual-worker-manager 8095:8080`, then `http://localhost:8095` |
+
+VWM is internal to the cluster by default (not routed through the external gateway). All request and response bodies are JSON unless noted. The Agent SDK wraps this API — see the [Virtual Worker SDK Feature Guide](../../../sdk/agent_sdk/feature_guides/virtual-worker-sdk.md).
+
+The **Session API** is what your app calls at run time. The **Admin API** manages your app's workers, runtimes, and skills.
 
 ---
 
@@ -8,7 +19,7 @@ Complete API reference for the Virtual Worker Manager service.
 
 ### Create Session
 
-Creates a new session for a worker. VWM provisions a K8s pod and bootstraps the workspace.
+Creates a new session for a worker. VWM provisions a workspace container and clones the repositories; the session is `pending` until the workspace is ready, then `active`.
 
 ```
 POST /sessions
@@ -433,7 +444,7 @@ POST /admin/runtimes
 ```json
 {
   "name": "python-3.11-vw",
-  "description": "Python 3.11 with VW harness",
+  "description": "Python 3.11 with VW CLI tools",
   "baseImage": "python:3.11-slim",
   "vwImage": "registry/python-3.11-vw:latest",
   "tags": ["python", "vw"]
@@ -445,7 +456,7 @@ POST /admin/runtimes
 | `name` | string | Yes | Unique name (1-100 chars) |
 | `description` | string | No | Runtime description |
 | `baseImage` | string | Yes | Base Docker image |
-| `vwImage` | string | No | VW-enabled image (with harness + CLIs) |
+| `vwImage` | string | No | VW-capable image (base image plus the VW components and CLI tools) |
 | `tags` | string[] | No | Capability tags (default: `[]`) |
 
 **Response:** `201 Created`
@@ -593,10 +604,10 @@ DELETE /admin/skills/:id
 
 | CLI Type | Value | Provider | Key Features |
 |----------|-------|----------|--------------|
-| Claude Code | `claude-code` | Anthropic | Session resume, tool use, streaming JSON output |
-| Codex CLI | `codex` | OpenAI | Code-focused execution |
-| Gemini CLI | `gemini` | Google | Multi-modal capabilities |
-| OpenCode | `opencode` | Various | Native server mode |
+| Claude Code | `claude-code` | Anthropic | Conversation resume within a session, tool use, streaming |
+| Codex CLI | `codex` | OpenAI | Code-focused execution; no conversation resume |
+| Gemini CLI | `gemini` | Google | Multi-modal capabilities; no conversation resume |
+| OpenCode | `opencode` | Various | Conversation resume within a session |
 
 ---
 
@@ -605,4 +616,5 @@ DELETE /admin/skills/:id
 - [Overview](./README.md)
 - [Concepts](./concepts.md)
 - [Getting Started](./getting-started.md)
+- [Operations](./operations.md)
 - [Virtual Worker SDK Feature Guide](../../../sdk/agent_sdk/feature_guides/virtual-worker-sdk.md)

@@ -1,425 +1,155 @@
 # FF Broker — Getting Started
 
-This guide walks you through configuring and using the FF Broker, from sending your first request to setting up production model groups.
+This guide takes you from an environment with a running broker to an agent bundle that calls a model pool. The examples use an environment (namespace) named `ff-test`; substitute your own.
 
 ## Prerequisites
 
-- A running FF Broker instance (deployed via Helm or running locally)
-- PostgreSQL with the broker schemas migrated (`brk_customer`, `brk_routing`, `brk_tracking`, `brk_registry`)
-- At least one AI provider API key (Azure OpenAI, OpenAI, Gemini, or xAI)
-- The `ff-brk` CLI tool or a gRPC client
+- A FireFoundry environment with `firefoundry-core` installed (the broker is enabled by default)
+- `ff-cli` configured for that environment ([FF CLI setup](../../../local-development/ff-cli-setup.md))
+- An API key (or cloud credentials) for at least one AI provider: OpenAI, Azure OpenAI, Google Gemini, Anthropic, or xAI
+- Optional: the [`ff-brk`](../../../sdk/cli-tools/ff-brk.md) CLI for sending test requests
 
-## Step 1: Verify the Broker is Running
+## Step 1: Add a Provider Credential
 
-Check the broker's health endpoint:
+Store your provider API key as a broker secret. The key name is what the model pool configuration will reference.
 
 ```bash
-# If using the HTTP config server
-curl http://localhost:3000/health
-# Expected: {"status":"ok","service":"ff_broker_config_api","timestamp":"..."}
-
-# If using ff-brk CLI (requires port-forward to gRPC port)
-ff-brk health
+ff-cli env broker-secret add ff-test --key GEMINI_API_KEY --value "<your-key>" -y
 ```
 
-## Quick Setup (Atomic Endpoint)
+Common key names: `OPENAI_API_KEY`, `AZURE_OPENAI_API_KEY`, `GOOGLE_API_KEY` / `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`. For Vertex AI with Google application default credentials, your environment administrator provisions the service account.
 
-The setup endpoint creates the entire model routing chain in a single atomic transaction: provider account, deployed model, model group, and member. This is what `ff-cli env broker-config create` uses under the hood.
+## Step 2: Create a Model Pool
 
-```
-POST /api/config/setup
-```
-
-### Request Schema
+A model pool is the name your code will reference. Describe the provider, model, credential, and pool name in a JSON file:
 
 ```json
 {
-  "provider": "string (required) — hosting provider code (e.g., 'open-ai', 'vertex-ai', 'azure-openai')",
-  "model": "string (required) — model code from registry (e.g., 'gemini-2.5', 'gpt-4o')",
-  "variant": "string (optional, default: 'standard') — model variant (e.g., 'pro', 'mini')",
-  "auth": {
-    "method": "string (required) — one of: 'env_var', 'service_account', 'google_adc'",
-    "config": "object (required) — provider-specific auth config"
-  },
-  "deployment_config": "object (optional) — extra deployment config merged into deployed_model.config",
-  "model_group": {
-    "name": "string (required) — model group name agents reference as 'modelPool'",
-    "strategy": "string (optional, default: 'round_robin') — selection strategy code"
+  "provider": "vertex-ai",
+  "model": "gemini-2.5",
+  "variant": "pro",
+  "auth": { "method": "env_var", "config": { "env_var_name": "GEMINI_API_KEY" } },
+  "model_group": { "name": "gemini_completion", "strategy": "round_robin" }
+}
+```
+
+Create it and check the result:
+
+```bash
+ff-cli env broker-config create ff-test -f gemini.json
+ff-cli env broker-config show ff-test --model-group gemini_completion
+```
+
+The same JSON is the body of the broker's `POST /api/config/setup` endpoint; see [Reference — Configuration API](./reference.md#configuration-api) for every field, the auth options per provider, and more examples (OpenAI, image generation, adding a failover model).
+
+Configuration changes can take up to about five minutes to reach request routing; see [Operations](./operations.md#configuration-changes).
+
+## Step 3: Send a Test Request
+
+Before writing code, confirm the pool works with `ff-brk`:
+
+```bash
+kubectl port-forward -n ff-test svc/firefoundry-core-ff-broker 50051:50051
+
+ff-brk complete --port 50051 \
+  -m gemini_completion \
+  -l "smoke-test" \
+  --msg "What is the capital of France?"
+```
+
+A response with a model name and token usage means the pool, credential, and provider are all working.
+
+## Step 4: Call the Pool from a Bot
+
+Bots are the usual way to use the broker. Set the bot's `model_pool_name` to your pool:
+
+```typescript
+const MyBotBase = ComposeMixins(MixinBot, StructuredOutputBotMixin) as any;
+
+export class MyBot extends MyBotBase {
+  constructor(input: string) {
+    super(
+      [{ name: "MyBot", base_prompt_group: buildPromptGroup(input), model_pool_name: "gemini_completion", static_args: {} }],
+      [{ schema: MyBotSchema }]
+    );
+  }
+
+  // Required in SDK v4 — becomes the semantic label on every broker call
+  get_semantic_label_impl(_request: any): string {
+    return "MyBot";
   }
 }
 ```
 
-### Auth Config by Provider
+Point the bundle at the broker in its Helm values:
 
-**OpenAI** (`auth.method: "env_var"`):
-```json
-{ "auth": { "method": "env_var", "config": { "env_var_name": "OPENAI_API_KEY" } } }
+```yaml
+configMap:
+  data:
+    LLM_BROKER_HOST: "firefoundry-core-ff-broker"
+    LLM_BROKER_PORT: "50051"
 ```
 
-**Google AI Studio / Gemini** (`auth.method: "env_var"`):
-```json
-{ "auth": { "method": "env_var", "config": { "env_var_name": "GOOGLE_API_KEY" } } }
+See [Agent Development](../../../local-development/agent-development.md) for the full bot and endpoint walkthrough, and [Bots](../../../sdk/agent_sdk/core/bots.md) for the bot framework.
+
+## Step 5: Call the Broker Directly (Embeddings, Images, Ad-hoc)
+
+For work outside a bot, use `SimplifiedBrokerClient` from `@firebrandanalytics/ff_broker_client`:
+
+```typescript
+import { SimplifiedBrokerClient, AspectRatio, ImageQuality } from '@firebrandanalytics/ff_broker_client';
+
+const broker = new SimplifiedBrokerClient({
+  host: process.env.LLM_BROKER_HOST || 'localhost',
+  port: parseInt(process.env.LLM_BROKER_PORT || '50051'),
+});
+
+// Embedding (embedding requests address the model group by numeric ID)
+const emb = await broker.getEmbedding({
+  input: 'FireFoundry is an AI agent platform',
+  modelGroupId: 4,
+  scorePreference: { intelligenceWeight: 0.5, costWeight: 0.5 },
+});
+const vector = emb.data[0].embedding;
+
+// Image generation (image stored in blob storage; you get a reference back)
+const img = await broker.generateImage({
+  modelPool: 'image_generation',
+  prompt: 'A futuristic city skyline at sunset',
+  semanticLabel: 'city-illustration',
+  quality: ImageQuality.IMAGE_QUALITY_MEDIUM,
+  aspectRatio: AspectRatio.ASPECT_RATIO_3_2,
+});
+const { blobId, objectKey, format } = img.images[0];
 ```
 
-**Vertex AI** (`auth.method: "google_adc"`):
-```json
-{ "auth": { "method": "google_adc", "config": { "project_id": "your-gcp-project" } } }
-```
+Worked examples: [Vector Similarity Quickstart](../../../sdk/agent_sdk/feature_guides/vector-similarity-quickstart.md) (embeddings) and [Illustrated Story, Part 3](../../../sdk/agent_sdk/tutorials/illustrated-story/part-03-image-generation.md) (images).
 
-**Azure OpenAI** (`auth.method: "env_var"`):
-```json
-{ "auth": { "method": "env_var", "config": { "env_var_name": "AZURE_OPENAI_API_KEY" } } }
-```
+## Step 6: Add Failover
 
-### Complete Examples
-
-**Gemini 2.5 Pro (text completion via Google AI Studio):**
-```bash
-curl -X POST http://localhost:3000/api/config/setup \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "vertex-ai",
-    "model": "gemini-2.5",
-    "variant": "pro",
-    "auth": { "method": "env_var", "config": { "env_var_name": "GOOGLE_API_KEY" } },
-    "model_group": { "name": "gemini_completion", "strategy": "round_robin" }
-  }'
-```
-
-**OpenAI GPT-4o (text completion):**
-```bash
-curl -X POST http://localhost:3000/api/config/setup \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "open-ai",
-    "model": "gpt-4o",
-    "auth": { "method": "env_var", "config": { "env_var_name": "OPENAI_API_KEY" } },
-    "model_group": { "name": "openai_completion", "strategy": "round_robin" }
-  }'
-```
-
-**OpenAI GPT Image 1.5 (image generation):**
-```bash
-curl -X POST http://localhost:3000/api/config/setup \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "open-ai",
-    "model": "gpt-image-1.5",
-    "auth": { "method": "env_var", "config": { "env_var_name": "OPENAI_API_KEY" } },
-    "model_group": { "name": "image_generation", "strategy": "round_robin" }
-  }'
-```
-
-**Add a second model to an existing group (failover):**
-```bash
-curl -X POST http://localhost:3000/api/config/setup \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "open-ai",
-    "model": "gpt-4o",
-    "variant": "mini",
-    "auth": { "method": "env_var", "config": { "env_var_name": "OPENAI_API_KEY" } },
-    "model_group": { "name": "openai_completion", "strategy": "failover" }
-  }'
-```
-
-Note: If the model group already exists, the strategy field is ignored and a warning is returned.
-
-### Response
+Add a second deployment to the same pool so rate limits or provider outages don't reach your users. Run `broker-config create` again with the same `model_group.name` and a different provider or model:
 
 ```json
 {
-  "provider_account": { "id": 1, "code": "vertex-ai-env_var", "created": true },
-  "deployed_model": { "id": 1, "name": "vertex-ai-gemini-2.5-pro", "hosted_model_id": 6, "created": true },
-  "model_group": { "id": 1, "name": "gemini_completion", "strategy": "round_robin", "created": true },
-  "member": { "id": 1, "sequence_order": 1, "created": true },
-  "warnings": []
+  "provider": "open-ai",
+  "model": "gpt-4o",
+  "auth": { "method": "env_var", "config": { "env_var_name": "OPENAI_API_KEY" } },
+  "model_group": { "name": "gemini_completion" }
 }
 ```
 
-The `created` fields indicate whether each resource was newly created or already existed (idempotent upsert).
+The pool now has two deployments; retryable errors on one are retried on the other. (The pool's strategy is set when the pool is first created; on later calls it is ignored with a warning.) If your prompts rely on one model family's behavior, add a second deployment of the *same* model on another provider or region instead.
 
-### Using ff-cli
+## Step 7: Find Your Calls in Telemetry
 
-The CLI wraps the setup endpoint — it auto-discovers the broker via port-forward:
-
-```bash
-ff-cli env broker-config create --name gemini_completion
-```
-
-### What the Setup Endpoint Does (10 Steps)
-
-1. Resolves the hosted model from the registry (provider + model + variant)
-2. Validates the provider has a ProviderClassMapper implementation (warns if not)
-3. Validates auth config against provider requirements
-4. Validates deployment config if provided
-5. Upserts provider_account (creates or updates auth config)
-6. Upserts deployed_model (creates or updates config, auto-populates `{ "model": "<model>-<variant>" }`)
-7. Links provider_account to deployed_model
-8. Resolves the selection strategy (round_robin, failover, etc.)
-9. Upserts model_group (creates or reuses existing)
-10. Upserts model_group_member (links deployed_model to model_group)
-
-All steps run in a single database transaction — if any step fails, nothing is committed.
-
----
-
-## Manual Step-by-Step Setup
-
-If you need more control over individual resources, use the granular endpoints below.
-
-## Step 2: Register a Customer
-
-Before routing requests, you need a customer record in the database. Use the HTTP config API:
+Every broker call is recorded with the pool, the model that served it, tokens, latency, your semantic label, and breadcrumbs. Look them up in the FireFoundry Console or with [`ff-telemetry-read`](../../../sdk/cli-tools/ff-telemetry-read.md), for example by entity:
 
 ```bash
-curl -X POST http://localhost:3000/api/customer \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "my-org",
-    "description": "My organization"
-  }'
+ff-telemetry-read trace by-breadcrumb MyEntity <entity-id>
 ```
 
-## Step 3: Add a Provider Account
+## Next Steps
 
-Register an AI provider's API credentials:
-
-```bash
-curl -X POST http://localhost:3000/api/customer/provider-accounts \
-  -H "Content-Type: application/json" \
-  -d '{
-    "customerId": 1,
-    "providerName": "azure-openai",
-    "apiKey": "your-azure-api-key",
-    "endpoint": "https://your-resource.openai.azure.com"
-  }'
-```
-
-## Step 4: Register a Deployed Model
-
-Link a specific model deployment to the provider account:
-
-```bash
-curl -X POST http://localhost:3000/api/customer/deployed-models \
-  -H "Content-Type: application/json" \
-  -d '{
-    "providerAccountId": 1,
-    "modelId": 5,
-    "deploymentName": "gpt-4-turbo",
-    "endpoint": "https://your-resource.openai.azure.com/openai/deployments/gpt-4-turbo"
-  }'
-```
-
-## Step 5: Create a Model Group
-
-Create a model group (model pool) that agents will reference:
-
-```bash
-curl -X POST http://localhost:3000/api/routing/model-groups \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "production",
-    "description": "Production model pool"
-  }'
-```
-
-## Step 6: Add Resources to the Group
-
-Add deployed models to the group with scoring weights:
-
-```bash
-curl -X POST http://localhost:3000/api/routing/model-groups/1/resources \
-  -H "Content-Type: application/json" \
-  -d '{
-    "deployedModelId": 1,
-    "intelligenceWeight": 9,
-    "costWeight": 6
-  }'
-```
-
-## Step 7: Send Your First Request
-
-### Using ff-brk CLI
-
-```bash
-ff-brk chat \
-  --pool production \
-  --message "What is the capital of France?" \
-  --stream
-```
-
-### Using gRPC Directly
-
-```typescript
-import { createChannel, createClient } from 'nice-grpc';
-import { CompletionBrokerServiceDefinition } from './proto/completion_broker.js';
-
-const channel = createChannel('localhost:50051');
-const client = createClient(CompletionBrokerServiceDefinition, channel);
-
-const stream = client.createBrokeredCompletionStream({
-  modelPool: 'production',
-  model: 'gpt-4',
-  messages: [
-    { role: 'user', content: 'What is the capital of France?' }
-  ],
-  temperature: 0.7,
-  maxTokens: 150,
-});
-
-for await (const chunk of stream) {
-  process.stdout.write(chunk.content || '');
-}
-```
-
-### Using the Agent SDK
-
-```typescript
-import { FireFoundryClient } from '@firebrandanalytics/ff-sdk';
-
-const client = new FireFoundryClient({
-  brokerUrl: 'localhost:50051',
-});
-
-const response = await client.broker.complete({
-  modelPool: 'production',
-  messages: [
-    { role: 'user', content: 'What is the capital of France?' }
-  ],
-});
-
-console.log(response.content);
-```
-
-## Step 8: Add a Failover Resource
-
-For production reliability, add a second resource to the model group:
-
-```bash
-# Register a second provider account (e.g., OpenAI Direct)
-curl -X POST http://localhost:3000/api/customer/provider-accounts \
-  -H "Content-Type: application/json" \
-  -d '{
-    "customerId": 1,
-    "providerName": "openai",
-    "apiKey": "your-openai-api-key"
-  }'
-
-# Register the deployed model
-curl -X POST http://localhost:3000/api/customer/deployed-models \
-  -H "Content-Type: application/json" \
-  -d '{
-    "providerAccountId": 2,
-    "modelId": 5,
-    "deploymentName": "gpt-4-turbo"
-  }'
-
-# Add to model group with lower intelligence weight (failover)
-curl -X POST http://localhost:3000/api/routing/model-groups/1/resources \
-  -H "Content-Type: application/json" \
-  -d '{
-    "deployedModelId": 2,
-    "intelligenceWeight": 8,
-    "costWeight": 7
-  }'
-```
-
-Now if the Azure deployment fails, the broker automatically retries with the OpenAI Direct deployment.
-
-## Step 9: Add Semantic Labels
-
-Tag your requests with semantic labels for better observability and industrial-scale features:
-
-```typescript
-const stream = client.createBrokeredCompletionStream({
-  modelPool: 'production',
-  semanticLabel: 'customer_support_query',  // Enables output prediction, usage profiling
-  messages: [
-    { role: 'user', content: 'How do I reset my password?' }
-  ],
-});
-```
-
-## Step 10: Enable Industrial Features
-
-Once your basic setup is working, gradually enable industrial-scale features:
-
-```bash
-# Enable capacity gating (recommended first)
-export BROKER_FF_CAPACITY_GATING=true
-
-# Enable stream instrumentation for TTFT/throughput metrics
-export BROKER_FF_STREAM_INSTRUMENTATION=true
-
-# Enable performance-aware routing
-export BROKER_FF_PERFORMANCE_ROUTING=true
-```
-
-See [Operations — Feature Flag Rollout](./operations.md#recommended-rollout-sequence) for the recommended sequence.
-
-## Embedding Requests
-
-### Single Embedding
-
-```bash
-ff-brk embed \
-  --group-id 4 \
-  --input "FireFoundry is an AI agent platform"
-```
-
-### Batch Embedding
-
-```typescript
-const response = await client.createBrokeredBatchEmbedding({
-  modelGroupId: 4,
-  inputs: [
-    "First document text",
-    "Second document text",
-    "Third document text"
-  ],
-});
-
-// response.embeddings is an array of float vectors
-```
-
-## Image Generation
-
-```typescript
-const response = await imageClient.createBrokeredImageGeneration({
-  modelPool: 'image-production',
-  prompt: 'A futuristic city skyline at sunset',
-  size: '1024x1024',
-  quality: 'hd',
-});
-
-// response includes blob storage URL for the generated image
-```
-
-## Troubleshooting
-
-### "No resources available" Error
-
-This means the model group has no resources or all resources are unhealthy:
-1. Check the model group has resources: `GET /api/routing/model-groups/{id}/resources`
-2. Verify provider accounts have valid credentials
-3. Check the broker logs for provider connection errors
-
-### "Rate limit exceeded" / Failover Happening
-
-The primary provider is hitting rate limits:
-1. Add more resources to the model group for better distribution
-2. Enable capacity gating (`BROKER_FF_CAPACITY_GATING=true`) to prevent overloading
-3. Consider enabling quota enforcement for proactive throttling
-
-### High Latency
-
-1. Enable stream instrumentation to measure TTFT: `BROKER_FF_STREAM_INSTRUMENTATION=true`
-2. Enable performance routing to avoid slow deployments: `BROKER_FF_PERFORMANCE_ROUTING=true`
-3. Check the `/api/industrial/performance` endpoint for deployment-level metrics
-
-### Connection Refused
-
-1. Verify the broker gRPC port is correct (default: 50051)
-2. Check PostgreSQL connectivity (core and registry databases)
-3. Review environment variables for correct database URLs
+- [Concepts](./concepts.md) — pool design, failover behavior, semantic labels
+- [Reference](./reference.md) — request fields and error codes
+- [Operations](./operations.md) — verifying and troubleshooting from your bundle

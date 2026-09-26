@@ -1,59 +1,56 @@
 # Virtual Worker Manager — Getting Started
 
-This guide walks you through creating a virtual worker, starting a session, executing prompts, and integrating with the Agent SDK.
+This guide walks you through defining a virtual worker, driving it from an agent bundle with the Agent SDK, and — if you need it — using the REST API directly.
 
 ## Prerequisites
 
-- A FireFoundry deployment with VWM enabled (see your platform administrator for setup)
-- A VW-capable runtime image available in your container registry
-- API keys for the CLI tools you plan to use (e.g., Anthropic API key for Claude Code)
+- A FireFoundry environment with VWM enabled (`virtual-worker-manager.enabled: true`; see [Operations](./operations.md#enabling-vwm))
+- A VW-capable runtime image available to the cluster, and CLI credentials for the engine you'll use (for example, a Claude Code token). Your environment administrator provisions both.
+- Access to VWM's REST API. In-cluster the default address is `http://firefoundry-core-virtual-worker-manager:8080`. From your machine, port-forward it:
+
+```bash
+kubectl port-forward -n ff-test svc/firefoundry-core-virtual-worker-manager 8095:8080
+export VWM=http://localhost:8095
+```
 
 ---
 
-## Step 1: Create a Runtime
+## Step 1: Register a Runtime
 
-Runtimes are base container images. You typically need at least one VW-capable runtime with the harness and CLI tools pre-installed.
+A runtime names the container image a worker runs in. Skip this step if your environment already has one (`curl $VWM/admin/runtimes`).
 
 ```bash
-curl -X POST http://vwm-service/admin/runtimes \
+curl -X POST $VWM/admin/runtimes \
   -H "Content-Type: application/json" \
   -d '{
     "name": "python-3.11-vw",
-    "description": "Python 3.11 with VW harness and CLI tools",
+    "description": "Python 3.11 with VW CLI tools",
     "baseImage": "python:3.11-slim",
     "vwImage": "your-registry/python-3.11-vw:latest",
     "tags": ["python", "vw"]
   }'
 ```
 
-**Response:**
-```json
-{
-  "id": "rt-abc123...",
-  "name": "python-3.11-vw",
-  "baseImage": "python:3.11-slim",
-  "vwImage": "your-registry/python-3.11-vw:latest",
-  "tags": ["python", "vw"],
-  "createdAt": "2025-01-15T10:00:00Z",
-  "updatedAt": "2025-01-15T10:00:00Z"
-}
-```
+The response includes the runtime `id` you'll use next.
 
 ---
 
-## Step 2: Create a Worker
+## Step 2: Define a Worker
 
-Workers define how an agent should behave. Specify the CLI type, instructions, and optional repository and skills.
+A worker is the reusable definition: engine, instructions, knowledge base, and options.
 
 ```bash
-curl -X POST http://vwm-service/admin/workers \
+curl -X POST $VWM/admin/workers \
   -H "Content-Type: application/json" \
   -d '{
     "name": "code-reviewer",
     "description": "Security-focused code reviewer",
-    "runtimeId": "rt-abc123...",
+    "runtimeId": "<runtime-id>",
     "cliType": "claude-code",
     "agentMd": "You are a security-focused code reviewer.\nLook for OWASP Top 10 vulnerabilities.\nAlways explain your findings with severity ratings.",
+    "mcpServers": [
+      { "name": "ff-gateway", "url": "http://firefoundry-core-mcp-gateway.<namespace>.svc.cluster.local:8080/mcp" }
+    ],
     "workerRepoUrl": "https://github.com/org/code-reviewer-kb",
     "workerRepoBranch": "main",
     "autoLearn": true,
@@ -61,333 +58,179 @@ curl -X POST http://vwm-service/admin/workers \
   }'
 ```
 
-**Response:**
-```json
-{
-  "id": "wk-def456...",
-  "name": "code-reviewer",
-  "cliType": "claude-code",
-  "runtimeId": "rt-abc123...",
-  "autoLearn": true,
-  "timeout": 3600,
-  "createdAt": "2025-01-15T10:05:00Z",
-  "updatedAt": "2025-01-15T10:05:00Z"
-}
-```
+`mcpServers` gives the worker FireFoundry platform tools through the [MCP Gateway](../mcp-gateway/README.md); omit it if the worker doesn't need them.
 
-### Optional: Assign Skills
+### Optional: add a skill
 
 ```bash
-# Upload a skill package
-curl -X POST "http://vwm-service/admin/skills?name=security-scanner&version=1.0.0&description=SAST%20tool" \
+# Upload a skill package (zip, max 50MB)
+curl -X POST "$VWM/admin/skills?name=security-scanner&version=1.0.0&description=SAST%20tool" \
   -H "Content-Type: application/octet-stream" \
   --data-binary @security-scanner-1.0.0.skill
 
-# Assign skill to worker
-curl -X POST http://vwm-service/admin/workers/wk-def456.../skills/sk-ghi789...
+# Assign it to the worker
+curl -X POST $VWM/admin/workers/<worker-id>/skills/<skill-id>
 ```
 
 ---
 
-## Step 3: Create a Session
+## Step 3: Use the Worker from Your Agent Bundle (SDK)
 
-Sessions are the primary unit of interaction. Creating a session provisions a K8s pod with the worker's configuration.
+The Agent SDK is the recommended way to drive workers. Point it at VWM and refer to the worker by name.
+
+### Standalone session
+
+For scripts, tests, and simple endpoints:
+
+```typescript
+import { VirtualWorker } from '@firebrandanalytics/ff-agent-sdk/virtual-worker';
+import { VWMClient } from '@firebrandanalytics/vwm-client';
+
+const client = new VWMClient({ baseUrl: 'http://firefoundry-core-virtual-worker-manager:8080' });
+const vw = new VirtualWorker({ name: 'code-reviewer', client });
+
+const session = await vw.startSession({
+  createSessionOptions: {
+    sessionRepository: { url: 'https://github.com/org/my-project.git', branch: 'main' },
+  },
+  breadcrumbs: ['code-review', 'ticket-123'],
+});
+
+try {
+  const result = await session.executePrompt({
+    prompt: 'Review src/auth/ for security vulnerabilities.',
+  });
+  console.log(result.promptResponse.response);
+} finally {
+  await session.end(); // triggers auto-learning and pushes branch changes
+}
+```
+
+### Entity-driven session (production)
+
+For bundles that need idempotency and crash recovery, extend `VWSessionEntity`. Each turn runs as a `VWTurnEntity`; after a restart, completed turns return their cached results.
+
+```typescript
+import VWSessionEntity from '@firebrandanalytics/ff-agent-sdk/virtual-worker/VWSessionEntity';
+import type { VWPromptContext, VWNextPrompt } from '@firebrandanalytics/ff-agent-sdk/virtual-worker';
+
+class CodeReviewSession extends VWSessionEntity {
+  protected async get_next_prompt(ctx: VWPromptContext): Promise<VWNextPrompt> {
+    if (ctx.turnIndex === 0) return { prompt: 'Review src/auth/ for OWASP Top 10 vulnerabilities' };
+    if (ctx.turnIndex === 1) return { prompt: 'Now review src/api/ for the same vulnerabilities' };
+    return null; // done — the session ends
+  }
+}
+```
+
+Streaming progress, file transfer, the working memory bridge, and lifecycle hooks are covered in the [Virtual Worker SDK Feature Guide](../../../sdk/agent_sdk/feature_guides/virtual-worker-sdk.md).
+
+---
+
+## Step 4 (Alternative): Use the REST API Directly
+
+Use this path from non-TypeScript clients or for manual testing.
+
+### Create a session
 
 ```bash
-curl -X POST http://vwm-service/sessions \
+curl -X POST $VWM/sessions \
   -H "Content-Type: application/json" \
   -d '{
-    "workerId": "wk-def456...",
-    "repository": {
-      "url": "https://github.com/org/my-project",
-      "branch": "feature/new-auth"
-    },
+    "workerId": "<worker-id>",
+    "repository": { "url": "https://github.com/org/my-project", "branch": "feature/new-auth" },
     "breadcrumbs": ["ticket-123", "sprint-42"]
   }'
 ```
 
-**Response:**
-```json
-{
-  "id": "sess-jkl012...",
-  "workerId": "wk-def456...",
-  "status": "pending",
-  "createdAt": "2025-01-15T10:10:00Z"
-}
-```
-
-The session starts in `pending` status. VWM creates a K8s job, waits for the pod to start, and waits for the harness to signal readiness. Poll the session status to check when it's active:
+The session starts as `pending` while its workspace is provisioned. Poll until it is `active`:
 
 ```bash
-curl http://vwm-service/sessions/sess-jkl012...
+curl $VWM/sessions/<session-id>
+# {"id":"...","status":"active","lastActivityAt":"..."}
 ```
 
-```json
-{
-  "id": "sess-jkl012...",
-  "status": "active",
-  "lastActivityAt": "2025-01-15T10:10:30Z"
-}
-```
+### Send a prompt
 
----
-
-## Step 4: Execute a Prompt
-
-### Synchronous (Wait for Full Response)
+Synchronous:
 
 ```bash
-curl -X POST http://vwm-service/sessions/sess-jkl012.../prompt \
+curl -X POST $VWM/sessions/<session-id>/prompt \
   -H "Content-Type: application/json" \
-  -d '{
-    "prompt": "Review the authentication module in src/auth/ for security vulnerabilities. Focus on session management and token validation.",
-    "timeout": 120
-  }'
+  -d '{ "prompt": "Review src/auth/ for security vulnerabilities.", "timeout": 120 }'
 ```
 
-**Response:**
 ```json
 {
-  "requestId": "req-mno345...",
-  "response": "I've reviewed the authentication module and found 3 issues:\n\n1. **High Severity** - Session tokens are not invalidated...",
+  "requestId": "...",
+  "response": "I've reviewed the authentication module and found 3 issues: ...",
   "tokensIn": 1250,
   "tokensOut": 890,
   "durationMs": 15420
 }
 ```
 
-### Streaming (Real-Time Output via SSE)
+Streaming (Server-Sent Events):
 
 ```bash
-curl -X POST http://vwm-service/sessions/sess-jkl012.../stream \
+curl -N -X POST $VWM/sessions/<session-id>/stream \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
-  -d '{
-    "prompt": "Review the authentication module in src/auth/ for security vulnerabilities."
-  }'
+  -d '{ "prompt": "Review src/auth/ for security vulnerabilities." }'
 ```
 
-**SSE Events:**
 ```
 data: {"type":"text","data":"I've reviewed the authentication module..."}
-
 data: {"type":"tool_call","data":{"name":"read_file","input":{"path":"src/auth/session.ts"}}}
-
-data: {"type":"text","data":"Found 3 issues:\n\n1. **High Severity**..."}
-
 data: {"type":"complete","data":{"tokensIn":1250,"tokensOut":890}}
 ```
 
-### Abort an In-Flight Request
+Abort an in-flight prompt:
 
 ```bash
-curl -X POST http://vwm-service/sessions/sess-jkl012.../abort \
-  -H "Content-Type: application/json" \
-  -d '{}'
+curl -X POST $VWM/sessions/<session-id>/abort -H "Content-Type: application/json" -d '{}'
 ```
 
----
-
-## Step 5: File Operations
-
-Read, write, and manage files on the worker's filesystem.
-
-### Read a File
+### Work with files
 
 ```bash
-curl http://vwm-service/sessions/sess-jkl012.../files/session_repo/src/auth/session.ts
+# Read / write text
+curl $VWM/sessions/<session-id>/files/session_repo/src/auth/session.ts
+curl -X PUT $VWM/sessions/<session-id>/files/session_repo/config.json \
+  -H "Content-Type: application/json" -d '{"debug": true}'
+
+# Upload / download binary
+curl -X POST "$VWM/sessions/<session-id>/files/upload?path=session_repo/data/input.csv" \
+  -H "Content-Type: application/octet-stream" --data-binary @input.csv
+curl -o analysis.pdf $VWM/sessions/<session-id>/files/download/session_repo/reports/analysis.pdf
+
+# Delete
+curl -X DELETE $VWM/sessions/<session-id>/files/session_repo/tmp/scratch.txt
 ```
 
-### Write a File
+### Check usage
 
 ```bash
-curl -X PUT http://vwm-service/sessions/sess-jkl012.../files/session_repo/config.json \
-  -H "Content-Type: application/json" \
-  -d '{"debug": true, "logLevel": "verbose"}'
+curl $VWM/sessions/<session-id>/telemetry   # per-request history
+curl $VWM/sessions/<session-id>/stats       # totals: requests, tokens, duration
 ```
 
-### Upload a Binary File
+### End the session
 
 ```bash
-curl -X POST "http://vwm-service/sessions/sess-jkl012.../files/upload?path=session_repo/data/input.csv" \
-  -H "Content-Type: application/octet-stream" \
-  --data-binary @input.csv
+curl -X DELETE $VWM/sessions/<session-id>
 ```
 
-### Download a Binary File
-
-```bash
-curl -o output.pdf http://vwm-service/sessions/sess-jkl012.../files/download/session_repo/reports/analysis.pdf
-```
-
-### Delete a File
-
-```bash
-curl -X DELETE http://vwm-service/sessions/sess-jkl012.../files/session_repo/tmp/scratch.txt
-```
-
----
-
-## Step 6: View Telemetry
-
-### Request History
-
-```bash
-curl http://vwm-service/sessions/sess-jkl012.../telemetry
-```
-
-```json
-[
-  {
-    "id": "req-mno345...",
-    "prompt": "Review the authentication module...",
-    "response": "I've reviewed the authentication module...",
-    "status": "complete",
-    "tokensIn": 1250,
-    "tokensOut": 890,
-    "durationMs": 15420,
-    "createdAt": "2025-01-15T10:11:00Z"
-  }
-]
-```
-
-### Aggregated Stats
-
-```bash
-curl http://vwm-service/sessions/sess-jkl012.../stats
-```
-
-```json
-{
-  "totalRequests": 5,
-  "completedRequests": 4,
-  "failedRequests": 1,
-  "totalTokensIn": 6200,
-  "totalTokensOut": 4100,
-  "totalDurationMs": 72000,
-  "avgDurationMs": 14400
-}
-```
-
----
-
-## Step 7: End the Session
-
-When finished, end the session to trigger cleanup. If `autoLearn` is enabled, VWM will run the learning skill before shutting down the pod.
-
-```bash
-curl -X DELETE http://vwm-service/sessions/sess-jkl012...
-```
-
-This:
-
-1. Triggers auto-learning (if enabled) — agent extracts knowledge from the session
-2. Commits and pushes git changes on session branches
-3. Stores the session transcript
-4. Terminates the K8s job
-5. Marks the session as `ended`
-
----
-
-## Using the Agent SDK
-
-The Agent SDK provides first-class virtual worker support for building agent bundles. There are two usage patterns.
-
-### Standalone (Non-Entity)
-
-For scripts, tests, and simple integrations:
-
-```typescript
-import { VirtualWorker } from '@firebrandanalytics/ff-agent-sdk/virtual-worker';
-
-// Create a factory pointed at your VWM service
-const worker = new VirtualWorker({
-  vwmBaseUrl: 'http://vwm-service',
-  workerName: 'code-reviewer',
-});
-
-// Resolve worker metadata
-await worker.resolveWorker();
-
-// Start a session
-const session = await worker.startSession({
-  repository: { url: 'https://github.com/org/my-project', branch: 'main' },
-});
-
-// Execute a prompt
-const result = await session.executePrompt({
-  prompt: 'Review the codebase for security issues',
-  timeout: 120,
-});
-
-console.log(result.response);
-
-// End the session
-await session.end();
-```
-
-### Entity Framework Integration
-
-For production agent bundles with idempotency and crash recovery:
-
-```typescript
-import { VWSessionEntity, VWTurnEntity } from '@firebrandanalytics/ff-agent-sdk/virtual-worker';
-
-class CodeReviewSession extends VWSessionEntity {
-  get workerName() { return 'code-reviewer'; }
-
-  async get_next_prompt(): Promise<VWTurnArgs | null> {
-    const turn = this.getCurrentTurnIndex();
-
-    if (turn === 0) {
-      return { prompt: 'Review src/auth/ for OWASP Top 10 vulnerabilities' };
-    }
-
-    if (turn === 1) {
-      return { prompt: 'Now review src/api/ for the same vulnerabilities' };
-    }
-
-    return null; // No more prompts — session ends
-  }
-
-  async on_turn_complete(turnEntity: VWTurnEntity): Promise<void> {
-    // Process each turn result (e.g., create entities, update graph)
-    const result = turnEntity.getResult();
-    console.log(`Turn ${turnEntity.turnIndex}: ${result.response.substring(0, 100)}...`);
-  }
-}
-```
-
-### Working Memory Bridge
-
-Transfer files between FireFoundry working memory and the virtual worker's filesystem:
-
-```typescript
-import {
-  bridgeWorkingMemoriesToFiles,
-  bridgeFilesToWorkingMemories,
-} from '@firebrandanalytics/ff-agent-sdk/virtual-worker';
-
-// Upload working memory blobs to the worker's filesystem
-await bridgeWorkingMemoriesToFiles(session, workingMemories, {
-  basePath: 'session_repo/input/',
-});
-
-// After the worker processes files, download results back to working memory
-const newMemories = await bridgeFilesToWorkingMemories(session, {
-  paths: ['session_repo/output/report.md', 'session_repo/output/summary.json'],
-});
-```
-
-For the complete SDK reference, see the [Virtual Worker SDK Feature Guide](../../../sdk/agent_sdk/feature_guides/virtual-worker-sdk.md).
+Ending a session runs auto-learning (if enabled), commits and pushes changes to the session branches, stores the transcript, releases the workspace, and marks the session `ended`.
 
 ---
 
 ## Next Steps
 
-- **[Concepts](./concepts.md)** — Understand workers, sessions, runtimes, skills, and the dual repo architecture in depth
-- **[Reference](./reference.md)** — Full API reference with all endpoints, environment variables, and error codes
-- **[Virtual Worker SDK](../../../sdk/agent_sdk/feature_guides/virtual-worker-sdk.md)** — Complete SDK documentation for agent bundle integration
+- **[Concepts](./concepts.md)** — Workers, sessions, knowledge bases, and app design patterns
+- **[Reference](./reference.md)** — All endpoints and error codes
+- **[Operations](./operations.md)** — Enabling, verifying, limits, troubleshooting
+- **[Virtual Worker SDK](../../../sdk/agent_sdk/feature_guides/virtual-worker-sdk.md)** — Complete SDK documentation
 
 ---
 

@@ -2,150 +2,87 @@
 
 ## Overview
 
-The FF Broker is a high-performance gRPC service that acts as an intelligent middleware layer for AI model orchestration. It provides automatic model selection, load balancing, and failover capabilities across multiple AI providers including Azure OpenAI, OpenAI, Google Gemini, xAI, and Anthropic Claude. The broker optimizes requests based on cost/intelligence scoring while ensuring reliability through built-in failover policies and comprehensive request tracking.
+The FF Broker is the service your agent bundle calls whenever it needs a model: chat completions (streaming or not), structured JSON output, tool calls, embeddings, or image generation. Instead of calling OpenAI, Azure OpenAI, Google Gemini, Anthropic, or xAI directly, your code names a **model pool**, and the broker picks a concrete model deployment from that pool, calls the provider, fails over to another deployment if the call fails, and records the call for telemetry.
 
 ## Purpose and Role in Platform
 
-The FF Broker serves as the central routing hub in the FireFoundry platform, sitting between agent bundles and AI model providers. When an agent needs to generate text, embeddings, images, or structured outputs, it sends requests to the broker rather than directly to providers. The broker then:
+The broker sits between your agent bundle and the AI model providers. For an app builder this means:
 
-- Selects the optimal model based on intelligence, cost, and performance scoring
-- Routes requests to the appropriate provider deployment
-- Handles failures gracefully with automatic failover
-- Tracks all requests for observability and cost monitoring
-- Manages provider authentication and API key rotation
-- Enforces capacity limits and quota policies
-- Provides QoS tiering for priority workloads
+- **No provider code in your bundle** — bots and services reference a model pool name (for example `gemini_completion`), not a provider SDK, endpoint, or API key.
+- **Swap models without redeploying** — the environment's model pool configuration decides which model serves a request. Change the pool, and every bot that uses it picks up the change.
+- **Built-in failover** — a pool with more than one deployment retries rate-limited or failing calls on another deployment before your code sees an error.
+- **Observability for free** — every call is recorded with token usage, latency, the model that served it, your semantic label, and your breadcrumbs, and is visible through the [Telemetry Service](../telemetry-service/README.md) and the FireFoundry Console.
 
-This abstraction allows agent developers to focus on agent logic rather than model selection, provider management, and failure handling.
+Most bundles never talk to the broker directly: the Agent SDK's bots use it under the hood. You use the broker client directly for embeddings, image generation, or ad-hoc calls outside a bot.
 
 ## Key Features
 
-- **Intelligent Model Selection**: Automatic model selection using weighted scoring across intelligence, cost, and performance dimensions
-- **Multi-Provider Support**: Native support for Azure OpenAI, OpenAI, Google Gemini, Anthropic Claude, and xAI models
-- **Failover and Load Balancing**: Automatic failover between model deployments with configurable failover policies
-- **Streaming Support**: Real-time streaming responses for chat completions with full token-by-token streaming
-- **Structured Output**: JSON schema-constrained responses with native provider support where available
-- **Embedding Generation**: Single and batch embedding operations with model group management
-- **Image Generation**: Multi-provider image generation with blob storage integration (OpenAI GPT Image, Gemini)
-- **Cost Optimization**: Weighted scoring algorithm to balance cost, intelligence, and performance requirements
-- **Request Tracking**: Comprehensive telemetry with request/response logging, breadcrumbs, and correlation IDs
-- **Provider Registry**: Factory-based provider instantiation with caching, TTL expiration, and health monitoring
-- **Model Context Protocol (MCP)**: Integration with MCP for advanced tool capabilities
-
-### Industrial-Scale Features (Feature-Flagged)
-
-The broker includes 12 production-grade subsystems for industrial-scale operations, all controlled by feature flags for gradual rollout:
-
-- **Capacity Gating**: Per-deployment concurrency limits with real-time admission control
-- **Stream Instrumentation**: PullChain pipeline with TTFT, throughput, and token metrics
-- **Performance Routing**: Rolling-window latency tracking with degradation detection
-- **QoS Tiering**: 4-tier quality-of-service (Economy/Standard/Premium/Critical) with resource filtering
-- **Sticky Routing**: Session-to-deployment affinity for prompt cache optimization
-- **Priority Routing**: Load-threshold-activated priority queues
-- **Quota Enforcement**: Hierarchical TPM/RPM quota management
-- **Output Prediction**: EWMA-based output token estimation from semantic labels
-- **Usage Profiling**: 168-slot weekly usage profiles with anomaly detection
-- **PTU Advisory**: Provisioned Throughput Unit capacity analysis and scale recommendations
+- **Model pools** — named groups of model deployments that your code references by name
+- **Multi-provider** — Azure OpenAI, OpenAI, Google Gemini (AI Studio and Vertex AI), Anthropic Claude, and xAI Grok behind one API
+- **Failover** — retryable provider errors (rate limits, timeouts, 5xx) are retried on another deployment in the pool
+- **Cost/quality selection** — requests can express a preference for more capable or cheaper models within a pool
+- **Streaming** — token-by-token streaming for chat completions
+- **Structured output and tools** — JSON-schema-constrained responses and tool/function calling
+- **Embeddings** — single and batch embedding generation
+- **Image generation** — OpenAI GPT Image and Gemini image models; generated images are stored in blob storage and returned by reference
+- **Request tracking** — semantic labels and breadcrumbs attach your app's context to every call
+- **Mock cache** — deterministic cached responses for repeatable integration tests
 
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Client Layer                            │
-│          Agent Bundles  |  SDK  |  Direct gRPC               │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│                   gRPC Service Layer                         │
-│  CompletionBrokerService | EmbeddingBrokerService            │
-│                | ImageGenerationBrokerService                │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│               Industrial Subsystems (Feature-Flagged)        │
-│  Capacity Gate → QoS Tier → Priority Queue → Quota Check     │
-│  Sticky Routing → Performance Score → Output Prediction      │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│                Model Selection Layer                         │
-│  ModelSelectorManager → CostIntelligenceStrategy             │
-│  ModelProviderRegistry → ProviderFactoryRegistry             │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│                  Provider Layer                               │
-│  Azure OpenAI | OpenAI Direct | Google Gemini | xAI Grok     │
-│  CredentialResolver → ProviderClientFactory                  │
-│  FailoverPolicy → ErrorHandler                               │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│               Tracking & Persistence                         │
-│  TrackingService → PostgreSQL (brk_tracking schema)          │
-│  BlobStorage → Azure Blob / GCS (image generation)           │
-└─────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│  Your agent bundle                                          │
+│   Bots (model_pool_name)  |  SimplifiedBrokerClient  |      │
+│   ff-brk CLI (testing)                                      │
+└──────────────────────────┬─────────────────────────────────┘
+                           │ gRPC (port 50051)
+┌──────────────────────────▼─────────────────────────────────┐
+│  FF Broker                                                  │
+│   model pool → deployment selection → failover              │
+└──────┬───────────────────┬───────────────────────┬─────────┘
+       │                   │                       │
+┌──────▼───────┐   ┌───────▼────────┐     ┌────────▼────────┐
+│ AI providers │   │ Telemetry /    │     │ Blob storage    │
+│ OpenAI, Azure│   │ FF Console     │     │ (generated      │
+│ Gemini, xAI, │   │ (call history) │     │  images)        │
+│ Anthropic    │   └────────────────┘     └─────────────────┘
+└──────────────┘
 ```
 
-### Request Flow
+Model pools and provider credentials are configured per environment with `ff-cli env broker-config` and `ff-cli env broker-secret` (or the broker's configuration API). Your bundle only needs the broker's host and port.
 
-1. **gRPC Request Arrives**: Client (agent bundle) sends a completion, embedding, or image generation request
-2. **Industrial Checks** (if enabled): Capacity gating, QoS tier resolution, priority routing, quota enforcement
-3. **Model Selection**: `ModelSelectorManager` loads the appropriate model group configuration from the database
-4. **Strategy Selection**: `CostIntelligenceStrategy` calculates weighted scores for available resources
-5. **Sticky Routing** (if enabled): Checks for session-to-deployment affinity
-6. **Provider Instantiation**: `ProviderFactory` creates or retrieves a cached provider instance
-7. **Request Execution**: Provider executes the request against the external API
-8. **Stream Instrumentation** (if enabled): PullChain measures TTFT, throughput, and token counts
-9. **Failover Handling**: If the request fails, `FailoverPolicy` selects an alternative resource
-10. **Response Tracking**: `TrackingService` records metrics (tokens, latency, cost) to the database
-11. **Post-Request**: Usage pattern collection, sticky routing recording, performance tracking
+### What happens on a call
 
-### Database Architecture
-
-The broker uses a dual-database architecture with Foreign Data Wrapper (FDW) integration:
-
-- **Registry Database** (`brk_registry` schema): Global model catalog shared across broker instances (models, providers, capabilities)
-- **Core Database** (four schemas):
-  - `brk_registry` (FDW foreign tables): Remote access to registry database without data duplication
-  - `brk_customer`: Customer-specific model deployments and API credentials
-  - `brk_routing`: Model groups, selection strategies, and failover configurations
-  - `brk_tracking`: Request logs, completion metrics, and provider performance data
-
-This architecture enables centralized model management while maintaining instance-specific configuration and telemetry.
-
-## What's New
-
-### Industrial-Scale Upgrade (feat/industrial-scale)
-
-Major upgrade adding 12 subsystems for production-grade capacity management, intelligent routing, QoS tiering, and PTU advisory. All subsystems are feature-flagged for gradual rollout and instant rollback.
-
-See [Industrial Subsystems](./industrial.md) for full documentation.
-
-### Image Generation Support
-
-Added multi-provider image generation with streaming support:
-- OpenAI GPT Image 1.5
-- Google Gemini image generation (Gemini 2.5 Flash, Gemini 3 Pro)
-- Blob storage integration for generated images
-
-### Multi-Provider Expansion
-
-- **xAI Grok**: Added Grok provider for xAI model access
-- **Google Gemini**: Native Google AI Studio integration (in addition to Vertex AI)
-- **MCP Integration**: Model Context Protocol support for advanced tool capabilities
+1. Your bot or client sends a request naming a model pool (plus an optional semantic label and breadcrumbs).
+2. The broker selects a deployment from the pool, weighing capability and cost.
+3. The provider is called; streaming responses are forwarded chunk by chunk.
+4. If the call fails with a retryable error, the broker tries another deployment in the pool.
+5. The call is recorded for telemetry, and the response (or a gRPC error) is returned to your code.
 
 ## Documentation
 
-- **[Concepts](./concepts.md)** — Core concepts: model groups, selection strategies, failover, provider architecture
-- **[Getting Started](./getting-started.md)** — Step-by-step tutorial from first request to production configuration
-- **[Reference](./reference.md)** — API reference: gRPC services, REST endpoints, proto messages, env vars
-- **[Industrial Subsystems](./industrial.md)** — Industrial-scale features: capacity, QoS, routing, quotas, PTU
-- **[Operations](./operations.md)** — Operations guide: feature flags, admin APIs, monitoring, rollout planning
+- **[Concepts](./concepts.md)** — Model pools, selection and failover, semantic labels, breadcrumbs, streaming, and how to design your app around them
+- **[Getting Started](./getting-started.md)** — Configure a model pool and call it from a bot, the broker client, and `ff-brk`
+- **[Reference](./reference.md)** — gRPC request/response fields, configuration API, client settings, error codes
+- **[Operations](./operations.md)** — Enabling and configuring the broker for your app, verifying it, limits, and troubleshooting
+
+## Version and Maturity
+
+- **Service version**: 6.5.0 (ff-broker Helm chart 3.12.0)
+- **Maturity**: Core platform service, enabled by default in `firefoundry-core`. Required by any bundle that calls LLMs.
+- Advanced capacity and routing features (capacity limits, QoS tiers, sticky routing, quotas) are off by default and enabled per environment by your environment administrator; see [Concepts — Environment-level routing features](./concepts.md#environment-level-routing-features).
+
+## Repository
+
+**Source Code**: [github.com/firebrandanalytics/ff_broker](https://github.com/firebrandanalytics/ff_broker) (private repository)
 
 ## Related
 
 - [Platform Services Overview](../README.md)
 - [Platform Architecture](../../architecture.md)
-- [Agent SDK Documentation](../../../sdk/README.md) — Building agents that use the broker
+- [Agent SDK Documentation](../../../sdk/agent_sdk/README.md) — Building agents that use the broker
+- [Bots](../../../sdk/agent_sdk/core/bots.md) — How bots call the broker
+- [ff-brk CLI](../../../sdk/cli-tools/ff-brk.md) — Send test completions to the broker
+- [Telemetry Service](../telemetry-service/README.md) — Inspect broker calls
 - [Context Service](../context-service/README.md) — Working memory and persistence

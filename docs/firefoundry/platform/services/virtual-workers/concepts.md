@@ -53,7 +53,7 @@ Virtual Workers address those limitations while adding capabilities that cloud o
 
 ### What cloud coding agents do well
 
-Cloud coding agents are excellent for quick, self-contained tasks: fixing a bug in a public repo, scaffolding a new project, exploring an unfamiliar codebase. The subscription pricing from Anthropic and OpenAI is a genuine advantage — heavy users get substantial effective discounts on token costs compared to API pricing. For individual developers and small teams doing general-purpose coding work, cloud agents are often the right choice.
+Cloud coding agents are excellent for quick, self-contained tasks: fixing a bug in a public repo, scaffolding a new project, exploring an unfamiliar codebase. For individual developers and small teams doing general-purpose coding work that doesn't need to be part of an application, cloud agents are often the right choice.
 
 ### Where cloud coding agents fall short
 
@@ -105,6 +105,17 @@ Workers are configured with:
 - **MCP servers** — connections to FireFoundry platform services (entity graph, working memory, etc.)
 - **Model configuration** — provider, model, temperature, and token limits
 - **Auto-learning** — whether to capture knowledge at the end of each session
+
+### Supported CLI engines
+
+| CLI engine | `cliType` | Conversation resume within a session |
+|------------|-----------|--------------------------------------|
+| Claude Code | `claude-code` | Yes |
+| Codex CLI | `codex` | Not supported — don't rely on the CLI remembering earlier prompts (workspace files persist) |
+| Gemini CLI | `gemini` | Not supported — don't rely on the CLI remembering earlier prompts (workspace files persist) |
+| OpenCode | `opencode` | Yes |
+
+If your app relies on the worker remembering earlier prompts in the same session, choose an engine with resume support, or restate the needed context in each prompt (for example, by pointing the worker at files it wrote earlier).
 
 ---
 
@@ -228,7 +239,7 @@ Skills can include anything the worker might need: custom scripts, configuration
 
 A **Runtime** is the container environment a worker runs in. Different workers might need different base images — a Python-focused worker needs Python installed, a Java worker needs the JDK.
 
-Runtimes are layered: a base image (e.g., `python:3.11-slim`) is extended with the CLI tools, harness server, and other dependencies needed to run virtual workers. Workers reference a runtime, and VWM uses it when provisioning containers for sessions.
+Runtimes are layered: a base image (e.g., `python:3.11-slim`) is extended with the CLI tools and the VWM components needed to run virtual workers (the runtime's `vwImage`). Your environment administrator typically provides VW-capable images; you pick or register the runtime that has the languages and tools your worker needs. Workers reference a runtime, and VWM uses it when provisioning containers for sessions.
 
 ---
 
@@ -259,9 +270,34 @@ Telemetry is accessible via the Session API (`GET /sessions/:id/telemetry` and `
 
 ---
 
+## Designing Your App Around Virtual Workers
+
+### When to use a virtual worker
+
+Reach for a virtual worker when the step needs a filesystem, a shell, git, or long-running autonomous iteration — code generation and refactoring, running and fixing tests, repository analysis, or producing a set of files. For short, structured AI steps (classify, extract, summarize, decide), a bot is faster and cheaper.
+
+### Common patterns
+
+- **Entity-driven session** — model the job as a `VWSessionEntity`. Override `get_next_prompt()` to issue one prompt per turn and return `null` when done. Each turn is a `VWTurnEntity`, so a crashed bundle resumes where it left off instead of re-running completed turns.
+- **Feedback loop** — inspect the previous turn's response in `get_next_prompt()` and issue a follow-up ("run the tests and fix failures") until a stop condition or a turn limit.
+- **Bot plans, worker executes** — a bot turns a user request into a precise task description; the worker carries it out in the session repo; a second bot reviews or summarizes the result.
+- **Files in, files out** — upload inputs (or bridge them from working memory) before the first prompt, then download outputs or bridge them back to working memory for the rest of your pipeline.
+- **Specialized workers** — define one worker per role (reviewer, test writer, data analyst), each with its own instructions, knowledge base, and skills, and route work to the right one by name.
+
+### Trade-offs to plan for
+
+- **Start-up time** — a new session provisions a container and clones repositories, so the first prompt waits for the session to become `active`. Reuse a session for related prompts instead of creating one per prompt.
+- **Duration and cost** — a single prompt can run for minutes and use many tokens. Set prompt timeouts, stream progress to your users, and check per-session stats.
+- **Idle sessions suspend** — after a period of inactivity a session is suspended and resumes on the next request, with a short delay while the workspace comes back.
+- **Parallelism** — sub-sessions let you run prompts in parallel within one session, but they share the filesystem; give each sub-session its own directory. For fully independent work, use separate sessions.
+- **Human review** — changes land on per-session branches, and learnings are proposed, not merged. Build a review step into your workflow where it matters.
+
+---
+
 ## Related
 
 - [Overview](./README.md)
 - [Getting Started](./getting-started.md)
 - [Reference](./reference.md)
+- [Operations](./operations.md)
 - [Virtual Worker SDK Feature Guide](../../../sdk/agent_sdk/feature_guides/virtual-worker-sdk.md)

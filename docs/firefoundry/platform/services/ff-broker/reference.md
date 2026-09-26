@@ -1,6 +1,25 @@
 # FF Broker — Reference
 
-Complete API reference for the FF Broker including gRPC services, REST endpoints, protocol buffer messages, environment variables, and error codes.
+Caller-facing reference for the FF Broker: gRPC request and response fields, the configuration API for model pools, client connection settings, and the errors your code can receive.
+
+## Connecting
+
+| Interface | In-cluster address (default `firefoundry-core` install) | Used by |
+|-----------|--------------------------------------------------------|---------|
+| gRPC | `firefoundry-core-ff-broker:50051` | Bots, `SimplifiedBrokerClient`, `ff-brk` |
+| HTTP | `firefoundry-core-ff-broker:3000` | Configuration API, health check, `ff-cli env broker-config` |
+
+The broker is internal to the cluster by default (not routed through the external gateway). In-cluster calls from your bundle need no credentials beyond network access.
+
+### Client settings
+
+| Setting | Where | Purpose |
+|---------|-------|---------|
+| `LLM_BROKER_HOST` | Agent bundle env (Helm `configMap.data`) | Broker gRPC host, e.g. `firefoundry-core-ff-broker` |
+| `LLM_BROKER_PORT` | Agent bundle env | Broker gRPC port — must match the broker Service's gRPC port (`50051` by default) |
+| `FF_BROKER_HOST` / `FF_BROKER_PORT` | `ff-brk` CLI env, or `--host` / `--port` | Where `ff-brk` sends requests |
+
+If the SDK cannot find broker settings it falls back to a mock broker client (you'll see `MockBrokerClient` in the bundle logs) — see [Operations — Troubleshooting](./operations.md#troubleshooting).
 
 ## gRPC Services
 
@@ -10,28 +29,28 @@ Complete API reference for the FF Broker including gRPC services, REST endpoints
 
 #### CreateBrokeredCompletionStream
 
-Streaming chat completion with automatic model selection and failover.
+Streaming chat completion with model selection and failover.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `modelPool` | string | Yes | Name of the model group to use |
-| `model` | string | No | Model hint (not a strict requirement) |
-| `semanticLabel` | string | No | Semantic label for request categorization |
+| `modelPool` | string | Yes | Model pool (model group) name |
+| `model` | string | No | Model hint — not a guarantee of which model serves the call |
+| `semanticLabel` | string | No | Purpose label for telemetry, mock cache, and label-based routing features |
 | `messages` | Message[] | Yes | Chat messages (system, user, assistant) |
-| `temperature` | float | No | Sampling temperature (0.0-2.0) |
-| `maxTokens` | int32 | No | Maximum tokens in response |
-| `topP` | float | No | Nucleus sampling parameter |
-| `frequencyPenalty` | float | No | Frequency penalty (-2.0 to 2.0) |
-| `presencePenalty` | float | No | Presence penalty (-2.0 to 2.0) |
+| `temperature` | float | No | Sampling temperature (0.0–2.0) |
+| `maxTokens` | int32 | No | Maximum tokens in the response |
+| `topP` | float | No | Nucleus sampling |
+| `frequencyPenalty` | float | No | -2.0 to 2.0 |
+| `presencePenalty` | float | No | -2.0 to 2.0 |
 | `stop` | string[] | No | Stop sequences |
-| `responseFormat` | ResponseFormat | No | Structured output schema |
-| `tools` | Tool[] | No | Available tools/functions |
+| `responseFormat` | ResponseFormat | No | JSON schema for structured output |
+| `tools` | Tool[] | No | Tools/functions the model may call |
 | `toolChoice` | ToolChoice | No | Tool selection strategy |
-| `modelSelectionCriteria` | SelectionCriteria | No | Cost/intelligence weighting |
-| `breadcrumbs` | Breadcrumb[] | No | Correlation IDs for tracing |
+| `modelSelectionCriteria` | SelectionCriteria | No | Preference toward capability vs. cost within the pool |
+| `breadcrumbs` | Breadcrumb[] | No | Correlation IDs (entity type, entity ID, correlation ID) |
 | `id` | string | No | Client-provided request ID |
 
-**Response**: Stream of `CompletionChunk`
+**Response**: stream of `CompletionChunk`
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -47,33 +66,25 @@ Streaming chat completion with automatic model selection and failover.
 
 #### CreateBrokeredEmbedding
 
-Single text embedding with model group selection.
-
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `modelGroupId` | int32 | Yes | Model group ID |
+| `modelGroupId` | int32 | Yes | Numeric ID of the embedding model group |
 | `embeddingRequest` | EmbeddingRequest | Yes | Model and input text |
-| `scorePreference` | ScorePreference | No | Intelligence/cost weighting |
+| `scorePreference` | ScorePreference | No | Capability/cost weighting |
 
-**Response**: `EmbeddingResponse`
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `embedding` | float[] | Vector embedding |
-| `model` | string | Model used |
-| `usage` | Usage | Token usage |
+**Response**: `EmbeddingResponse` — `embedding` (float[]), `model`, `usage`.
 
 #### CreateBrokeredBatchEmbedding
 
-Batch embedding for multiple inputs.
-
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `modelGroupId` | int32 | Yes | Model group ID |
+| `modelGroupId` | int32 | Yes | Numeric ID of the embedding model group |
 | `inputs` | string[] | Yes | Text inputs |
-| `scorePreference` | ScorePreference | No | Intelligence/cost weighting |
+| `scorePreference` | ScorePreference | No | Capability/cost weighting |
 
-**Response**: `BatchEmbeddingResponse` with array of embeddings.
+**Response**: `BatchEmbeddingResponse` — one embedding per input, in order.
+
+Embedding calls address the model group by **numeric ID**, not name. Find the ID with `GET /api/routing/model-groups` or `ff-cli env broker-config show`.
 
 ### ImageGenerationBrokerService
 
@@ -81,241 +92,141 @@ Batch embedding for multiple inputs.
 
 #### CreateBrokeredImageGeneration
 
-Image generation with blob storage integration.
-
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `modelPool` | string | Yes | Model group for image generation |
-| `prompt` | string | Yes | Image generation prompt |
-| `size` | string | No | Image dimensions (e.g., "1024x1024") |
-| `quality` | string | No | Quality level ("standard", "hd") |
-| `n` | int32 | No | Number of images to generate |
+| `modelPool` | string | Yes | Model pool containing an image model |
+| `prompt` | string | Yes | Image prompt |
+| `size` | string | No | Dimensions, e.g. `1024x1024` |
+| `quality` | string | No | Quality level |
+| `n` | int32 | No | Number of images |
 
-## REST API (HTTP Config Server)
+**Response**: generated images as blob storage references (blob ID, object key, format, size in bytes). `SimplifiedBrokerClient.generateImage()` also accepts `semanticLabel`, `quality` (`ImageQuality` enum), and `aspectRatio` (`AspectRatio` enum).
 
-The HTTP Config Server provides REST endpoints for broker configuration management. Default port: `3000`.
+Supported image models: OpenAI GPT Image 1.5, Gemini image models (Gemini 2.5 Flash, Gemini 3 Pro).
 
-### Setup Endpoint (Atomic)
+## Configuration API
 
-| Method | Path | Description |
-|-|-|-|
-| POST | `/api/config/setup` | Atomic model routing chain setup (provider account + deployed model + model group + member) |
+HTTP on port `3000`. `ff-cli env broker-config` wraps these endpoints and handles the port-forward for you.
 
-**Request body**: See [Getting Started — Quick Setup](./getting-started.md#quick-setup-atomic-endpoint) for full schema and examples.
+### Setup (create or extend a model pool)
 
-### Customer Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/customer` | List all customers |
-| POST | `/api/customer` | Create a customer |
-| GET | `/api/customer/:id` | Get customer by ID |
-| PUT | `/api/customer/:id` | Update customer |
-| DELETE | `/api/customer/:id` | Delete customer |
-| GET | `/api/customer/provider-accounts` | List provider accounts |
-| POST | `/api/customer/provider-accounts` | Create provider account |
-| GET | `/api/customer/deployed-models` | List deployed models |
-| POST | `/api/customer/deployed-models` | Register deployed model |
-
-### Routing Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/routing/model-groups` | List model groups |
-| POST | `/api/routing/model-groups` | Create model group |
-| GET | `/api/routing/model-groups/:id` | Get model group details |
-| PUT | `/api/routing/model-groups/:id` | Update model group |
-| DELETE | `/api/routing/model-groups/:id` | Delete model group |
-| GET | `/api/routing/model-groups/:id/resources` | List group resources |
-| POST | `/api/routing/model-groups/:id/resources` | Add resource to group |
-| DELETE | `/api/routing/model-groups/:id/resources/:resourceId` | Remove resource |
-
-### Registry Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/registry/models` | List all models in registry |
-| GET | `/api/registry/providers` | List all providers |
-| GET | `/api/registry/capabilities` | List model capabilities |
-
-### MCP Endpoints (Optional)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/mcp/servers` | List registered MCP servers |
-| GET | `/api/mcp/tools` | List available MCP tools |
-| POST | `/api/mcp/tools/:toolName/execute` | Execute an MCP tool |
-
-### Industrial Endpoints
-
-See [Operations — Admin API](./operations.md#admin-api-endpoints) for the full industrial endpoint reference.
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/industrial/status` | Overall industrial status |
-| GET | `/api/industrial/flags` | Feature flag states |
-| PUT | `/api/industrial/flags/:flag` | Override a feature flag |
-| DELETE | `/api/industrial/flags/:flag` | Clear flag override |
-| POST | `/api/industrial/flags/bulk` | Bulk override flags |
-| GET | `/api/industrial/capacity` | Aggregate capacity stats |
-| GET | `/api/industrial/performance` | Performance metrics |
-| GET | `/api/industrial/usage` | Usage pattern profiles |
-| GET | `/api/industrial/qos` | QoS tier definitions |
-| GET | `/api/industrial/ptu` | PTU deployment registry |
-
-### Health Endpoint
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Service health check |
-
-## Environment Variables
-
-### Database Configuration
-
-```bash
-# Core Database (required)
-CORE_DATABASE_URL=postgresql://user:password@host:5432/ff_core
-# Or use individual variables:
-PGF_HOST=core-host
-PGF_PORT=5432
-PGF_DATABASE=ff_core
-PGF_USER=core_user
-PGF_PWD=core_password
-
-# Registry Database (optional - for registry maintenance)
-REGISTRY_DATABASE_URL=postgresql://user:password@host:5432/ff_registry
-PGF_REGISTRY_HOST=registry-host
-PGF_REGISTRY_PORT=5432
-PGF_REGISTRY_DATABASE=ff_registry
-PGF_REGISTRY_USER=registry_user
-PGF_REGISTRY_PWD=registry_password
-
-# SSL Configuration
-PGF_SSL_ENABLED=true                     # Enable SSL (default: true)
-PGF_SSL_REJECT_UNAUTHORIZED=true         # Validate certificates
+```
+POST /api/config/setup
 ```
 
-### Server Configuration
+Creates the whole routing chain — provider credential reference, deployed model, model pool, and pool membership — in one atomic step. It is idempotent: existing pieces are reused and reported with `"created": false`.
 
-```bash
-GRPC_PORT=50051                  # gRPC server port (default: 50051)
-HTTP_CONFIG_PORT=3000            # HTTP config server port (default: 3000)
-LOG_LEVEL=info                   # Logging level: debug, info, warn, error
-NODE_ENV=production              # Environment: development, production
+| Field | Required | Description |
+|-------|----------|-------------|
+| `provider` | Yes | Hosting provider code, e.g. `open-ai`, `azure-openai`, `vertex-ai` |
+| `model` | Yes | Model code from the broker's model catalog, e.g. `gpt-4o`, `gemini-2.5`, `gpt-image-1.5` |
+| `variant` | No | Model variant, e.g. `pro`, `mini` (default `standard`) |
+| `auth.method` | Yes | `env_var`, `service_account`, or `google_adc` |
+| `auth.config` | Yes | Provider-specific auth settings (below) |
+| `deployment_config` | No | Extra provider-specific deployment settings |
+| `model_group.name` | Yes | Pool name your code references |
+| `model_group.strategy` | No | `round_robin` (default) or `failover`; ignored with a warning if the pool already exists |
+
+**Auth config by provider**
+
+| Provider | `auth` |
+|----------|--------|
+| OpenAI | `{ "method": "env_var", "config": { "env_var_name": "OPENAI_API_KEY" } }` |
+| Google AI Studio / Gemini | `{ "method": "env_var", "config": { "env_var_name": "GOOGLE_API_KEY" } }` |
+| Vertex AI | `{ "method": "google_adc", "config": { "project_id": "your-gcp-project" } }` |
+| Azure OpenAI | `{ "method": "env_var", "config": { "env_var_name": "AZURE_OPENAI_API_KEY" } }` |
+
+`env_var_name` refers to a broker secret key added with `ff-cli env broker-secret add`.
+
+**Examples**
+
+```jsonc
+// OpenAI GPT-4o completion pool
+{
+  "provider": "open-ai",
+  "model": "gpt-4o",
+  "auth": { "method": "env_var", "config": { "env_var_name": "OPENAI_API_KEY" } },
+  "model_group": { "name": "openai_completion", "strategy": "round_robin" }
+}
+
+// Image generation pool
+{
+  "provider": "open-ai",
+  "model": "gpt-image-1.5",
+  "auth": { "method": "env_var", "config": { "env_var_name": "OPENAI_API_KEY" } },
+  "model_group": { "name": "image_generation" }
+}
+
+// Add GPT-4o mini to an existing pool as a failover option
+{
+  "provider": "open-ai",
+  "model": "gpt-4o",
+  "variant": "mini",
+  "auth": { "method": "env_var", "config": { "env_var_name": "OPENAI_API_KEY" } },
+  "model_group": { "name": "openai_completion" }
+}
 ```
 
-### Provider API Keys
+**Response**
 
-```bash
-# Azure OpenAI
-AZURE_OPENAI_API_KEY=your_azure_key
-AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
-
-# OpenAI Direct
-OPENAI_API_KEY=your_openai_key
-
-# Google Cloud (Gemini)
-GOOGLE_CLOUD_PROJECT=your-project-id
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-# Or for AI Studio:
-GOOGLE_AI_STUDIO_API_KEY=your_api_key
-
-# xAI (Grok)
-XAI_API_KEY=your_xai_key
-
-# Anthropic
-ANTHROPIC_API_KEY=your_anthropic_key
+```json
+{
+  "provider_account": { "id": 1, "code": "vertex-ai-env_var", "created": true },
+  "deployed_model": { "id": 1, "name": "vertex-ai-gemini-2.5-pro", "hosted_model_id": 6, "created": true },
+  "model_group": { "id": 1, "name": "gemini_completion", "strategy": "round_robin", "created": true },
+  "member": { "id": 1, "sequence_order": 1, "created": true },
+  "warnings": []
+}
 ```
 
-### Feature Flags
+If any step fails, nothing is created. `warnings` lists non-fatal issues (for example, a strategy ignored because the pool already existed).
 
-All feature flags use the prefix `BROKER_FF_` and accept `true`/`1` to enable, `false`/`0`/absent to disable.
+### Model pools
 
-```bash
-BROKER_FF_CAPACITY_GATING=false          # Per-deployment concurrency gating
-BROKER_FF_STREAM_INSTRUMENTATION=false   # PullChain stream metrics
-BROKER_FF_COMPILED_CHAIN=false           # Compiled PullChain optimization
-BROKER_FF_PERFORMANCE_ROUTING=false      # Performance-aware model selection
-BROKER_FF_QOS_SWITCHING=false            # Per-request QoS tiering
-BROKER_FF_PRIORITY_ROUTING=false         # Priority-based request routing
-BROKER_FF_STICKY_ROUTING=false           # Session-to-deployment affinity
-BROKER_FF_QUOTA_ENFORCEMENT=false        # Hierarchical quota management
-BROKER_FF_OUTPUT_PREDICTION=false        # Output token prediction
-```
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/routing/model-groups` | List model pools (names and numeric IDs) |
+| GET | `/api/routing/model-groups/:id` | Pool details |
+| PUT | `/api/routing/model-groups/:id` | Update a pool |
+| DELETE | `/api/routing/model-groups/:id` | Delete a pool |
+| GET | `/api/routing/model-groups/:id/resources` | Deployments in a pool |
+| DELETE | `/api/routing/model-groups/:id/resources/:resourceId` | Remove a deployment from a pool |
 
-### Blob Storage (Image Generation)
+### Model catalog
 
-```bash
-# Azure Blob Storage
-WORKING_MEMORY_STORAGE_ACCOUNT=yourstorageaccount
-WORKING_MEMORY_STORAGE_KEY=your-access-key
-WORKING_MEMORY_STORAGE_CONTAINER=your-container
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/registry/models` | Models available to configure |
+| GET | `/api/registry/providers` | Supported providers |
+| GET | `/api/registry/capabilities` | Model capabilities (completion, embedding, image, structured output, …) |
 
-# Google Cloud Storage
-GOOGLE_CLOUD_PROJECT=your-project-id
-GOOGLE_APPLICATION_CREDENTIALS_JSON='{"type":"service_account",...}'
-WORKING_MEMORY_STORAGE_CONTAINER=your-bucket-name
-```
+### Health
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Returns `{"status":"ok", ...}` when the broker is up |
 
 ## Error Codes
 
-The broker maps provider errors to gRPC status codes:
+Errors reach your code as gRPC status codes (the SDK surfaces them as exceptions).
 
-| gRPC Status | Code | Description |
-|-------------|------|-------------|
-| `OK` | 0 | Request completed successfully |
-| `CANCELLED` | 1 | Request was cancelled by the client |
-| `INVALID_ARGUMENT` | 3 | Invalid request parameters |
-| `NOT_FOUND` | 5 | Model group or resource not found |
-| `ALREADY_EXISTS` | 6 | Duplicate resource |
-| `PERMISSION_DENIED` | 7 | Authentication failed |
-| `RESOURCE_EXHAUSTED` | 8 | Rate limit or quota exceeded |
-| `FAILED_PRECONDITION` | 9 | Capacity gate rejected request |
-| `ABORTED` | 10 | Request aborted (content filter) |
-| `INTERNAL` | 13 | Internal broker error |
-| `UNAVAILABLE` | 14 | Provider temporarily unavailable |
-| `DATA_LOSS` | 15 | Stream corruption detected |
+| gRPC Status | Code | Meaning | What to do |
+|-------------|------|---------|------------|
+| `CANCELLED` | 1 | Your client cancelled the call | — |
+| `INVALID_ARGUMENT` | 3 | Invalid request parameters | Fix the request; not retried by failover |
+| `NOT_FOUND` | 5 | Model pool (or group ID) not found | Check the pool name/ID in this environment |
+| `PERMISSION_DENIED` | 7 | Provider authentication failed on every deployment | Check the broker secret for the provider key |
+| `RESOURCE_EXHAUSTED` | 8 | Provider rate limit, environment capacity limit, or quota exceeded on every eligible deployment | Retry with backoff; reduce concurrency; add deployments |
+| `FAILED_PRECONDITION` | 9 | Rejected by an environment capacity check | Retry with backoff |
+| `ABORTED` | 10 | Provider content filter rejected the request | Change the input; not retried |
+| `INTERNAL` | 13 | Unexpected broker error | Retry; report if persistent |
+| `UNAVAILABLE` | 14 | Provider temporarily unavailable on every deployment | Retry with backoff; add a deployment on another provider |
+| `DATA_LOSS` | 15 | Stream corrupted | Retry |
 
-## Database Schemas
+## Related
 
-### brk_customer
-
-| Table | Description |
-|-------|-------------|
-| `customer` | Customer organizations |
-| `provider_account` | API credentials per customer per provider |
-| `deployed_model` | Model deployments with endpoints |
-
-### brk_routing
-
-| Table | Description |
-|-------|-------------|
-| `model_group` | Named model pools |
-| `model_group_resource` | Model-to-group mappings with weights |
-| `selection_strategy` | Strategy configurations per group |
-| `failover_config` | Failover policies |
-
-### brk_tracking
-
-| Table | Description |
-|-------|-------------|
-| `completion_request` | Request telemetry records |
-| `completion_metrics` | Aggregated performance metrics |
-
-### brk_registry (FDW)
-
-| Table | Description |
-|-------|-------------|
-| `model` | Global model definitions |
-| `provider` | Provider metadata |
-| `capability` | Model capabilities |
-| `model_family` | Model family groupings |
-
-## Version
-
-- **Current Version**: 5.2.7
-
-## Repository
-
-**Source Code**: [github.com/firebrandanalytics/ff_broker](https://github.com/firebrandanalytics/ff_broker) (private repository)
+- [Overview](./README.md)
+- [Concepts](./concepts.md)
+- [Getting Started](./getting-started.md)
+- [Operations](./operations.md)
+- [ff-brk CLI](../../../sdk/cli-tools/ff-brk.md)

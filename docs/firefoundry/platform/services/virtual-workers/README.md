@@ -2,9 +2,9 @@
 
 ## Overview
 
-A **Virtual Worker** is more than a CLI coding agent running in a container. It's a **virtual team member** — an AI agent with a defined role, institutional knowledge, specialized skills, persistent workspace, and the ability to learn and improve over time. The Virtual Worker Manager (VWM) is the platform service that brings these virtual team members to life.
+A **Virtual Worker** is more than a CLI coding agent running in a container. It's a **virtual team member** — an AI agent with a defined role, institutional knowledge, specialized skills, a persistent workspace, and the ability to learn and improve over time. The Virtual Worker Manager (VWM) is the platform service that runs these workers for your app.
 
-CLI coding agents like Claude Code, Codex, Gemini, and OpenCode are powerful, but on their own they start every interaction from scratch — no memory of your company, your codebase standards, or what they learned last time. VWM changes that by wrapping the CLI agent with everything needed to make it an effective member of your team:
+CLI coding agents like Claude Code, Codex, Gemini CLI, and OpenCode are powerful, but on their own they start every interaction from scratch — no memory of your company, your codebase standards, or what they learned last time. VWM wraps the CLI agent with what it needs to be an effective member of your team:
 
 - **Identity and role** — instructions that define who the worker is and how they operate
 - **Institutional knowledge** — a git-backed knowledge base with company context, engineering guidelines, and tribal knowledge
@@ -12,127 +12,84 @@ CLI coding agents like Claude Code, Codex, Gemini, and OpenCode are powerful, bu
 - **Persistent workspace** — sessions that survive restarts and maintain context across interactions
 - **Continuous learning** — knowledge captured from each session feeds into future sessions
 
-VWM handles all the orchestration — provisioning containers, managing sessions, routing prompts, collecting telemetry — so consumers can focus on the work, not the infrastructure.
+VWM provisions the workspace, manages sessions, routes prompts, and records telemetry, so your app only has to decide what to ask the worker to do.
 
-For a deeper explanation of what makes Virtual Workers different from raw CLI agents, see [Concepts](./concepts.md).
+## Purpose and Role in Platform
 
-## Key Features
-
-- **Multi-CLI Support**: Claude Code, Codex CLI, Gemini CLI, and OpenCode through a single unified API
-- **Session Management**: Create, resume, and end stateful sessions with persistent workspaces
-- **Dual Repository Architecture**: Separate knowledge base (worker repo) from task workspace (session repo)
-- **Auto-Learning**: Workers automatically capture knowledge at session end for future reference
-- **Skills System**: Versioned tool packages distributed from blob storage
-- **Communication Patterns**: Synchronous, streaming (SSE), and asynchronous prompt execution
-- **Telemetry**: Request-level tracking with token usage, timing, raw CLI output, and learning metrics
-- **System Instructions**: Global instructions, hot-updatable without redeployment
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                   Consumers                                      │
-│           (Agent Bundles, Bots, External Systems)                │
-└────────────────────────┬────────────────────────────────────────┘
-                         │ REST API (+ SSE streaming)
-┌────────────────────────▼────────────────────────────────────────┐
-│                  VWM Service (ff-services-vwm)                   │
-│                                                                  │
-│  ┌──────────────┐  ┌──────────────────┐  ┌───────────────────┐  │
-│  │ Session Mgmt │  │  Job Orchestrator │  │   Admin API       │  │
-│  └──────────────┘  └──────────────────┘  └───────────────────┘  │
-│  ┌──────────────┐  ┌──────────────────┐  ┌───────────────────┐  │
-│  │  Telemetry   │  │  Auto-Learning   │  │  System Settings  │  │
-│  └──────────────┘  └──────────────────┘  └───────────────────┘  │
-└────────┬──────────────────┬──────────────────────┬──────────────┘
-         │                  │                      │
-    ┌────▼────┐   ┌────────▼────────┐    ┌───────▼───────┐
-    │Database │   │  K8s Jobs/Pods  │    │ Blob Storage  │
-    │         │   │                 │    │  (Skills)     │
-    └─────────┘   └────────┬────────┘    └───────────────┘
-                           │
-              ┌────────────▼────────────┐
-              │   Harness Pod           │
-              │  ┌────────────────────┐ │
-              │  │  Bootstrap Engine  │ │
-              │  │  (git, skills, cfg)│ │
-              │  ├────────────────────┤ │
-              │  │   CLI Adapter      │ │
-              │  │  (Claude/Codex/    │ │
-              │  │   Gemini/OpenCode) │ │
-              │  ├────────────────────┤ │
-              │  │   File Operations  │ │
-              │  ├────────────────────┤ │
-              │  │  /workspace/       │ │
-              │  │  ├── CLAUDE.md     │ │
-              │  │  ├── worker_repo/  │ │
-              │  │  └── session_repo/ │ │
-              │  └────────────────────┘ │
-              │       ▲ PVC mount       │
-              └───────┼─────────────────┘
-                      │
-              ┌───────▼───────┐
-              │ Persistent    │
-              │ Volume (PVC)  │
-              └───────────────┘
-```
-
-### Component Breakdown
-
-| Component | Repository | Purpose |
-|-----------|-----------|---------|
-| **ff-services-vwm** | `ff-virtual-workers/apps/` | VWM REST API service — session management, job orchestration, admin CRUD, telemetry |
-| **ff-vw-harness** | `ff-virtual-workers/packages/` | In-pod HTTP server — workspace bootstrap, CLI execution, file operations, streaming |
-| **ff-vw-harness-client** | `ff-virtual-workers/packages/` | TypeScript client for VWM-to-harness communication |
-| **vwm-client** | `ff-virtual-workers/packages/` | TypeScript client for SDK-to-VWM communication |
-
-### Harness Abstraction
-
-Different CLI tools have different interfaces. The **harness** provides a unified HTTP API that:
-
-1. **Bootstraps** the workspace — clones repos, downloads skills, writes configuration files
-2. **Executes** prompts through the underlying CLI via adapters
-3. **Streams** responses back to VWM via SSE
-4. **Manages files** on the workspace filesystem
-5. **Shuts down** cleanly — collects transcript, commits/pushes git changes
-
-| CLI Tool | Non-Interactive Mode | Resume Support | Output Format |
-|----------|---------------------|----------------|---------------|
-| Claude Code | `claude -p` | `--resume <id>` | JSON |
-| Codex CLI | `codex exec` | N/A | JSON |
-| Gemini CLI | `gemini -p` | N/A | JSON |
-| OpenCode | Native server | Native | JSON |
-
-## Relationship to Other FireFoundry Components
-
-### VWM vs Bots
+Use VWM when a step in your app needs an agent that can **work in a filesystem and shell for minutes to hours**: write and refactor code, run tests, analyze a repository, or produce multi-file deliverables. Your agent bundle drives the worker through the Agent SDK (or the REST API), feeds it files and prompts, and collects its results.
 
 | Capability | Bots | Virtual Workers |
 |------------|------|-----------------|
-| Execution | Direct LLM calls via Broker | CLI agents in containers |
+| Execution | Direct LLM calls via the Broker | CLI coding agents in managed containers |
 | Duration | Seconds | Minutes to hours |
-| State | Stateless (or entity graph) | Persistent workspace |
-| Capabilities | Prompt + tools | Full coding agent (file access, shell, etc.) |
-| Use Case | Quick AI interactions | Autonomous coding tasks |
+| State | Stateless (or entity graph) | Persistent workspace and git repositories |
+| Capabilities | Prompt + tools | Full coding agent (files, shell, git, MCP tools) |
+| Use case | Quick, structured AI steps | Autonomous coding and multi-step file work |
 
-Virtual Workers are **complementary** to Bots — use Bots for quick AI interactions, Virtual Workers for autonomous coding work.
+The two are complementary: a typical app uses bots for classification, extraction, and planning, and hands the heavy, open-ended work to a virtual worker.
 
-### Agent SDK Integration
+## Key Features
 
-The Agent SDK provides first-class virtual worker support with two layers:
+- **Multi-CLI support** — Claude Code, Codex CLI, Gemini CLI, and OpenCode through one API
+- **Sessions** — create, resume, and end stateful sessions with persistent workspaces
+- **Dual repositories** — a knowledge base (worker repo) separate from the task workspace (session repo)
+- **Auto-learning** — workers capture reusable knowledge at session end, for human review
+- **Skills** — versioned tool packages installed into the workspace
+- **Platform tools via MCP** — entity graph, working memory, document processing, and other services through the MCP Gateway
+- **Sync, streaming (SSE), and abortable prompts**
+- **File API** — read, write, upload, and download workspace files
+- **Telemetry** — per-request token usage, timing, artifacts, and raw CLI output
+- **Agent SDK integration** — standalone `VirtualWorker`/`VWSession` and entity-based `VWSessionEntity` with crash recovery
 
-- **Standalone** (`VirtualWorker` + `VWSession`): For scripts, tests, and simple integrations
-- **Entity framework** (`VWSessionEntity` + `VWTurnEntity`): For production agent bundles with idempotency, crash recovery, and progress streaming
+## Architecture Overview
 
-See the [Virtual Worker SDK Feature Guide](../../../sdk/agent_sdk/feature_guides/virtual-worker-sdk.md) for SDK usage.
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Your agent bundle / app                                      │
+│   VWSessionEntity  |  VirtualWorker + VWSession  |  REST       │
+└──────────────────────────┬───────────────────────────────────┘
+                           │ REST + SSE (port 8080)
+┌──────────────────────────▼───────────────────────────────────┐
+│  Virtual Worker Manager                                        │
+│   workers · sessions · prompts · files · skills · telemetry    │
+└──────┬──────────────────────┬──────────────────────┬─────────┘
+       │ starts one workspace │                      │
+       │ per session          │                      │
+┌──────▼──────────────────┐   │               ┌──────▼─────────┐
+│  Worker workspace        │   │               │ Git hosting    │
+│  CLI agent (Claude Code, │◄──┘               │ knowledge base │
+│  Codex, Gemini, OpenCode)│──────────────────►│ + session repo │
+│  worker_repo/            │                   └────────────────┘
+│  session_repo/           │
+└──────┬──────────────────┘
+       │ MCP
+┌──────▼──────────────────────────────────────────┐
+│  MCP Gateway → Entity graph, working memory,     │
+│  document processing, web search, …              │
+└─────────────────────────────────────────────────┘
+```
+
+Each session gets its own container and persistent volume. The worker's knowledge base and your session repository are cloned into the workspace, and changes are pushed back to per-session branches when the session ends.
 
 ## Documentation
 
-- **[Concepts](./concepts.md)** — Workers, sessions, runtimes, skills, dual repos, auto-learning
-- **[Getting Started](./getting-started.md)** — Step-by-step: create a worker, run a session, execute prompts
-- **[Reference](./reference.md)** — Full API reference, environment variables, error codes
+- **[Concepts](./concepts.md)** — Workers, sessions, knowledge base, session repo, auto-learning, skills, runtimes, and app design patterns
+- **[Getting Started](./getting-started.md)** — Define a worker, then drive it from the Agent SDK or the REST API
+- **[Reference](./reference.md)** — Full REST API reference and error codes
+- **[Operations](./operations.md)** — Enabling VWM, the settings an app team touches, verifying, limits, and troubleshooting
+
+## Version and Maturity
+
+- **Service version**: 0.1.x (virtual-worker-manager Helm chart 0.3.1)
+- **Maturity**: Early release (0.x) — optional service, **disabled by default** in `firefoundry-core`. Expect the API to evolve between releases.
+
+## Repository
+
+**Source Code**: `ff-virtual-workers` (private repository). SDK packages: `@firebrandanalytics/ff-agent-sdk/virtual-worker` and `@firebrandanalytics/vwm-client`.
 
 ## Related
 
 - [Platform Services Overview](../README.md)
 - [Virtual Worker SDK Feature Guide](../../../sdk/agent_sdk/feature_guides/virtual-worker-sdk.md)
+- [MCP Gateway](../mcp-gateway/README.md) — How workers reach platform services
+- [FF Broker](../ff-broker/README.md) — Model calls for bots
