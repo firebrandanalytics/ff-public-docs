@@ -196,7 +196,7 @@ ff-cli profile create dockerhub
 
 ## Usage with Operations
 
-Profiles are automatically used by [`ops build`](ops.md#build) commands:
+Profiles are automatically used by [`ops build`](ops.md#build-command) commands:
 
 ```bash
 # Uses current profile automatically

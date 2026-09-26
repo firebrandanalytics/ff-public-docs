@@ -356,7 +356,7 @@ Instead of a uniform aging rate, use per-tier aging rates by enqueuing at differ
 
 ## See Also
 
-- [Conceptual Guide -- Scheduling](../concepts.md#6-scheduling-dependency-graphs-priority-and-resource-management) -- Design philosophy and how the scheduling primitives fit together
+- [Conceptual Guide -- Scheduling](../concepts.md#7-scheduling-dependency-graphs-priority-and-resource-management) -- Design philosophy and how the scheduling primitives fit together
 - [Flow Control -- Capacity-Gated Scheduling](../flow-control.md#7-capacity-gated-scheduling) -- Theory of peek-check-acquire lifecycle and multi-resource scheduling
 - [Scheduling Reference](../reference/scheduling.md) -- Complete API for `PrioritySourceObj`, `ResourceCapacitySource`, `ScheduledTaskPoolRunner`, `ScheduledTask`, and `TaskProgressEnvelope`
 - [Pull Obj Classes Reference](../reference/pull-obj-classes.md) -- `SourceObj`, `Peekable`, and the pull model that scheduling sources implement

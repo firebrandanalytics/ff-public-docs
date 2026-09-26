@@ -239,7 +239,7 @@ ff-cli cluster status
 - Pods stuck in `ImagePullBackOff` -- registry credentials may be missing. Re-run `ff-cli cluster init`.
 - Pods stuck in `Pending` -- insufficient resources. Check `kubectl describe nodes` for resource pressure.
 - Helm timeout -- the default timeout is 10 minutes. If on a slow connection, retry with `--timeout 20m`.
-- See [Troubleshooting - Image Pull Errors](./troubleshooting.md#image-pull-errors) for more details.
+- See [Troubleshooting - ImagePullBackOff](./troubleshooting.md#imagepullbackoff) for more details.
 
 ---
 
@@ -339,7 +339,7 @@ kubectl get pods -n ff-dev
 **Common issues:**
 - Image pulls are slow -- this is normal on first run. Subsequent runs use cached images.
 - Pods in `CrashLoopBackOff` -- check logs with `kubectl logs <pod-name> -n ff-dev`. Common cause: database not ready yet. The pods will self-heal once PostgreSQL is running.
-- See [Troubleshooting - Pod Startup Issues](./troubleshooting.md#pod-startup-issues) for detailed diagnostics.
+- See [Troubleshooting - CrashLoopBackOff](./troubleshooting.md#crashloopbackoff) and [Pending Pods](./troubleshooting.md#pending-pods) for detailed diagnostics.
 
 ---
 

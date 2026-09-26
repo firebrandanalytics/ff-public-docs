@@ -500,4 +500,4 @@ You now understand the four core components and how they wire together. Here is 
 - **[ETL Pipeline Tutorial](./etl-pipeline.md)** -- Apply scheduling to a real ETL workload with streaming tasks and checkpoints.
 - **[Retry and Error Handling Tutorial](./retry-and-error-handling.md)** -- Deep dive into failure modes, retry strategies, and abort cascades.
 - **[Scheduling API Reference](../reference/scheduling.md)** -- Complete API documentation for all scheduling types and methods.
-- **[Conceptual Guide -- Scheduling section](../concepts.md#6-scheduling-dependency-graphs-priority-and-resource-management)** -- Architectural context and design rationale.
+- **[Conceptual Guide -- Scheduling section](../concepts.md#7-scheduling-dependency-graphs-priority-and-resource-management)** -- Architectural context and design rationale.

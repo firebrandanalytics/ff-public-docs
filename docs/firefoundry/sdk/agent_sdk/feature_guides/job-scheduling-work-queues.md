@@ -8,7 +8,7 @@ This guide shows how to build scheduled and queued background tasks in FireFound
 2. [Core Components](#core-components)
 3. [SchedulerNode: Cron-Based Scheduling](#schedulernode-cron-based-scheduling)
 4. [CronJobManager: Distributed Execution](#cronjobmanager-distributed-execution)
-5. [JobCallNode & WorkQueueNode](#jobcallnode--workqueuenode)
+5. [JobCallNode](#jobcallnode) & [WorkQueueNode](#workqueuenode)
 6. [Edge Types for Job Management](#edge-types-for-job-management)
 7. [Complete Patterns](#complete-patterns)
 8. [Real-World Examples](#real-world-examples)

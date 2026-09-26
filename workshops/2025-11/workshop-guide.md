@@ -892,7 +892,7 @@ curl http://localhost:8080/agents/ff-dev/my-agent-bundle/health/ready
 
 **Debugging with Coding Agents:**
 
-If you're debugging issues with a coding agent, see the [Debugging Deployed Issues](#5-debugging-deployed-issues) section in Part 3. The iterative workflow is:
+If you're debugging issues with a coding agent, see [Part 3: Developing Your Agent Bundle](#part-3-developing-your-agent-bundle). The iterative workflow is:
 
 1. Agent suggests fix → Make code changes
 2. Build TypeScript → `pnpm run build`

@@ -298,7 +298,7 @@ const task: ScheduledTask<string, string> = {
 
 ## See Also
 
-- [Conceptual Guide -- Scheduling](../concepts.md#6-scheduling-dependency-graphs-priority-and-resource-management) -- Design philosophy and how the scheduling primitives fit together
+- [Conceptual Guide -- Scheduling](../concepts.md#7-scheduling-dependency-graphs-priority-and-resource-management) -- Design philosophy and how the scheduling primitives fit together
 - [Scheduling Reference](../reference/scheduling.md) -- Complete API for `ResourceCapacitySource`, `ScheduledTaskPoolRunner`, `ScheduledTask`, `HierarchicalBalancer`, and `TaskProgressEnvelope`
 - [Pull Obj Classes Reference](../reference/pull-obj-classes.md) -- `SourceObj`, `Peekable`, and the pull model that scheduling sources implement
 - [Scheduling Fundamentals Tutorial](../tutorials/scheduling-fundamentals.md) -- Step-by-step introduction to dependency graphs, priority, and resource management

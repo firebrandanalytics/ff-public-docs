@@ -1101,7 +1101,7 @@ The FF SDK provides:
 - ✅ **Binary uploads/downloads** for file handling
 - ✅ **Request correlation** for distributed tracing
 
-**Important:** The FF SDK works with agent bundles deployed behind Kong Gateway (production/staging). For local development and debugging, you may need to use direct HTTP calls (see the [Agent Bundle Tutorial](./core/agent_bundle_tutorial.md#consuming-your-agent-bundle) for details).
+**Important:** The FF SDK works with agent bundles deployed behind Kong Gateway (production/staging). For local development and debugging, you may need to use direct HTTP calls (see the [Agent Bundle Tutorial](./core/agent_bundle_tutorial.md#chapter-6-consuming-your-agent-bundle) for details).
 
 ### Next Steps for Consumption
 

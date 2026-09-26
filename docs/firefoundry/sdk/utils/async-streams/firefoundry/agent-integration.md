@@ -131,7 +131,7 @@ await producerPromise;
 
 The runner pulls from the buffer's source end while your logic pushes into the buffer's sink end. When the producer is done, closing the sink signals the runner to drain and terminate.
 
-See also: [PushPullBufferObj API](../reference/utilities.md#pushpullbufferobj), [CapacitySource API](../reference/utilities.md#capacitysource-legacy)
+See also: [PushPullBufferObj API](../reference/utilities.md#pushpullbufferobjt), [CapacitySource API](../reference/utilities.md#capacitysource-legacy)
 
 ---
 
@@ -272,7 +272,7 @@ The `PushPullBufferObj` bridges push and pull worlds. In FireFoundry, its most c
 
 This is useful when a parent entity discovers sub-tasks incrementally (e.g., paginating through an API, chunking a document, or processing a file tree).
 
-See also: [PushPullBufferObj API](../reference/utilities.md#pushpullbufferobj)
+See also: [PushPullBufferObj API](../reference/utilities.md#pushpullbufferobjt)
 
 ---
 

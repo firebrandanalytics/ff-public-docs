@@ -235,7 +235,7 @@ This enforces both limits simultaneously: at most 5 concurrent requests, and at 
 
 ## See Also
 
-- [Conceptual Guide -- Scheduling](../concepts.md#6-scheduling-dependency-graphs-priority-and-resource-management) -- Design philosophy and how the scheduling primitives fit together
+- [Conceptual Guide -- Scheduling](../concepts.md#7-scheduling-dependency-graphs-priority-and-resource-management) -- Design philosophy and how the scheduling primitives fit together
 - [Scheduling Reference](../reference/scheduling.md) -- Complete API for `QuotaCapacitySource`, `ResourceCapacitySource`, `ScheduledTaskPoolRunner`, and related types
 - [Flow Control -- Quota and Rate-Limiting](../flow-control.md#quota-and-rate-limiting-patterns-quotacapacitysource) -- Theory behind quota-based flow control
 - [Use Case 4: Multi-Resource Scheduling](./multi-resource-scheduling.md) -- Resource pool patterns (complements the quota pattern)
