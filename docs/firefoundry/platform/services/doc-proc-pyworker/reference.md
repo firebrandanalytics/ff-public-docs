@@ -1,142 +1,52 @@
-# Document Processing Python Worker — Reference
+# Document Processing Python Worker: Reference
 
-Complete reference for the worker's gRPC service, every operation and its options, output schemas, the auxiliary HTTP API, and configuration variables.
+This page lists the options, result shapes, and errors for each worker-backed capability. You reach these capabilities through the [Document Processing Service](../doc-proc-service/reference.md). For which endpoints and request parameters the service exposes in your version, see its reference. The option names and defaults below are the ones the worker applies.
 
-## gRPC Service
+## Conventions
 
-- **Package**: `document_worker`
-- **Service**: `DocumentWorker`
-- **Default port**: `50051` (`GRPC_PORT`)
-- **Transport**: plaintext (insecure) HTTP/2; no TLS, no authentication
-- **Max message size**: 100 MB send and receive
-- **Server reflection**: not enabled — clients need the proto file
+- **Option values are strings**, for example `"300"` or `"true"`. The worker ignores unknown options.
+- **`pages`** takes 1-based pages and ranges, such as `1,3,5-10`. If you omit it, the worker processes all pages. For how page numbers appear in results, see [Concepts: Page Selection](./concepts.md#page-selection-and-page-numbers).
+- **Image results** are returned as base64 strings inside JSON.
 
-| RPC | Request | Response | Purpose |
-|-----|---------|----------|---------|
-| `SupportsOperation` | `OperationRequest` | `SupportResponse` | Check whether a registered backend handles an operation |
-| `ProcessDocument` | `ProcessRequest` | `ProcessResponse` | Run an operation on a document |
-| `HealthCheck` | `Empty` | `HealthResponse` | Liveness, version, and supported operations |
+## Endpoints on the Document Processing Service
 
-Fully qualified method names: `document_worker.DocumentWorker/SupportsOperation`, `document_worker.DocumentWorker/ProcessDocument`, `document_worker.DocumentWorker/HealthCheck`.
+| Endpoint | Capability |
+|----------|------------|
+| `POST /api/pdf-to-images` | PDF to images |
+| `POST /api/upscale-image` | Image upscaling |
+| `POST /api/convert-colorspace` | Colorspace conversion |
 
-### Protocol Buffer Definition
+Each endpoint takes the input document as a multipart `file`.
 
-```protobuf
-syntax = "proto3";
+## PDF to Images (`pdf_to_images`)
 
-package document_worker;
+**Availability:** Standard
 
-// DocumentWorker service provides document processing operations
-service DocumentWorker {
-  // Check if the worker supports a specific operation
-  rpc SupportsOperation(OperationRequest) returns (SupportResponse);
+| Option | Default | Values |
+|--------|---------|--------|
+| `pages` | all | page list (original page numbers are kept) |
+| `dpi` | `200` | integer |
+| `format` | `png` | `png`, `jpeg`, `jpg` |
 
-  // Process a document with the specified operation
-  rpc ProcessDocument(ProcessRequest) returns (ProcessResponse);
+The image encoding option is named `format`, not `output_format`.
 
-  // Health check endpoint
-  rpc HealthCheck(Empty) returns (HealthResponse);
-}
-
-// Request to check if an operation is supported
-message OperationRequest {
-  string operation = 1;  // e.g., "extract_tables", "ocr_local"
-  string format = 2;     // Optional: input format hint (e.g., "pdf", "image/png")
-}
-
-// Response indicating if an operation is supported
-message SupportResponse {
-  bool supported = 1;
-  string message = 2;    // Optional explanation
-}
-
-// Request to process a document
-message ProcessRequest {
-  bytes document_data = 1;           // Raw document bytes
-  string operation = 2;              // Operation to perform
-  map<string, string> options = 3;   // Operation-specific options
-}
-
-// Response containing processed document
-message ProcessResponse {
-  bytes output_data = 1;             // Processed output bytes
-  string format = 2;                 // Output format (e.g., "json", "text", "image/png")
-  map<string, string> metadata = 3;  // Additional metadata about the processing
-  int32 processing_time_ms = 4;      // Time taken to process in milliseconds
-  bool success = 5;                  // Whether processing succeeded
-  string error_message = 6;          // Error message if success is false
-}
-
-// Empty message for requests with no parameters
-message Empty {}
-
-// Health check response
-message HealthResponse {
-  bool healthy = 1;
-  string version = 2;
-  repeated string supported_operations = 3;
+```json
+{
+  "images": [
+    { "page": 1, "data": "<base64>", "format": "png", "width": 1700, "height": 2200 }
+  ]
 }
 ```
 
-### SupportsOperation
+## Structured Extraction (`extract_structured`)
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `operation` | string | Operation name, e.g. `extract_tables` |
-| `format` | string | Optional input-format hint. Current backends ignore it. |
+**Availability:** Standard
 
-Response: `supported=true` and `message="Supported by <BackendClass>"`, or `supported=false` and `message="Operation '<op>' is not supported"`.
-
-### ProcessDocument
-
-| Request field | Type | Description |
-|---------------|------|-------------|
-| `document_data` | bytes | Raw input (PDF or image bytes) |
-| `operation` | string | One of the operations below |
-| `options` | map<string,string> | Operation-specific options; unknown keys are ignored |
-
-| Response field | Type | Description |
-|----------------|------|-------------|
-| `success` | bool | `true` when the operation completed |
-| `output_data` | bytes | Result bytes (UTF-8 JSON or HTML for all current operations); empty on failure |
-| `format` | string | `json` or `html`; empty on failure |
-| `metadata` | map<string,string> | Backend-specific metadata (see each operation) |
-| `processing_time_ms` | int32 | Wall-clock processing time, also set on failure |
-| `error_message` | string | Set when `success=false` |
-
-**Error messages** (returned with gRPC status `OK` and `success=false`):
-
-| Message pattern | Cause |
-|-----------------|-------|
-| `No backend found for operation '<op>'` | Unknown operation, or the feature group for it is not installed in the image |
-| `Processing failed: Invalid page number N. Document has M pages.` | `pages` out of range (pre-filtered operations) |
-| `Processing failed: Invalid page range: a-b (start > end)` | Malformed `pages` range |
-| `Processing failed: Invalid <option>: ...` | An option value outside its allowed set |
-| `Processing failed: Invalid image data: ...` | Image operations received bytes Pillow cannot open |
-| `Processing failed: Stability AI API key is required. Set STABILITY_API_KEY environment variable.` | `provider=stability` (the default) without a key |
-| `Processing failed: <library error>` | Any other exception raised by the backend |
-
-Transport failures use standard gRPC status codes: `UNAVAILABLE` (worker unreachable), `DEADLINE_EXCEEDED` (client deadline exceeded), `RESOURCE_EXHAUSTED` (message larger than 100 MB).
-
-### HealthCheck
-
-Returns `healthy=true`, `version` (currently `0.1.0`), and `supported_operations` — the sorted union of operations from all **registered** backends. Backends whose libraries are not installed are not registered and their operations are absent.
-
-## Operations
-
-All option values are strings. Defaults apply when an option is omitted.
-
-### extract_structured
-
-Layout-aware extraction with pdfplumber. **Feature group:** core.
-
-| Option | Default | Values | Description |
-|--------|---------|--------|-------------|
-| `pages` | all | e.g. `1,3,5-10` | Pre-filter pages (output renumbered from 1) |
-| `output_format` | `json` | `json`, `html` | Output encoding |
-| `include_bounding_boxes` | `false` | `true`, `false` | Add per-word coordinates |
-
-Output (`format=json`):
+| Option | Default | Values |
+|--------|---------|--------|
+| `pages` | all | page list (results are renumbered from 1; an out-of-range page is an error) |
+| `output_format` | `json` | `json`, `html` |
+| `include_bounding_boxes` | `false` | `true`, `false` (adds per-word coordinates) |
 
 ```json
 {
@@ -151,42 +61,16 @@ Output (`format=json`):
 }
 ```
 
-`words` is present only with `include_bounding_boxes=true`. With `output_format=html` the output is an HTML document with one `<div class="page">` per page containing a `<pre>` text block and `<table>` elements.
+`words` appears only when `include_bounding_boxes=true`. With `output_format=html`, you get an HTML document with one `<div class="page">` per page, holding a `<pre>` text block and `<table>` elements.
 
-Metadata: `pages_processed`, `total_tables`.
+## Advanced Table Extraction (`extract_tables`)
 
-### pdf_to_images
+**Availability:** Extended worker image
 
-Rasterize PDF pages with pdf2image/Poppler. **Feature group:** core.
-
-| Option | Default | Values | Description |
-|--------|---------|--------|-------------|
-| `pages` | all | e.g. `1-3` | Pages to render (original page numbers preserved) |
-| `dpi` | `200` | integer | Render resolution |
-| `format` | `png` | `png`, `jpeg`, `jpg` | Image encoding (note: option is `format`, not `output_format`) |
-
-Output (`format=json`):
-
-```json
-{
-  "images": [
-    { "page": 1, "data": "<base64>", "format": "png", "width": 1700, "height": 2200 }
-  ]
-}
-```
-
-Metadata: `images_generated`, `dpi`, `format`.
-
-### extract_tables
-
-Table detection with Camelot. **Feature group:** tables (`INSTALL_TABLES=true`).
-
-| Option | Default | Values | Description |
-|--------|---------|--------|-------------|
-| `pages` | all | e.g. `2-4` | Pre-filter pages (output renumbered from 1) |
-| `table_flavor` | `lattice` | `lattice`, `stream` | `lattice` for ruled tables with visible borders; `stream` for whitespace-separated tables |
-
-Output (`format=json`):
+| Option | Default | Values |
+|--------|---------|--------|
+| `pages` | all | page list (results are renumbered from 1; an out-of-range page is an error) |
+| `table_flavor` | `lattice` | `lattice` (ruled tables with visible borders), `stream` (whitespace-separated columns) |
 
 ```json
 {
@@ -196,20 +80,18 @@ Output (`format=json`):
 }
 ```
 
-Metadata: `tables_found`, `flavor`.
+`page` is a string in this result.
 
-### ocr_local
+## Local OCR (`ocr_local`)
 
-OCR with Tesseract. Accepts a PDF (detected by the `%PDF` header) or a single image. **Feature group:** ocr (`INSTALL_OCR=true`).
+**Availability:** Extended worker image. Accepts a PDF or a single image.
 
-| Option | Default | Values | Description |
-|--------|---------|--------|-------------|
-| `pages` | all | e.g. `1,3` | PDF only; original page numbers preserved |
-| `language` | `eng` | Tesseract language code(s), e.g. `eng`, `eng+deu` | Only `eng` data is installed in the standard OCR build |
-| `dpi` | `300` | integer | PDF rasterization resolution |
-| `include_bounding_boxes` | `false` | `true`, `false` | Add per-word boxes and an average `confidence` |
-
-Output (`format=json`):
+| Option | Default | Values |
+|--------|---------|--------|
+| `pages` | all | page list, PDF only (original page numbers are kept) |
+| `language` | `eng` | Tesseract language codes. Standard OCR images include English only. |
+| `dpi` | `300` | integer (resolution used to render PDF pages) |
+| `include_bounding_boxes` | `false` | `true`, `false` (adds word boxes and average `confidence`) |
 
 ```json
 {
@@ -224,24 +106,18 @@ Output (`format=json`):
 }
 ```
 
-`confidence` and `words` are present only with `include_bounding_boxes=true`.
+## Neural OCR (`ocr_advanced`)
 
-Metadata: `pages_processed`, `language`, `engine=tesseract`.
+**Availability:** Extended worker image. Accepts a PDF or a single image.
 
-### ocr_advanced
+| Option | Default | Values |
+|--------|---------|--------|
+| `pages` | all | page list, PDF only (original page numbers are kept) |
+| `language` | `en` | comma-separated language codes, such as `en,es` |
+| `dpi` | `300` | integer |
+| `gpu` | `false` | `true`, `false` (takes effect only if the environment provides a GPU) |
 
-Neural-network OCR with EasyOCR. Accepts a PDF or a single image. **Feature group:** easyocr (`INSTALL_EASYOCR=true`).
-
-| Option | Default | Values | Description |
-|--------|---------|--------|-------------|
-| `pages` | all | e.g. `1-2` | PDF only; original page numbers preserved |
-| `language` | `en` | comma-separated EasyOCR codes, e.g. `en,es` | Languages for the reader |
-| `dpi` | `300` | integer | PDF rasterization resolution |
-| `gpu` | `false` | `true`, `false` | Use a GPU if available |
-
-The EasyOCR reader is created on the first `ocr_advanced` request and reused for the life of the process, so the `language` and `gpu` values of that **first** request apply to later requests on the same replica.
-
-Output (`format=json`):
+A worker replica loads its OCR model with the `language` and `gpu` settings of the first neural OCR request it serves, and keeps those settings for later requests. Use the same language set across your app.
 
 ```json
 {
@@ -257,24 +133,17 @@ Output (`format=json`):
 }
 ```
 
-Metadata: `pages_processed`, `languages`, `engine=easyocr`, `gpu`.
+## Image Upscaling (`upscale_image`)
 
-### upscale_image
+**Availability:** Standard. Input can be PNG, JPEG, WebP, or TIFF.
 
-Upscale an image. Input: PNG, JPEG, WebP, or TIFF bytes. **Feature group:** core.
+| Option | Default | Values |
+|--------|---------|--------|
+| `provider` | `stability` | `stability`, `lanczos`, `auto` |
+| `scale_factor` | `2` | `stability`: `2`, `4`; `lanczos`: `2`, `3`, `4`, `6`, `8`; `auto`: `2`–`8` |
+| `output_format` | `png` | `png`, `jpeg`, `jpg`, `webp`, `tiff` |
 
-| Option | Default | Values | Description |
-|--------|---------|--------|-------------|
-| `provider` | `stability` | `stability`, `lanczos`, `auto` | Upscaling provider |
-| `scale_factor` | `2` | `stability`: `2`, `4`; `lanczos`: `2`, `3`, `4`, `6`, `8`; `auto`: `2`–`8` | Multiplier |
-| `output_format` | `png` | `png`, `jpeg`, `jpg`, `webp`, `tiff` | Output encoding |
-
-Provider notes:
-- `stability` calls the external Stability AI API (ESRGAN), requires `STABILITY_API_KEY`, and rejects outputs larger than 2048×2048.
-- `lanczos` runs locally with Pillow and has no resolution cap.
-- `auto` uses the default provider (`UPSCALE_DEFAULT_PROVIDER`) if it supports the scale factor and input format, otherwise the first provider that does.
-
-Output (`format=json`):
+`stability` needs a Stability AI key in your environment and rejects output larger than 2048×2048. `lanczos` runs locally and has no size cap.
 
 ```json
 {
@@ -293,33 +162,20 @@ Output (`format=json`):
 }
 ```
 
-Metadata: `provider`, `method`, `scale_factor`, `output_format`, `original_dimensions`, `output_dimensions`.
+## Colorspace Conversion (`convert_colorspace`)
 
-### convert_colorspace
+**Availability:** Standard
 
-ICC-profile colorspace conversion with Pillow ImageCms. **Feature group:** core.
+| Option | Default | Values |
+|--------|---------|--------|
+| `target_colorspace` | `cmyk` | `cmyk`, `srgb`, `rgb`, `adobe_rgb` |
+| `source_profile` | auto | `embedded` or a profile name. Auto uses the embedded profile, otherwise sRGB. |
+| `target_profile` | `default` | `default` or a profile name |
+| `rendering_intent` | `perceptual` | `perceptual`, `relative_colorimetric`, `saturation`, `absolute_colorimetric` |
+| `output_format` | `tiff` | `tiff`, `jpeg`, `jpg`, `png` (PNG cannot hold CMYK) |
+| `preserve_transparency` | `false` | `true`, `false` (CMYK has no alpha channel) |
 
-| Option | Default | Values | Description |
-|--------|---------|--------|-------------|
-| `target_colorspace` | `cmyk` | `cmyk`, `srgb`, `rgb`, `adobe_rgb` | Target colorspace |
-| `source_profile` | auto | `embedded`, a profile name, or a path | Source profile; auto uses the embedded profile, else sRGB |
-| `target_profile` | `default` | `default`, a profile name, or a path | `default` = `DEFAULT_CMYK_PROFILE` for CMYK, sRGB or Adobe RGB for RGB targets |
-| `rendering_intent` | `perceptual` | `perceptual`, `relative_colorimetric`, `saturation`, `absolute_colorimetric` | ICC rendering intent |
-| `output_format` | `tiff` | `tiff`, `jpeg`, `jpg`, `png` | Output encoding (TIFF recommended for CMYK; PNG cannot hold CMYK) |
-| `preserve_transparency` | `false` | `true`, `false` | Keep alpha where the target supports it (CMYK does not) |
-
-Profile names are resolved case-insensitively against aliases in `ICC_PROFILES_DIR`:
-
-| Alias | File names searched |
-|-------|---------------------|
-| `srgb` | `sRGB.icc`, `sRGB IEC61966-2.1.icc`, `sRGB_IEC61966-2-1.icc` (built-in sRGB if none) |
-| `adobe_rgb` | `AdobeRGB1998.icc`, `Adobe RGB (1998).icc`, `AdobeRGB.icc` |
-| `fogra39` | `FOGRA39.icc`, `ISOcoated_v2_300_eci.icc`, `CoatedFOGRA39.icc`, `GenericCMYK.icc` |
-| `swop` | `USWebCoatedSWOP.icc`, `SWOP.icc`, `WebCoatedSWOP2006Grade3.icc` |
-| `gracol` | `GRACoL2006_Coated1v2.icc`, `GRACoL.icc` |
-| `generic_cmyk` | `GenericCMYK.icc`, `Generic CMYK Profile.icc` |
-
-Output (`format=json`):
+Profile names are case-insensitive: `srgb`, `adobe_rgb`, `fogra39`, `swop`, `gracol`, `generic_cmyk`. Only sRGB and a generic CMYK profile are always present, and `fogra39` resolves to the generic CMYK profile. Your environment administrator must install any other profile.
 
 ```json
 {
@@ -342,82 +198,26 @@ Output (`format=json`):
 }
 ```
 
-Metadata: `source_colorspace`, `target_colorspace`, `source_profile`, `target_profile`, `rendering_intent`, `output_format`.
+## Errors
 
-## HTTP API
+The Document Processing Service passes worker failures back to your app. These are the messages you may see:
 
-The worker also runs a FastAPI server (port `HTTP_PORT`, default `8080`). In the Helm chart the HTTP port is **not exposed** by default (see [Operations](./operations.md#health-checks)). The HTTP API registers only the image-oriented backends: `pdf_to_images`, `upscale_image`, and `convert_colorspace`.
+| Message | Meaning | What to do |
+|---------|---------|------------|
+| `No backend found for operation '<op>'` | Your environment's worker image doesn't include this capability, or the operation doesn't exist. `detect_language` doesn't exist. | Check [supported capabilities](./getting-started.md#step-3-check-which-capabilities-your-environment-supports). Ask your administrator for an extended image. |
+| `Processing failed: Invalid page number N. Document has M pages.` | The `pages` list goes past the end of the document | Check the page count first |
+| `Processing failed: Invalid page range: a-b (start > end)` | Malformed `pages` value | Fix the range |
+| `Processing failed: Invalid <option>: ...` | Option value outside its allowed set | Use a value from the tables above |
+| `Processing failed: Invalid image data: ...` | The input isn't a readable image | Check the file and its format |
+| `Processing failed: Stability AI API key is required. ...` | `provider=stability` (the default) and your environment has no key | Pass `provider=lanczos` |
+| `... would exceed maximum allowed (2048x2048)` | Stability AI output cap | Use a smaller scale factor or `provider=lanczos` |
+| `Profile 'X' not found. Available profiles: [...]` | The requested ICC profile isn't installed | Use a listed profile, or ask your administrator to install it |
 
-### GET /health
-
-```json
-{ "status": "ok", "operations": ["convert_colorspace", "pdf_to_images", "upscale_image"], "version": "0.1.0" }
-```
-
-### POST /process
-
-Request body (`application/json`):
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `operation` | string | `pdf_to_images`, `upscale_image`, or `convert_colorspace` |
-| `data` | string | Base64-encoded input bytes |
-| `options` | object<string,string> | Same options as the gRPC operation |
-
-Success (`200`):
-
-```json
-{
-  "success": true,
-  "result": { "image": { "data": "<base64>", "format": "png" }, "provider": "lanczos" },
-  "format": "application/json",
-  "metadata": { "provider": "lanczos", "scale_factor": "2" },
-  "processing_time_ms": 132
-}
-```
-
-Because every current operation emits JSON, `result` is the parsed JSON object (for a non-JSON output it would be a base64 string).
-
-Errors are returned in FastAPI's `detail` envelope:
-
-```json
-{
-  "detail": {
-    "success": false,
-    "error": { "code": "INVALID_OPERATION", "message": "Operation 'ocr_local' is not supported", "details": { "supported_operations": ["..."] } }
-  }
-}
-```
-
-| HTTP status | `error.code` | Cause |
-|-------------|--------------|-------|
-| 400 | `INVALID_BASE64` | `data` is not valid base64 |
-| 400 | `INVALID_OPERATION` | Operation not available on the HTTP API |
-| 400 | `INVALID_IMAGE`, `UPSCALE_PROVIDER_UNAVAILABLE`, `COLORSPACE_UNSUPPORTED`, `INVALID_OPERATION`, `PROCESSING_FAILED` | Validation error (`ValueError`), classified from the message |
-| 500 | same codes as above | Processing error (`RuntimeError`), classified from the message |
-| 500 | `PROCESSING_FAILED` | Unexpected exception |
-
-## Environment Variables
-
-Variables read by the worker:
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `GRPC_PORT` | `50051` | gRPC listen port |
-| `HTTP_PORT` | `8080` | HTTP (FastAPI) listen port |
-| `HTTP_HOST` | `0.0.0.0` | HTTP bind host when running the HTTP server standalone (`python -m src.http_server`); the embedded server always binds `0.0.0.0` |
-| `STABILITY_API_KEY` | — | Stability AI key; required for `provider=stability` |
-| `UPSCALE_DEFAULT_PROVIDER` | `stability` | Default provider for `provider=auto` and fallback selection |
-| `ICC_PROFILES_DIR` | `<app>/profiles` | Directory scanned for `.icc`/`.icm` files |
-| `DEFAULT_CMYK_PROFILE` | `FOGRA39` | Default CMYK target profile |
-| `DEFAULT_RGB_PROFILE` | `sRGB` | Default RGB profile |
-
-Fixed (not configurable) server settings: 10 gRPC worker threads, 100 MB max message size, 5-second shutdown grace period, `INFO` log level.
-
-Variables read by the **Document Processing Service** to reach the worker are listed in [Concepts](./concepts.md#relationship-to-the-document-processing-service).
+If the worker is disabled, unreachable, or too slow, the Document Processing Service returns an error without a worker message. See [Operations: Troubleshooting](./operations.md#troubleshooting).
 
 ## Related
 
 - [Concepts](./concepts.md)
 - [Getting Started](./getting-started.md)
 - [Operations](./operations.md)
+- [Document Processing Service: Reference](../doc-proc-service/reference.md)
