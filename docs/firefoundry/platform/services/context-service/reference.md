@@ -1,10 +1,12 @@
 # Context Service — Reference
 
+gRPC API, client library methods, and errors for the Context Service. From an agent bundle, prefer the SDK wrappers (`WorkingMemoryProvider`, `ChatHistoryBotMixin`) or the `@firebrandanalytics/cs-client` library over raw RPCs.
+
 ---
 
 ## gRPC API
 
-The Context Service implements a gRPC API over Connect-RPC. The proto definition is in `packages/transport/proto/context_service.proto`.
+The Context Service implements a gRPC API over Connect-RPC (service `context.ContextService`, default port `50051`). Generated types are published in `@firebrandanalytics/context-svc-proto`.
 
 ### Working Memory APIs
 
@@ -45,7 +47,7 @@ rpc FetchWMRecord(FetchWMRecordRequest) returns (FetchWMRecordResponse);
 
 **Request:** `id` (string, UUID)
 
-**Response:** Full record including `name`, `description`, `content_type`, `memory_type`, `metadata`, `blob_key`, `entity_node_id`, `created_at`.
+**Response:** Full record including `name`, `description`, `content_type`, `memory_type`, `metadata`, `entity_node_id`, `created_at`.
 
 ---
 
@@ -129,7 +131,7 @@ Remove a blob from storage.
 rpc DeleteBlob(DeleteBlobRequest) returns (DeleteBlobResponse);
 ```
 
-**Request:** either `working_memory_id` or `blob_key` (string).
+**Request:** `working_memory_id` (string, UUID).
 
 ---
 
@@ -214,7 +216,7 @@ rpc RegisterMapping(RegisterMappingRequest) returns (RegisterMappingResponse);
 | `mapping_name` | `string` | Unique name within the app |
 | `rules` | `MappingRules` | CEL-based traversal and extraction rules |
 
-Registered mappings are stored in memory for the process lifetime. Mappings must be re-registered on process restart (typically in application startup code).
+Registrations are not persisted. Register your mappings every time your bundle starts; an `ALREADY_EXISTS` response means the mapping is already registered and can be treated as success.
 
 ---
 
@@ -299,42 +301,14 @@ const client = new ContextServiceClient({
 
 ---
 
-## Environment Variables
+## Client Configuration
 
-### Required
-
-| Variable | Description |
+| Variable (in your bundle) | Description |
 |----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string for working memory metadata |
-| `ENTITY_SERVICE_URL` | Entity Service base URL (no port), e.g., `http://firefoundry-core-entity-service.ff-dev.svc.cluster.local` |
+| `CONTEXT_SERVICE_ADDRESS` | Service URL with protocol, e.g. `http://firefoundry-core-context-service:50051` |
+| `CONTEXT_SERVICE_API_KEY` | API key, when your environment requires authentication |
 
-### Storage Backend (one required)
-
-**Azure Blob Storage:**
-
-| Variable | Description |
-|----------|-------------|
-| `WORKING_MEMORY_STORAGE_ACCOUNT` | Azure Storage account name |
-| `WORKING_MEMORY_STORAGE_KEY` | Azure Storage account key |
-| `WORKING_MEMORY_STORAGE_CONTAINER` | Container name |
-
-**Google Cloud Storage:**
-
-| Variable | Description |
-|----------|-------------|
-| `GOOGLE_CLOUD_PROJECT` | GCP project ID |
-| `WORKING_MEMORY_STORAGE_CONTAINER` | Bucket name |
-| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | Service account JSON (for containers) |
-
-### Optional
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CONTEXT_SERVICE_PORT` | `50051` | gRPC listen port |
-| `API_KEY` | *(none)* | Enable API key authentication |
-| `ENTITY_SERVICE_PORT` | `8080` | Entity Service port |
-| `HISTORY_DATABASE_URL` | *(none)* | Separate DB for history (uses `DATABASE_URL` if not set) |
-| `WORKING_MEMORY_STORAGE_PROVIDER` | Auto-detected | Force `"azure"` or `"gcs"` |
+See [Operations](./operations.md) for enabling the service and connecting a bundle.
 
 ---
 
@@ -342,10 +316,10 @@ const client = new ContextServiceClient({
 
 | gRPC Status | Cause |
 |-------------|-------|
-| `NOT_FOUND` | Working memory record or blob key does not exist |
+| `NOT_FOUND` | Working memory record does not exist |
 | `INVALID_ARGUMENT` | Missing required field or invalid format |
 | `UNAUTHENTICATED` | Missing or invalid API key (when auth is enabled) |
-| `INTERNAL` | Storage backend failure, entity service unavailable |
+| `INTERNAL` | Server-side failure (e.g. file storage or the entity graph temporarily unavailable); retry with backoff and contact your environment administrator if it persists |
 | `ALREADY_EXISTS` | Mapping name already registered for this app ID |
 
 ---
@@ -355,6 +329,7 @@ const client = new ContextServiceClient({
 - [Overview](./README.md)
 - [Concepts](./concepts.md)
 - [Getting Started](./getting-started.md)
+- [Operations](./operations.md)
 - [Mapping Examples](./mapping-examples.md) — entity graph structures for default and custom chat history mappings
 - [Agent SDK — Chat History Guide](../../../sdk/agent_sdk/guides/chat-history.md)
 - [Agent SDK — Working Memory Guide](../../../sdk/agent_sdk/guides/working-memory.md)

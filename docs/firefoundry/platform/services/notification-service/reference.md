@@ -1,6 +1,6 @@
 # Notification Service — Reference
 
-Complete API reference for the Notification Service. All endpoints accept and return JSON.
+API reference for the Notification Service. All endpoints accept and return JSON. Inside the cluster the base URL is `http://firefoundry-core-notification-service:8080`.
 
 ## Send Endpoints
 
@@ -104,7 +104,7 @@ Retrieve the full details of a sent notification.
 
 ## Admin Endpoints
 
-These endpoints manage provider configurations. In production, they are protected by API key authentication.
+These endpoints manage provider configurations for your environment. They are intended for whoever administers notification delivery, not for everyday sending. In production deployments they are protected by API key authentication.
 
 ### GET /admin/providers
 
@@ -122,8 +122,8 @@ Create a new provider configuration. Providers are created inactive.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `channel` | string | Yes | `email`, `sms`, or `push` |
-| `providerType` | string | Yes | `acs`, `sendgrid`, or `twilio` |
+| `channel` | string | Yes | `email` or `sms` (`push` is planned) |
+| `providerType` | string | Yes | `acs` (other provider types such as `sendgrid` and `twilio` are planned) |
 | `config` | object | Yes | Non-sensitive provider settings |
 | `secretEnvVars` | object | Yes | Maps logical credential names to environment variable names |
 
@@ -133,16 +133,12 @@ Create a new provider configuration. Providers are created inactive.
 |----------|---------|---------------|
 | `acs` | email | `senderAddress` (required) — Verified sender address |
 | `acs` | sms | `senderNumber` — Provisioned phone number |
-| `sendgrid` | email | `senderAddress`, `senderName` |
-| `twilio` | sms | `senderNumber`, `messagingServiceSid` |
 
 **Provider-specific `secretEnvVars` keys:**
 
 | Provider | Required Keys | Description |
 |----------|---------------|-------------|
 | `acs` | `connectionString` | ACS resource connection string |
-| `sendgrid` | `apiKey` | SendGrid API key |
-| `twilio` | `accountSid`, `authToken` | Twilio credentials |
 
 **Responses:**
 
@@ -266,7 +262,7 @@ Returned by `POST /send/email` and `POST /send/sms`.
 |-------|------|-------------|
 | `id` | UUID | Notification ID |
 | `providerMessageId` | string | Provider-assigned message ID |
-| `status` | string | `accepted`, `sending`, `sent`, `delivered`, `bounced`, or `failed` |
+| `status` | string | `accepted`, `sending`, `sent`, or `failed` (`delivered` and `bounced` are reserved for planned delivery tracking) |
 | `channel` | string | `email` or `sms` |
 | `provider` | string | Provider name (e.g., `acs`) |
 | `timestamp` | string | ISO 8601 timestamp |
@@ -292,7 +288,7 @@ Returned by admin endpoints.
 |-------|------|-------------|
 | `id` | UUID | Provider config ID |
 | `channel` | string | `email`, `sms`, or `push` |
-| `providerType` | string | `acs`, `sendgrid`, or `twilio` |
+| `providerType` | string | Provider type (currently `acs`) |
 | `isActive` | boolean | Whether this provider is active for its channel |
 | `config` | object | Non-sensitive provider settings |
 | `secretEnvVars` | object | Environment variable name mappings |
@@ -321,7 +317,7 @@ Returned by admin endpoints.
 | `RATE_LIMITED` | 502 | Provider is throttling requests |
 | `INVALID_RECIPIENT` | 502 | Provider rejected the recipient address or number |
 | `PROVIDER_ERROR` | 502 | Unclassified provider error |
-| `MISSING_CREDENTIALS` | 500 | Required environment variable is not set |
+| `MISSING_CREDENTIALS` | 500 | The active provider's credential has not been provisioned for the service |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
 
 ## Related

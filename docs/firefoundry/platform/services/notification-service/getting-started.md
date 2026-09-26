@@ -1,13 +1,18 @@
 # Notification Service — Getting Started
 
-This guide walks you through configuring the Notification Service and sending your first email.
+This guide walks you through configuring a provider and sending your first email and SMS. Steps 2–4 are one-time provider setup, usually done by whoever administers your environment; if a provider is already active, skip to Step 5.
 
 ## Prerequisites
 
-- A running Notification Service instance (deployed via FireFoundry platform or self-hosted)
-- The service URL (e.g., `http://localhost:8080` for local development)
-- An Azure Communication Services resource with a verified sender domain
-- The ACS connection string set as an environment variable on the service
+- The Notification Service enabled in your environment (`notification-service.enabled: true` in `firefoundry-core`; see [Operations](./operations.md#enabling-the-service))
+- An Azure Communication Services resource with a verified sender domain, and its connection string provisioned as the service's `ACS_CONNECTION_STRING` secret by your environment administrator
+- Access to the service. From a workstation:
+
+```bash
+kubectl port-forward svc/firefoundry-core-notification-service 8080:8080 -n <namespace>
+```
+
+From inside the cluster (e.g. your agent bundle), use `http://firefoundry-core-notification-service:8080`.
 
 ## Step 1: Verify the Service is Running
 
@@ -84,7 +89,7 @@ curl -s -X POST http://localhost:8080/admin/providers/<id>/validate
 ```
 
 If `providerConnected` is `false`, check that:
-- The environment variable name in `secretEnvVars` matches an env var set on the service
+- The environment variable name in `secretEnvVars` matches a secret provisioned for the service (e.g. `ACS_CONNECTION_STRING`)
 - The credential value is valid and not expired
 - The sender domain is verified in your provider account
 
@@ -132,6 +137,23 @@ curl -s -X POST http://localhost:8080/send/email \
 ```
 
 A `202 Accepted` response with `"status": "sent"` means the provider accepted the message for delivery.
+
+From an agent bundle, the same call is a plain HTTP request:
+
+```typescript
+const res = await fetch("http://firefoundry-core-notification-service:8080/send/email", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    idempotencyKey: `report-ready-${reportId}`,   // stable across retries
+    to: [recipient],
+    subject: "Your report is ready",
+    html: renderedHtml,
+    correlationId: runId,
+  }),
+});
+const result = await res.json();   // SendResult: { id, status, ... }
+```
 
 ## Step 6: Verify Idempotency
 
@@ -229,7 +251,7 @@ curl -s -X POST http://localhost:8080/admin/providers/<id>/activate
 
 The service can't connect to the cloud provider. Check:
 1. The environment variable name in `secretEnvVars` is correct (case-sensitive)
-2. The environment variable is set on the service host with a valid credential
+2. The secret is provisioned for the service with a valid credential (ask your environment administrator)
 3. The credential hasn't expired or been revoked
 
 ### Email sent but not received

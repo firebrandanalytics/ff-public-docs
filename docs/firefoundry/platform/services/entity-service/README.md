@@ -2,78 +2,64 @@
 
 ## Overview
 
-The Entity Service is a high-performance REST API that manages the FireFoundry Entity Graph, providing CRUD operations for nodes and edges with vector-based semantic search capabilities powered by PostgreSQL and pgvector.
+The Entity Service is the REST API behind the FireFoundry Entity Graph. It stores your application's entities (nodes) and the relationships between them (edges), records the input, output, and progress of runnable entities, and offers property, JSON, and vector-similarity search over them.
 
 ## Purpose and Role in Platform
 
-The Entity Service serves as the central knowledge store for FireFoundry agents, enabling them to:
-- Store and retrieve structured entity data (nodes) and relationships (edges)
-- Perform semantic similarity searches using vector embeddings
-- Track execution state and progress through node I/O envelopes
-- Query and traverse complex graph relationships
-- Manage entity types, schemas, and metadata
+The Entity Service is the persistent memory for your agent bundles. When your bundle creates an entity, runs a workflow or bot, or links two entities together, that state lands in the entity graph through this service. As an app builder you use it to:
 
-This service acts as the persistent memory layer for agents, allowing them to build and query knowledge graphs over time.
+- Model your application's domain as typed entities and relationships
+- Persist workflow and bot inputs, outputs, and progress so runs can be monitored and resumed
+- Query and traverse related data (for example, "all documents under this case")
+- Find semantically similar entities using embeddings
+
+Most bundles never call the REST API directly: the Agent SDK's entity client (`createEntityClient(APP_ID)`) and entity classes call it for you. The REST API and the `ff-eg-*` CLIs are useful for debugging, scripts, and non-SDK clients.
 
 ## Key Features
 
-- **Entity Graph CRUD**: Full create, read, update operations for nodes and edges with relationship traversal
-- **Vector Semantic Search**: pgvector-powered similarity search for finding semantically related entities
-- **Batch Insert Optimization**: Automatic batching of writes with configurable thresholds for high-throughput scenarios
-- **Node I/O Tracking**: Store and append execution progress envelopes for workflow state management
-- **Type-Safe Database Access**: Kysely query builder with full TypeScript type safety
-- **Graph Traversal**: Recursive relationship queries with configurable depth and edge type filtering
-- **API Response Caching**: Built-in apicache middleware for optimized read performance
-- **Partitioned Storage**: Graph partitions allow logical separation of entity data across agent bundles
+- **Entity Graph CRUD**: Create, read, and update nodes and edges; soft-delete (archive) nodes
+- **Relationship Traversal**: Follow incoming/outgoing edges, filter by edge type, or filter connected nodes with JSONPath
+- **Search**: Condition-based node search (scoped to your agent bundle or global), JSON containment and JSONPath queries on entity data
+- **Vector Similarity Search**: Store embeddings for nodes and find similar entities by node or by raw vector
+- **Node I/O and Progress**: Store runnable-entity input/output and an append-only timeline of progress envelopes
+- **Graph Partitions and Bundle Scoping**: Keep each application's data logically separate
 
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                 REST API Layer                      │
-│              (Express 5 + Router)                   │
-│         RouteManager: CRUD, Search, Vector          │
-└───────────────────┬─────────────────────────────────┘
-                    │
-┌───────────────────▼─────────────────────────────────┐
-│              Business Logic Layer                   │
-│              EntityProvider Class                   │
-│  - Graph operations  - Vector search                │
-│  - Batch management  - Relationship traversal       │
-└───────────────────┬─────────────────────────────────┘
-                    │
-┌───────────────────▼─────────────────────────────────┐
-│              Data Access Layer                      │
-│     Kysely Query Builder + PostgreSQL Pools         │
-│    (Separate read/write connection pools)           │
-└───────────────────┬─────────────────────────────────┘
-                    │
-┌───────────────────▼─────────────────────────────────┐
-│             PostgreSQL Database                     │
-│          with pgvector Extension                    │
-│  - entity.node (partitioned)                        │
-│  - entity.edge (partitioned)                        │
-│  - entity.vector_similarity (embeddings)            │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────┐   ┌──────────────────────────┐
+│  Your Agent Bundle           │   │  CLIs / scripts          │
+│  (Agent SDK entity client,   │   │  ff-eg-read, ff-eg-write │
+│   entity classes, workflows) │   │  ff-eg-admin, curl       │
+└──────────────┬───────────────┘   └────────────┬─────────────┘
+               │ REST (HTTP/JSON)               │
+               ▼                                ▼
+        ┌─────────────────────────────────────────────┐
+        │               Entity Service                 │
+        │  nodes · edges · search · vectors · node I/O │
+        └─────────────────────────────────────────────┘
+               ▲                                ▲
+               │                                │
+┌──────────────┴───────────────┐   ┌────────────┴─────────────┐
+│ Other platform services that │   │ Console / diagnostics    │
+│ build on the graph (e.g.     │   │ tools that read entity   │
+│ Knowledge, Context services) │   │ state and progress       │
+└──────────────────────────────┘   └──────────────────────────┘
 ```
 
-**Core Components:**
-- **Service Class**: Express application lifecycle management with graceful shutdown
-- **RouteManager**: RESTful endpoint definitions organized by capability (CRUD, search, vector, traversal)
-- **EntityProvider**: Business logic for all entity graph operations
-- **BatchInsertManager**: Configurable write batching with automatic flush on count or duration thresholds
-- **PostgreSQL Connection Pools**: Separate read (fireread) and write (fireinsert) connection pools for scalability
+Your bundle is the primary writer of its own entities. Other platform services, the console, and the diagnostic CLIs read (and in some cases write) the same graph, which is why entity state is the main thing you inspect when debugging a bundle.
 
 ## Documentation
 
-- **[Concepts](./concepts.md)** — Entity graph model, nodes, edges, partitions, and data layout
-- **[Getting Started](./getting-started.md)** — First steps: creating nodes, edges, and running queries
-- **[Reference](./reference.md)** — Complete REST API reference, headers, request/response schemas
-- **[Operations](./operations.md)** — Configuration, deployment, performance tuning, and monitoring
+- **[Concepts](./concepts.md)** — Entity graph model, nodes, edges, partitions, progress envelopes, vector search, and design guidance
+- **[Getting Started](./getting-started.md)** — Create, link, query, and search entities from the SDK, CLI, and REST API
+- **[Reference](./reference.md)** — REST API reference: headers, endpoints, request/response shapes, errors
+- **[Operations](./operations.md)** — Enabling the service, connecting a bundle, verifying, limits, and troubleshooting
 
-## Version
+## Version and Maturity
 
 - **Current Version**: 0.3.0
+- **Deployment**: Enabled by default in `firefoundry-core`
 
 ## Repository
 
@@ -83,6 +69,8 @@ Source code: [ff-services-entity](https://github.com/firebrandanalytics/ff-servi
 
 - [Platform Services Overview](../README.md)
 - [Platform Architecture](../../architecture.md)
+- [Agent SDK: Entities](../../../sdk/agent_sdk/core/entities.md)
+- [Agent SDK: Entity Graph](../../../sdk/agent_sdk/entity_graph/README.md)
 - [ff-eg-read CLI](../../../sdk/cli-tools/ff-eg-read.md) — Read-only CLI for querying the entity graph
 - [ff-eg-write CLI](../../../sdk/cli-tools/ff-eg-write.md) — CLI for modifying the entity graph
 - [ff-eg-admin CLI](../../../sdk/cli-tools/ff-eg-admin.md) — Admin operations (hard deletes, stats)

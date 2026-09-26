@@ -1,6 +1,6 @@
 # Entity Service — Reference
 
-Complete REST API reference for the Entity Service, including all endpoints, request/response schemas, headers, and error codes.
+REST API reference for the Entity Service: headers, endpoints, request/response shapes, and errors. If you are writing an agent bundle, prefer the Agent SDK entity client (`createEntityClient`), which wraps these endpoints; use the REST API directly from non-SDK clients, scripts, and debugging tools.
 
 ## Request Headers
 
@@ -34,7 +34,7 @@ Retrieve a single node by ID.
 
 ### POST /api/node
 
-Create a new node. Supports `?batch=true` for automatic batching.
+Create a new node. Supports `?batch=true` (see [Batched Writes](#batched-writes)).
 
 **Request Body**:
 ```json
@@ -100,7 +100,7 @@ Retrieve a single edge by ID.
 
 ### POST /api/edge
 
-Create a new edge. Supports `?batch=true` for automatic batching.
+Create a new edge. Supports `?batch=true` (see [Batched Writes](#batched-writes)).
 
 **Request Body**:
 ```json
@@ -167,7 +167,7 @@ Filter connected nodes using JSONPath expressions on node data.
 
 ### POST /api/search/nodes
 
-Global search across all agent bundles.
+Global search across all agent bundles. Intended for admin and diagnostic tools; applications should normally use the scoped search below.
 
 **Request Body**:
 ```json
@@ -243,7 +243,7 @@ Create an embedding for a node.
 }
 ```
 
-The embedding must be a 3072-dimensional vector (compatible with OpenAI text-embedding-3-large).
+The embedding must be a 3072-dimensional vector (compatible with OpenAI `text-embedding-3-large`). Your application computes the embedding; the service does not generate it.
 
 ### GET /api/vector/similar/:node_id
 
@@ -282,8 +282,14 @@ Search by raw embedding vector.
 | `/health` | GET | Liveness probe |
 | `/ready` | GET | Readiness probe (checks database connectivity) |
 | `/status` | GET | Service status and uptime |
-| `/api/cache/stats` | GET | Cache performance metrics |
-| `/api/batch/metrics` | GET | Batch insert statistics |
+
+## Batched Writes
+
+Node and edge creation accept `?batch=true`. The service accumulates batched writes and commits them together shortly afterwards (by default within about 100 ms or 50 rows). Use it when a workflow creates many entities in quick succession. Because the write is committed asynchronously, do not rely on reading a batched node or edge back immediately in the same request flow; omit `batch` when you need read-your-write behavior.
+
+## Read Consistency
+
+Read endpoints may serve responses cached for a short time (default 2 seconds). A read issued immediately after an update can briefly return the previous value; if your flow depends on the newest value, use the object returned by the write call rather than re-reading.
 
 ## Error Responses
 

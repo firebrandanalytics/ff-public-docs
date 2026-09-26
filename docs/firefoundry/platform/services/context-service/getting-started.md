@@ -1,12 +1,14 @@
 # Context Service — Getting Started
 
-This guide walks through the four most common integration points: connecting the client, uploading a file to working memory, retrieving chat history, and registering a custom chat history mapping.
+This guide walks through the most common integration points: connecting the client, uploading and retrieving files in working memory, retrieving chat history, and registering a custom chat history mapping.
+
+> **Using the Agent SDK?** Most bundles don't call the client directly: use `WorkingMemoryProvider` for files ([Working Memory Guide](../../../sdk/agent_sdk/guides/working-memory.md)) and `ChatHistoryBotMixin` for history ([Chat History Guide](../../../sdk/agent_sdk/guides/chat-history.md)). The steps below show the underlying client, which is also what you use from scripts and non-SDK services.
 
 ---
 
 ## Prerequisites
 
-- A running FireFoundry platform deployment (or local dev environment with `kubectl port-forward`)
+- A FireFoundry environment with the Context Service enabled (on by default; see [Operations](./operations.md))
 - `@firebrandanalytics/cs-client` installed in your project
 - `CONTEXT_SERVICE_ADDRESS` and (optionally) `CONTEXT_SERVICE_API_KEY` set in your environment
 
@@ -36,7 +38,7 @@ const client = new ContextServiceClient({
 });
 ```
 
-The client connects over gRPC via Connect-RPC. In agent bundles, the `CONTEXT_SERVICE_ADDRESS` and `CONTEXT_SERVICE_API_KEY` environment variables are provided by the platform automatically.
+The client connects over gRPC via Connect-RPC. In agent bundles, set `CONTEXT_SERVICE_ADDRESS` (the agent-bundle chart defaults it to `http://firefoundry-core-context-service:50051`) and, if your environment requires authentication, `CONTEXT_SERVICE_API_KEY` in the bundle's secret. See [Operations](./operations.md#connecting-your-agent-bundle).
 
 ---
 
@@ -121,10 +123,10 @@ The default mapping (`simple_chat`) covers the standard SDK bot/entity pattern. 
 
 If your app has a custom entity model for conversation turns, register a named CEL mapping so the Context Service knows how to reconstruct history from your graph structure.
 
-Call `RegisterMapping` at application startup:
+Call `RegisterMapping` every time your bundle starts (registrations are not persisted; an `ALREADY_EXISTS` response means the mapping is already in place):
 
 ```typescript
-// This is called once at startup — the mapping lives in memory
+// Call at bundle startup
 await client.registerMapping({
   appId: 'your-app-id',
   mappingName: 'my_custom_mapping',
@@ -153,4 +155,5 @@ new ChatHistoryBotMixin({ mappingName: 'my_custom_mapping' })
 
 - **SDK integration**: The most common way to use chat history in a bot — see [Chat History Guide](../../../sdk/agent_sdk/guides/chat-history.md)
 - **SDK working memory**: Higher-level `WorkingMemoryProvider` wrapper for agent bundles — see [Working Memory Guide](../../../sdk/agent_sdk/guides/working-memory.md)
-- **All APIs**: Full gRPC reference, environment variables, error codes — see [Reference](./reference.md)
+- **Worked designs**: Conversation graph patterns and their mappings — see [Mapping Examples](./mapping-examples.md)
+- **All APIs**: gRPC reference, client methods, error codes — see [Reference](./reference.md)

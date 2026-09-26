@@ -1,25 +1,52 @@
 # Entity Service — Getting Started
 
-This guide walks you through creating entities, establishing relationships, and querying the entity graph.
+This guide walks you through creating entities, establishing relationships, and querying the entity graph — first from an agent bundle with the SDK, then with the CLI and REST API for exploration and debugging.
 
 ## Prerequisites
 
-- A running Entity Service instance (deployed via Helm or running locally)
-- PostgreSQL with pgvector extension and the `entity` schema migrated
-- The `ff-eg-read` and `ff-eg-write` CLI tools installed (optional but recommended)
+- A FireFoundry environment with the Entity Service enabled (it is on by default in `firefoundry-core`; see [Operations](./operations.md))
+- For the REST examples: access to the service, e.g. `kubectl port-forward svc/firefoundry-core-entity-service 8080:8080 -n <namespace>`
+- The `ff-eg-read` and `ff-eg-write` CLI tools (optional but recommended)
 
-## Step 1: Verify the Service is Running
+## Step 1: Use the Entity Graph from Your Bundle (SDK)
+
+In an agent bundle, pass an entity client to your bundle and let the SDK talk to the Entity Service:
+
+```typescript
+import { FFAgentBundle, createEntityClient } from "@firebrandanalytics/ff-agent-sdk";
+
+export class MyBundle extends FFAgentBundle<any> {
+  constructor() {
+    super(
+      { id: APP_ID, application_id: APP_ID, name: "MyBundle", type: "agent_bundle", description: "..." },
+      MyConstructors,
+      createEntityClient(APP_ID)   // scoped to your application
+    );
+  }
+
+  async listArticles(status?: string) {
+    const criteria: any = { specific_type_name: "ArticleEntity" };
+    if (status) criteria.status = status;
+    const result = await this.entity_client.search_nodes(criteria, { created: "desc" });
+    return result.result;
+  }
+}
+```
+
+`createEntityClient` requires `REMOTE_ENTITY_SERVICE_URL` and `REMOTE_ENTITY_SERVICE_PORT` in your bundle's environment (see [Operations](./operations.md#connecting-your-agent-bundle)). Entity classes created through `this.entity_factory` are persisted as nodes automatically; see [Agent SDK: Entities](../../../sdk/agent_sdk/core/entities.md).
+
+The remaining steps show the same operations with the CLI and REST API, which is how you inspect what your bundle wrote.
+
+## Step 2: Verify the Service is Reachable
 
 ```bash
-# HTTP health check
 curl http://localhost:8080/health
 # Expected: {"status":"ok"}
 
-# Readiness check (verifies database connectivity)
 curl http://localhost:8080/ready
 ```
 
-## Step 2: Create a Node
+## Step 3: Create a Node
 
 Create an entity node using the REST API:
 
@@ -63,7 +90,7 @@ ff-eg-write node create \
   --data '{"title": "Getting Started Guide", "content": "This is a test document."}'
 ```
 
-## Step 3: Read the Node Back
+## Step 4: Read the Node Back
 
 ```bash
 # Via REST API
@@ -73,7 +100,7 @@ curl http://localhost:8080/api/node/a1b2c3d4-5678-90ab-cdef-1234567890ab
 ff-eg-read node get a1b2c3d4-5678-90ab-cdef-1234567890ab | jq .
 ```
 
-## Step 4: Create an Edge (Relationship)
+## Step 5: Create an Edge (Relationship)
 
 Connect two nodes with a typed edge:
 
@@ -96,7 +123,7 @@ ff-eg-write edge create \
   --type HAS_CHILD
 ```
 
-## Step 5: Traverse Relationships
+## Step 6: Traverse Relationships
 
 ```bash
 # Find all children of a node
@@ -109,7 +136,7 @@ ff-eg-read node edges-to <entity-id> | jq '.[] | select(.edge_type == "Calls")'
 ff-eg-read node with-edges <entity-id> | jq .
 ```
 
-## Step 6: Search Entities
+## Step 7: Search Entities
 
 ### By Property Conditions
 
@@ -134,7 +161,7 @@ ff-eg-read search data --containment '{"category": "finance"}'
 ff-eg-read search data --jsonpath '$.tags[*] ? (@ == "important")'
 ```
 
-## Step 7: Update Node Data
+## Step 8: Update Node Data
 
 ```bash
 curl -X PATCH http://localhost:8080/api/node/a1b2c3d4-5678-90ab-cdef-1234567890ab/data \
@@ -151,9 +178,9 @@ Or using the CLI:
 ff-eg-write node update-data <node-id> --data '{"title": "Updated Title", "reviewed": true}'
 ```
 
-## Step 8: Create a Vector Embedding
+## Step 9: Create a Vector Embedding
 
-For semantic search, store an embedding vector:
+For semantic search, store a 3072-dimensional embedding vector that your application computed:
 
 ```bash
 curl -X POST http://localhost:8080/api/vector/embedding \
@@ -175,5 +202,5 @@ ff-eg-read vector similar a1b2c3d4-5678-90ab-cdef-1234567890ab --limit 5 --thres
 
 - Read [Concepts](./concepts.md) for a deeper understanding of the entity graph model
 - See [Reference](./reference.md) for the complete API specification
-- See [Operations](./operations.md) for configuration and deployment guidance
+- See [Operations](./operations.md) for enabling the service, connecting a bundle, and troubleshooting
 - Explore [ff-eg-read CLI](../../../sdk/cli-tools/ff-eg-read.md) for comprehensive query capabilities

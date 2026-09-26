@@ -1,10 +1,12 @@
 # Context Service — Concepts
 
+This page explains working memory, chat history and mappings, and MCP access, and how to design your app around them.
+
 ---
 
 ## Working Memory
 
-**Working Memory** is the Context Service's blob storage system for entity data. It stores binary files — PDFs, images, CSVs, generated documents, code — alongside JSON metadata, addressable by a unique `working_memory_id`.
+**Working Memory** is where your application stores files that belong to entities. It stores binary files — PDFs, images, CSVs, generated documents, code — alongside JSON metadata, addressable by a unique `working_memory_id`.
 
 ### The Pattern: Entity Data + Working Memory
 
@@ -13,9 +15,9 @@ Entity nodes in the entity graph store structured JSON data (fields, status, rel
 | Entity Data (JSON) | Working Memory (Blobs) |
 |---|---|
 | Structured fields (`{ status, prompt_wm_id }`) | Binary files (PDF, DOCX, images, code) |
-| Accessed via `get_dto()` / `update_data()` | Accessed via `ContextServiceClient` or `WorkingMemoryProvider` |
-| Lives in the entity graph | Lives in blob storage with metadata |
-| Lightweight — stays small | No practical size limit |
+| Accessed via `get_dto()` / `update_data()` | Accessed via `WorkingMemoryProvider` (SDK) or `ContextServiceClient` |
+| Lives in the entity graph | Lives in object storage, described by a record with metadata |
+| Lightweight — stays small | Suited to large files (streamed in chunks) |
 
 The standard pattern: store the file in Working Memory, then store the returned `working_memory_id` in entity data. Entity data stays lightweight while binary content lives in purpose-built blob storage.
 
@@ -31,17 +33,6 @@ Entity Data                           Working Memory
                                       +----------------------------+
 ```
 
-### Storage Backends
-
-The Context Service supports two cloud storage backends:
-
-| Backend | Detection | Configuration |
-|---------|-----------|---------------|
-| **Azure Blob Storage** | `WORKING_MEMORY_STORAGE_ACCOUNT` is set | Account name + key + container |
-| **Google Cloud Storage** | Any `GOOGLE_*` env var is set | Project ID + bucket + credentials |
-
-Both backends implement a common `BlobStorage` interface, making agent code cloud-agnostic. Set `WORKING_MEMORY_STORAGE_PROVIDER=azure` or `=gcs` to force a specific backend when both are configured.
-
 ### Working Memory Record Types
 
 | Memory Type | Use For |
@@ -53,13 +44,14 @@ Both backends implement a common `BlobStorage` interface, making agent code clou
 | `"code/typescript"` | TypeScript code files |
 | `"code/python"` | Python code files |
 
-### PostgreSQL Metadata
+### What a Record Carries
 
-All working memory records are tracked in PostgreSQL:
-- **Entity linkage**: every record is linked to an `entity_node_id` (typically a session or conversation ID)
-- **Blob reference**: the blob key in cloud storage is stored here
-- **Optional embeddings**: 1536-dimensional vectors for semantic search over memory records
-- **Arbitrary metadata**: JSON field for custom key-value annotations
+Every working memory record has:
+- **Entity linkage**: an `entity_node_id` (typically the session, conversation, or document entity it belongs to). Use it to list everything attached to an entity, or to build a manifest across related entities.
+- **Descriptive fields**: `name`, `description`, `content_type` (MIME type), and `memory_type`
+- **Metadata**: an arbitrary JSON object for your own annotations (for example, pipeline stage or source)
+
+File bytes are stored in the object storage configured for your environment; your code only deals with `working_memory_id`s and never with storage locations or credentials.
 
 ---
 
@@ -92,7 +84,7 @@ Apps with custom entity models register their own named mapping via the `Registe
 3. How to extract `role` and `content` from each entity node's data
 4. How to determine message order
 
-Custom mappings are registered at application startup and live in memory for the lifetime of the Context Service process. Each app scopes its mappings by `app_id`.
+Custom mappings are scoped by `app_id` and registered by your application at startup. Registrations are **not persisted** by the Context Service: register your mappings every time your bundle starts, and treat an `ALREADY_EXISTS` response as success. If history calls start failing with an unknown-mapping error (for example after the Context Service restarts), registering again restores them.
 
 ```
 App A: "simple_chat"     → default traversal, extracts user_input/assistant_output
@@ -108,15 +100,15 @@ For worked examples of both the default and custom mapping patterns, including e
 
 ## Context Assembly
 
-Context Assembly is the internal pipeline powering `GetChatHistory`. It uses the registered CEL mapping to:
+`GetChatHistory` is built on a lower-level assembly step (also exposed as `AssembleContext`) that applies a mapping to:
 
 1. **Traverse** the entity graph from a starting node, following configured edge types
 2. **Filter** nodes by entity type or field conditions
-3. **Transform** each node into a `ChatMessage` by applying role/content extraction rules
+3. **Transform** each node into a `ChatMessage` using role/content extraction rules
 4. **Order** messages chronologically (by node timestamp or a configured field)
-5. **Truncate** if a `maxMessages` limit is applied by the caller
+5. **Truncate** to the most recent N messages if the caller passes a `max_messages` limit
 
-The `ContextAssemblyService` calls the Entity Service gRPC API for all graph traversal — it does not access the entity database directly. This ensures the same access control and business logic enforced by the Entity Service applies to history reconstruction.
+History is read from the entity graph at request time, so it always reflects what your bundle has written — there is no separate log to keep in sync.
 
 ---
 
@@ -130,10 +122,6 @@ When the MCP server is active, agents can:
 - **List resources**: enumerate working memory records for the current entity
 - **Read resources**: retrieve file contents by working memory ID
 - **Execute tools**: upload files, fetch manifests, query working memory
-
-### MCP Transport
-
-The Context Service uses an `InMemoryTransport` when running as a single process alongside an agent bundle, avoiding network overhead for tool calls. In cluster deployments, it listens on a configurable port.
 
 ### MCP vs gRPC
 
@@ -157,7 +145,17 @@ const client = new ContextServiceClient({
 });
 ```
 
-The client is used directly by agent bundles for working memory operations, and internally by the SDK's `ChatHistoryPromptGroup` for chat history retrieval.
+Most bundles use the SDK wrappers instead (`WorkingMemoryProvider`, `ChatHistoryBotMixin`, `ChatHistoryPromptGroup`), which use this client under the hood. Use the client directly for operations the wrappers don't cover, such as registering mappings or fetching manifests.
+
+---
+
+## Designing Your App Around the Context Service
+
+- **Store files in working memory, IDs in entity data.** Keep entity data small and searchable; put the `working_memory_id` in a field such as `report_wm_id`.
+- **Attach records to the entity that owns them.** Linking a file to the right entity (document, session, case) makes listing and manifests work without extra bookkeeping.
+- **Use metadata for pipeline stages.** Tag records with e.g. `{ stage: "original_upload" }` vs `{ stage: "extracted_text" }` so later stages can find the right version.
+- **Start with the default chat model.** If your conversation entities fit the `simple_chat` pattern, you need no mapping registration at all. See [Mapping Examples](./mapping-examples.md).
+- **Bound history size.** Long conversations produce long prompts; use `maxMessages` / `max_messages` to cap what goes to the model.
 
 ---
 

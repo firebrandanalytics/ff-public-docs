@@ -139,7 +139,7 @@ Key structural difference from Example 1:
 
 Because the graph structure doesn't match `simple_chat`'s expected shape, register a custom mapping that handles both edge types and maps entity types to roles.
 
-**Register the mapping in your context service configuration or at agent startup:**
+**Register the mapping at agent bundle startup:**
 
 ```typescript
 import { MappingRegistry } from "@firebrandanalytics/cs-client";
@@ -192,7 +192,7 @@ await client.registerMapping({
 });
 ```
 
-Mappings are registered per context service instance. In production, register once during service startup (or harness bootstrap) before any bot sessions begin.
+Registrations are not persisted, so register during every bundle startup, before any bot sessions begin. An `ALREADY_EXISTS` response means the mapping is already in place.
 
 ### Retrieving chat history
 

@@ -6,7 +6,7 @@ Core abstractions and mental models for working with the Notification Service.
 
 A **channel** is a communication medium: `email`, `sms`, or `push`. The REST API and configuration are organized by channel.
 
-Each channel has exactly one **active provider** at any time. When you activate a provider for a channel, any previously active provider on that channel is automatically deactivated. Consumers never specify which provider to use — they just say "send an email" and the service routes to whatever is active.
+Each channel has at most one **active provider** at any time. When you activate a provider for a channel, any previously active provider on that channel is automatically deactivated. Consumers never specify which provider to use — they just say "send an email" and the service routes to whatever is active.
 
 ```
 Channel           Active Provider
@@ -18,7 +18,7 @@ push       ──▶    (none — planned)
 
 ## Providers
 
-A **provider** is a cloud service that handles actual message delivery for a channel. The Notification Service ships with Azure Communication Services (ACS) support for email and SMS. The architecture supports adding providers like SendGrid, Twilio, or AWS SES/SNS without changing the API.
+A **provider** is a cloud service that handles actual message delivery for a channel. Azure Communication Services (ACS) is available today for email and SMS. Additional providers (such as SendGrid or Twilio) are planned and will not require API changes for senders.
 
 Currently available providers:
 
@@ -38,14 +38,14 @@ All subsequent sends use the new provider. No consumer changes needed.
 
 ## Credential Model
 
-The Notification Service separates credential configuration from credential storage:
+Provider configurations reference secrets by name rather than containing them:
 
-- The **admin API** stores the *name* of the environment variable that holds each secret (e.g., `"connectionString": "ACS_CONNECTION_STRING"`)
-- The **runtime environment** holds the actual secret values (via Kubernetes Secrets, Helm values, or environment configuration)
+- The **admin API** takes the *name* of the environment variable that holds each secret (e.g., `"connectionString": "ACS_CONNECTION_STRING"`)
+- The **service's deployment** holds the actual secret value (set by your environment administrator, e.g. through the Helm chart's secret values)
 
 This means:
-- Secrets never appear in API responses or database records
-- You can rotate credentials by updating the environment variable — no service reconfiguration needed
+- Secrets never appear in API responses
+- Credentials can be rotated by updating the secret value — no provider reconfiguration needed
 - The `validate` endpoint confirms that required environment variables are present and credentials work
 
 ### Provider Config Structure
@@ -104,8 +104,10 @@ Every send request returns a `SendResult`:
 | `accepted` | Request received, send in progress |
 | `sent` | Provider accepted the message for delivery |
 | `failed` | Send attempt failed (see `error` field) |
-| `delivered` | Recipient confirmed delivery (planned — via provider webhooks) |
-| `bounced` | Message bounced (planned — via provider webhooks) |
+| `delivered` | Recipient confirmed delivery (planned — not yet reported) |
+| `bounced` | Message bounced (planned — not yet reported) |
+
+Today `sent` is the last status you will see for a successful send: it means the provider accepted the message, not that it reached the inbox.
 
 ### HTTP Response Codes
 
@@ -125,6 +127,15 @@ Provider-specific errors are normalized into a standard set of error codes:
 | `INVALID_RECIPIENT` | Provider rejected the recipient address or phone number |
 | `PROVIDER_ERROR` | Unclassified provider failure |
 | `MISSING_CREDENTIALS` | Required environment variable is not set |
+
+## Designing Your App Around Notifications
+
+- **Derive idempotency keys from the business event**, and reuse the same key on every retry. This makes it safe to retry from a workflow step that may be re-run.
+- **Store the notification `id`** (for example in the entity that triggered it) so you can show status or investigate later with `GET /notifications/{id}`.
+- **Use `correlationId`** to tie a notification back to the workflow run or request that sent it.
+- **Render content in your bundle.** The service sends what you give it; build HTML/text (and attachments) before calling it.
+- **Handle `CHANNEL_DISABLED` gracefully.** The service is opt-in and a channel may have no active provider; decide whether your workflow should fail, retry later, or continue without notifying.
+- **Treat provider errors as retryable or not.** `RATE_LIMITED` and `PROVIDER_ERROR` are worth retrying with backoff (same idempotency key); `INVALID_RECIPIENT` and `VALIDATION_ERROR` are not.
 
 ## Related
 

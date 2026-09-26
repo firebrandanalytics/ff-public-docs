@@ -2,90 +2,77 @@
 
 ## Overview
 
-The Context Service is FireFoundry's persistence and memory layer for agent bundles. It serves two distinct roles: **working memory** (blob storage for entities) and **chat history** (conversation reconstruction from the entity graph). Both surfaces are accessible to agents via gRPC and through the `@firebrandanalytics/cs-client` TypeScript client library.
+The Context Service gives agent bundles two kinds of memory: **working memory** (files and blobs attached to entities) and **chat history** (conversation messages reconstructed from the entity graph). Agent bundles use it through the Agent SDK or the `@firebrandanalytics/cs-client` TypeScript client over gRPC.
 
 ## Purpose and Role in Platform
 
-Agents are stateless by design. The Context Service provides the persistence layer that transforms ephemeral agent interactions into stateful workflows. When a bot needs access to files uploaded by a user, documents stored across pipeline stages, or the full conversation history of the current session, it communicates with the Context Service through standardized gRPC protocols.
+Agent bundles are stateless by design. When a bot needs a file a user uploaded, a document produced by an earlier pipeline stage, or the conversation so far in the current session, it asks the Context Service. You use it to:
 
-This architectural separation lets agents focus on logic while delegating all state management to a centralized service — one that integrates with the entity graph, cloud blob storage, and MCP-compatible tooling.
+- Keep binary content (PDFs, images, CSVs, generated documents, code) out of entity data while keeping it linked to the entity it belongs to
+- Give chat bots conversation history without maintaining a separate message log
+- Let MCP-compatible coding agents read and write working memory through tool calls
 
 ## Key Features
 
-- **Working Memory**: Upload, retrieve, list, and delete binary files (PDFs, images, CSVs, code) alongside JSON metadata. Backed by Azure Blob Storage or GCS, with automatic provider detection.
-- **Chat History**: Retrieve conversation messages for any entity node, reconstructed by traversing the entity graph. Supports named CEL-based mapping rules for apps with custom entity models.
-- **Context Assembly**: Compose rich context payloads from entity graph data using registered CEL mapping pipelines. Used internally by the SDK's `ChatHistoryPromptGroup`.
-- **MCP Integration**: Expose working memory and blob operations as MCP tools, accessible to Claude Code, Codex, and other MCP-compatible coding agents.
-- **Streaming File I/O**: Bidirectional streaming for large file uploads; server-streaming for downloads.
-- **Manifest API**: Hierarchical view of working memory organized by entity relationships and memory types.
+- **Working Memory**: Upload, retrieve, list, and delete files with JSON metadata, linked to an entity node and addressable by a `working_memory_id`
+- **Streaming File I/O**: Streaming uploads and downloads for large files (the client handles chunking)
+- **Manifest API**: Hierarchical view of working memory across related entities, filterable by memory type
+- **Chat History**: Ordered `ChatMessage[]` for any entity node, reconstructed by traversing the entity graph
+- **Named Mappings**: Register CEL-based mapping rules so history works with your own conversation entity model
+- **MCP Integration**: Working memory exposed as MCP tools for Claude Code, Codex, and other MCP-compatible agents
 
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    Consumers                                  │
-│         (Agent SDK, cs-client, MCP-compatible tools)         │
-└───────────────────────────────┬──────────────────────────────┘
-                                │ gRPC (Connect-RPC)
-┌───────────────────────────────▼──────────────────────────────┐
-│                  Context Service                              │
-│                                                              │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────┐  │
-│  │ Working Memory  │  │  Chat History   │  │   Context   │  │
-│  │ (WM Records +   │  │  (Entity Graph  │  │  Assembly   │  │
-│  │  Blob Storage)  │  │   Traversal)    │  │ (CEL Pipel.)│  │
-│  └────────┬────────┘  └───────┬─────────┘  └──────┬──────┘  │
-│           │                   │                    │         │
-│  ┌────────▼────────┐  ┌───────▼─────────────────── ▼──────┐  │
-│  │ BlobStorage     │  │        IEntityGraphClient         │  │
-│  │ (Azure / GCS)   │  │   (Entity Service REST API)       │  │
-│  └─────────────────┘  └───────────────────────────────────┘  │
-│  ┌─────────────────┐  ┌───────────────────────────────────┐  │
-│  │  PostgreSQL     │  │       MappingRegistry             │  │
-│  │  (WM Metadata)  │  │  (Named CEL Rules per App)        │  │
-│  └─────────────────┘  └───────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
-```
-
-### Internal Components
-
-| Component | Purpose |
-|-----------|---------|
-| **ChatHistoryService** | Traverses entity graph to reconstruct message history for a node |
-| **ContextAssemblyService** | Applies named CEL mapping pipelines to produce ordered `ChatMessage[]` |
-| **MappingRegistry** | In-memory per-app store of named CEL mapping rules |
-| **BlobStorageFactory** | Detects cloud provider and creates the appropriate `BlobStorage` adapter |
-| **MCPPostgresServer** | Exposes working memory operations as MCP tools (PostgreSQL-backed) |
-
-### What the Context Service Does Not Own
-
-- **The entity graph** — that belongs to the Entity Service. The Context Service calls the Entity Service gRPC API for all graph traversal.
-- **Conversation routing** — the Broker handles LLM completion routing; context is assembled here but the broker sends it to the model.
-- **Agent logic** — bots and entities live in agent bundles. The Context Service is passive storage + retrieval infrastructure.
-
-## Repository Structure
-
-The Context Service is a TypeScript monorepo managed by pnpm workspaces:
+## Architecture Overview
 
 ```
-context-service/
-├── packages/
-│   ├── transport/        @firebrandanalytics/context-svc-proto — gRPC proto + generated types
-│   ├── cs-client/        @firebrandanalytics/cs-client — TypeScript client library
-│   └── db/               Database schema and Drizzle ORM client
-└── services/
-    └── context-service/  Service implementation
+┌──────────────────────────────────────────────────────────┐
+│  Your Agent Bundle                                        │
+│  (SDK: WorkingMemoryProvider, ChatHistoryBotMixin,        │
+│   ChatHistoryPromptGroup · or cs-client directly)         │
+└───────────────┬──────────────────────────────────────────┘
+                │ gRPC (Connect-RPC)          ┌─────────────────────┐
+                │                             │ MCP-compatible      │
+                ▼                             │ coding agents       │
+┌──────────────────────────────────┐◀────────┤ (tool calls)        │
+│         Context Service          │          └─────────────────────┘
+│  working memory · chat history   │
+└───────┬───────────────────┬──────┘
+        │                   │
+        ▼                   ▼
+┌───────────────┐   ┌──────────────────────┐
+│ Object storage│   │ Entity Service       │
+│ (your env's   │   │ (conversation graph  │
+│  file store)  │   │  that history reads) │
+└───────────────┘   └──────────────────────┘
 ```
+
+What the Context Service does **not** own:
+
+- **The entity graph** — that belongs to the [Entity Service](../entity-service/README.md). Chat history reads whatever your bundle wrote to the graph.
+- **LLM calls** — the Broker sends prompts to models; history is fetched here and injected into the prompt by the SDK.
+- **Agent logic** — bots and entities live in your agent bundle.
 
 ## Documentation
 
-- **[Concepts](./concepts.md)** — Working memory, blob storage, chat history, context assembly, MCP integration
+- **[Concepts](./concepts.md)** — Working memory, chat history, mappings, MCP integration, and design guidance
 - **[Getting Started](./getting-started.md)** — Connect the client, upload a file, retrieve chat history, register a mapping
-- **[Reference](./reference.md)** — Full gRPC API, environment variables, error codes
+- **[Mapping Examples](./mapping-examples.md)** — Two worked conversation graph designs and their mappings
+- **[Reference](./reference.md)** — gRPC API, client library methods, error codes
+- **[Operations](./operations.md)** — Enabling the service, connecting a bundle, verifying, limits, and troubleshooting
+
+## Version and Maturity
+
+- **Current Version**: 3.2.1
+- **Deployment**: Enabled by default in `firefoundry-core`
+
+## Repository
+
+Source code: `context-service` (TypeScript monorepo). Client packages: `@firebrandanalytics/cs-client` (client library) and `@firebrandanalytics/context-svc-proto` (gRPC definitions and generated types).
 
 ## Related
 
 - [Platform Services Overview](../README.md)
+- [Platform Architecture](../../architecture.md)
 - [Agent SDK — Chat History Guide](../../../sdk/agent_sdk/guides/chat-history.md)
 - [Agent SDK — Working Memory Guide](../../../sdk/agent_sdk/guides/working-memory.md)
+- [ff-wm-read CLI](../../../sdk/cli-tools/ff-wm-read.md) / [ff-wm-write CLI](../../../sdk/cli-tools/ff-wm-write.md) — Inspect and modify working memory
 - [Entity Service](../entity-service/README.md)
