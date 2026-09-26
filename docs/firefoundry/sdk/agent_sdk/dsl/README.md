@@ -243,6 +243,7 @@ The server supports multiple bundle source types via environment variables:
 - **[Reference Guides](reference/)** -- complete element and attribute reference for each DSL
 - **[Examples](examples/)** -- annotated example bundles and walkthroughs
 - **[E2E Bundle Walkthrough](examples/xml-e2e-bundle.md)** -- step-by-step analysis of a real deployed bundle using all four DSLs
+- **[XML DSL Demo Tutorial](../tutorials/xml-dsl-demo/README.md)** -- guided tour of the Content Analyzer demo bundle running via xml-bundle-server (zero TypeScript)
 
 ## Architecture
 

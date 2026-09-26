@@ -107,7 +107,8 @@ The XML DSL system provides four domain-specific languages that let you define p
 - **[Getting Started Tutorial](dsl/getting-started-tutorial.md)** - Build a complete Sentiment Analyzer bundle from scratch
 - **[Advanced Patterns](dsl/advanced-patterns-tutorial.md)** - Conditionals, loops, mixins, entity orchestration, error handling
 - **[Reference Guides](dsl/reference/)** - Complete element and attribute documentation for all four DSLs
-- **[E2E Example](dsl/examples/xml-e2e-bundle.md)** - Annotated walkthrough of a real deployed bundle
+- **[E2E Example](dsl/examples/xml-e2e-bundle.md)** - Annotated walkthrough of a real deployed bundle (TypeScript wiring)
+- **[XML DSL Demo Tutorial](tutorials/xml-dsl-demo/README.md)** - Guided tour of the Content Analyzer demo: BundleML, AgentML, BotML, PromptML, and zero-TypeScript deployment via xml-bundle-server
 
 | DSL | Extension | Defines |
 |-----|-----------|---------|
@@ -171,9 +172,9 @@ Learn specific capabilities and patterns for advanced use cases:
 Discover shared utility libraries and patterns used throughout FireFoundry:
 
 ### Validation & Type Safety
-- **[Validation Library - Getting Started](../utils/validation-library-getting-started.md)** - Core concepts and basic usage of the powerful data validation framework
-- **[Validation Library - Intermediate](../utils/validation-library-intermediate.md)** - Advanced patterns, conditional logic, AI-powered transformations
-- **[Validation Library - Complete Reference](../utils/validation-library-reference.md)** - Full API reference for all validators, coercers, and decorators
+- **[Validation Library - Getting Started](../utils/validation/validation-library-getting-started.md)** - Core concepts and basic usage of the powerful data validation framework
+- **[Validation Library - Intermediate](../utils/validation/validation-library-intermediate.md)** - Advanced patterns, conditional logic, AI-powered transformations
+- **[Validation Library - Complete Reference](../utils/validation/validation-library-reference.md)** - Full API reference for all validators, coercers, and decorators
 
 ### Async & Streaming
 - **[Async Streams Library](../utils/async-streams/README.md)** - Composable async streaming, fluent pipeline chains, and task scheduling with dependency graphs and multi-resource capacity
