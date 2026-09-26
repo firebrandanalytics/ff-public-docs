@@ -2,104 +2,69 @@
 
 ## Overview
 
-The Log Proxy Service is FireFoundry's centralized log pipeline. Services and agent bundles send structured log entries to it over gRPC. The proxy routes each entry to one or more **streams**, applies each stream's **redaction** and **encryption** rules, writes the result to a **durable on-disk buffer**, and forwards it to an **OTLP-compatible backend** such as an OpenTelemetry Collector. Along the way it keeps a local, searchable index of recent log metadata and can push matching logs live to WebSocket subscribers.
+The Log Proxy Service is an optional, central log pipeline for your FireFoundry environment. Your agent bundles and apps send structured log entries to it over gRPC. The proxy **redacts** sensitive data (emails, card numbers, API keys, fields you name), optionally **encrypts** messages and payloads, forwards the result to an **OTLP-compatible backend** such as an OpenTelemetry Collector, and keeps a **7-day searchable index** you can query or **live-tail** while you debug.
 
-It is a **System service** and is **opt-in**: `firefoundry-core` ships it disabled (`log-proxy-service.enabled: false`). Application code does not need to call it. When it is enabled, the log producers you configure send their logs through it, and operators work with the results through the search API, the live stream, or the backend it forwards to.
+It is a **System service** and is **opt-in**: `firefoundry-core` ships it disabled (`log-proxy-service.enabled: false`). Nothing is sent to it unless your app sends logs there.
 
 ## Purpose and Role in Platform
 
-Without a central proxy, each service logs straight to its own backend. Redaction policy is inconsistent, it is easy to leak PII or credentials into logs by accident, and changing backends means touching every service. The Log Proxy sits between producers and backends:
+Without a central proxy, each bundle logs straight to wherever its container output ends up. Redaction is left to each developer, and it is easy to leak customer PII or credentials into logs. The Log Proxy gives your app:
 
-```
-Producers ──gRPC──▶ Log Proxy ──▶ [route] ──▶ [redact] ──▶ [encrypt] ──▶ disk buffer ──▶ OTLP backend
-                                                      │
-                                                      ├──▶ local search index (7 days)
-                                                      └──▶ WebSocket live tail
-```
-
-It gives the platform:
-
-- **One ingestion endpoint** for every log producer, with backpressure signalling so producers slow down instead of overwhelming it
-- **Central privacy policy.** Pattern-based PII and credential redaction runs before anything is stored or forwarded.
-- **Durability across backend outages.** A log segment is deleted only after every target exporter has accepted it.
-- **Recent-log search** without querying the long-term backend
+- **One ingestion endpoint** for all of your bundles' logs, with backpressure hints so a chatty bundle slows down instead of overwhelming it
+- **Central redaction policy** applied before anything is stored, streamed or forwarded, so a bundle that accidentally logs an email address or card number doesn't leak it
+- **Recent-log search and live tail** by service, level, trace ID, tag or attribute, without going to your long-term backend
+- **Backend choice without code changes.** Your bundles talk to the proxy, and the proxy forwards to whichever OTLP endpoint your environment points it at.
 
 ## Key Features
 
-- **gRPC ingestion.** Bidirectional streaming (`Ingest`) for high-volume producers and unary `IngestBatch` for simple clients. The server speaks gRPC, gRPC-Web and the Connect protocol.
-- **Stream routing.** Each log is matched against admin-defined streams by service, level, tags or message regex, and is processed once for *every* stream it matches.
-- **Pattern redaction.** Built-in detectors for emails, phone numbers, credit cards, US SSNs, IPv4 addresses and API keys. You can add custom regex patterns and list attribute keys to blank out completely.
-- **AES-256-GCM encryption.** Each stream can encrypt the log message and/or the binary payload.
-- **Durable disk buffer.** Logs are appended to NDJSON segment files, flushed on a timer and acknowledged only after a successful export. The buffer applies load-shedding at high usage.
-- **OTLP/HTTP export.** Logs are forwarded as OTLP JSON to any OpenTelemetry-compatible endpoint.
-- **Search API.** A SQLite index of redacted log metadata with time-range, service, level, trace, tag and attribute filters, plus aggregations. It keeps 7 days.
-- **Live tail.** A WebSocket endpoint streams matching logs to subscribers in real time.
-- **Operational endpoints.** Health, readiness, status, Prometheus and JSON metrics, and an OpenAPI document.
+- **gRPC ingestion.** Unary `IngestBatch` for simple clients and bidirectional `Ingest` streaming for high-volume producers. The server speaks gRPC, gRPC-Web and the Connect protocol.
+- **Pattern redaction.** Built-in detectors for emails, phone numbers, credit cards, US SSNs, IPv4 addresses and API keys, plus your own regex patterns and a list of attribute keys to blank out.
+- **Streams.** Named policies that match logs by service, level, tag or message pattern and apply their own redaction, encryption and sampling. Use one to give a sensitive bundle a stricter policy.
+- **Optional AES-256-GCM encryption** of the message and/or payload, per stream.
+- **OTLP/HTTP export** to any OpenTelemetry-compatible endpoint.
+- **Search API** over the last 7 days of log metadata, with filters and aggregations.
+- **Live tail** over WebSocket, filtered by service, level, stream, tag or trace.
 
 ## Architecture Overview
 
 ```
-┌──────────────────────────┐       ┌────────────────────────────┐
-│ gRPC / Connect  :50051   │       │ HTTP API (Elysia)   :3000  │
-│  Ingest (bidi stream)    │       │  /health /ready /status    │
-│  IngestBatch (unary)     │       │  /metrics /openapi         │
-│  Health                  │       │  /api/v1/logs/*  (search)  │
-└────────────┬─────────────┘       │  /admin/*        (admin)   │
-             │                     └────────────────────────────┘
-             ▼                       admin edits streams; search
-┌──────────────────────────────────┐ reads the index
-│ Processing Pipeline              │
-│  1. StreamRouter (match streams) │
-│  2. RedactionEngine (patterns)   │
-│  3. MetadataExtractor            │
-│  4. EncryptionService (AES-GCM)  │
-└───┬──────────────┬───────────┬───┘
-    │              │           │
-    ▼              ▼           ▼
-┌──────────┐ ┌────────────┐ ┌──────────────────┐
-│ Buffer   │ │ Search     │ │ WebSocket  :8081 │
-│ Manager  │ │ Index      │ │ /ws/stream       │
-│ (NDJSON  │ │ (SQLite,   │ │ (live tail)      │
-│ segments │ │  7 days)   │ └──────────────────┘
-│ on disk) │ └────────────┘
-└────┬─────┘
-     │ flush on a timer; segment acknowledged only on success
-     ▼
 ┌──────────────────────────┐
-│ Exporter Manager         │──▶ OTLP/HTTP endpoint (e.g. OpenTelemetry Collector)
-│  otlp-default            │
-└──────────────────────────┘
+│ Your agent bundles / apps│
+│  (Connect/gRPC client)   │
+└────────────┬─────────────┘
+             │ IngestBatch / Ingest  (gRPC, port 50051)
+             ▼
+┌───────────────────────────────────────────┐        ┌──────────────────────────────┐
+│ Log Proxy Service                         │  OTLP  │ Your log backend             │
+│  match streams → redact → encrypt (opt.)  │──HTTP─▶│ (OpenTelemetry Collector →   │
+│  durable delivery to the backend          │        │  Loki, Datadog, Azure, ...)  │
+└───────┬───────────────────────┬───────────┘        └──────────────────────────────┘
+        │                       │
+        ▼                       ▼
+  Search API (port 3000)   Live tail (WebSocket, port 8081)
+  last 7 days, redacted    redacted logs as they arrive
+        ▲                       ▲
+        └───── you, your tools, dashboards ─────┘
 ```
 
-**Core components:**
-
-- **LogIngestionServer**: the HTTP/2 Connect RPC server that implements `firefoundry.logproxy.v1.LogIngestionService`
-- **ProcessingPipeline / StreamRouter**: fan out each entry to its matching streams and apply per-stream processing
-- **RedactionEngine / PatternMatcher**: regex redaction of the message, attributes and text payloads
-- **EncryptionService**: AES-256-GCM encryption with a key supplied through `ENCRYPTION_KEY`
-- **BufferManager / LocalDiskBuffer**: segment-based disk buffer with backpressure states (`normal`, `pressure`, `critical`)
-- **ExporterManager / OtlpExporter**: sends each log to the exporters its stream lists
-- **SearchIndexWriter / SearchService**: SQLite metadata index stored in the buffer directory
-- **WebSocketServer / SubscriptionManager**: filtered live streaming to connected clients
+Everything downstream of the proxy (search, live tail and the backend) sees only the **redacted** (and, where configured, encrypted) form of your logs.
 
 ## Documentation
 
-- **[Concepts](./concepts.md)**: streams, the processing pipeline, redaction, encryption, buffering, backpressure, export and search
-- **[Getting Started](./getting-started.md)**: enable the service, send your first logs, search them, define a stream and tail logs live
-- **[Reference](./reference.md)**: the gRPC API, every HTTP endpoint, the WebSocket protocol, error formats and environment variables
-- **[Operations](./operations.md)**: Helm deployment, configuration, health checks, scaling, security, monitoring and troubleshooting
+- **[Concepts](./concepts.md)**: the log entry, streams, redaction, encryption, delivery and search
+- **[Getting Started](./getting-started.md)**: enable the service, send logs from a bundle, see redaction, search, add a stricter stream and tail logs live
+- **[Reference](./reference.md)**: the gRPC ingestion API and proto, the search, stream and live-tail APIs, and errors
+- **[Operations](./operations.md)**: enabling and configuring it for your app, verifying, limits and troubleshooting
 
 ## Version and Maturity
 
 - **Service version**: 0.2.0 (the version this documentation describes)
-- **Helm chart**: `log-proxy-service` 0.1.2, included in `firefoundry-core` as an opt-in dependency
-- **Default image tag in the chart**: `0.1.1`. Features added in 0.2.0 (the `/openapi` document, telemetry events, `x-trace-id`/`x-span-id` propagation) need a 0.2.0 image.
-- **Maturity**: **Preview.** The ingestion, redaction, encryption, buffering, OTLP export, search and live-tail paths are implemented and working. Several parts are not yet production-complete:
-  - Stream configuration lives in memory and is lost when the pod restarts.
-  - Only the OTLP exporter can be configured.
-  - Some admin endpoints return a validation error even when the change succeeds. See [Operations — Known Issues](./operations.md#known-issues).
-
-**Not yet implemented** (exists in design documents or as unwired code): LLM-assisted redaction, decryption through the API, persistent stream and exporter configuration, and configuring the Azure, GCP, AWS and Datadog exporters.
+- **Helm chart**: `log-proxy-service` 0.1.2, an opt-in dependency of `firefoundry-core`. The chart's default image tag is `0.1.1`; ask your environment administrator for a 0.2.0 image to get everything described here.
+- **Maturity**: **Preview.** Ingestion, redaction, encryption, OTLP export, search and live tail work. Limitations to design around:
+  - There is no FireFoundry SDK logger integration yet. Bundles send logs with a Connect/gRPC client (see [Getting Started](./getting-started.md#step-3-send-logs-from-your-bundle)).
+  - Custom streams are held in memory and must be re-applied after the proxy restarts.
+  - Only an OTLP/HTTP backend can be configured.
+  - There is no decryption API, and LLM-assisted redaction is not implemented.
 
 ## Repository
 
@@ -109,5 +74,4 @@ Source code: [ff-services-log-proxy](https://github.com/firebrandanalytics/ff-se
 
 - [Platform Services Overview](../README.md)
 - [Telemetry Service](../telemetry-service/README.md): request telemetry, which is separate from application logs
-- [Platform Operations](../../operations.md)
 - [firefoundry-core Chart Reference](../../../../ff_local_dev/chart-reference.md)
