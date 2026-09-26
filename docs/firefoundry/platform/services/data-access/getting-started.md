@@ -4,16 +4,12 @@ This tutorial walks through the Data Access Service from first connection to cro
 
 ## Prerequisites
 
-- Data Access Service deployed and accessible
+- Data Access Service enabled in your environment and reachable (see [Operations](./operations.md))
 - API key for authentication
 - At least one database connection configured
-- The `ff-da` CLI tool installed
+- The `ff-da` CLI tool installed (see the [ff-da CLI reference](../../../sdk/cli-tools/ff-da.md))
 
-### Install the CLI
-
-```bash
-go install github.com/firebrandanalytics/ff-services-data-access/cmd/ff-da@latest
-```
+> **Calling from an agent bundle?** This tutorial uses the CLI and `curl` so you can see each request. In bundle code, use the `@firebrandanalytics/data-access-client` TypeScript package instead — see [Client Libraries](./reference.md#client-libraries) and the [Query Explainer tutorial](../../../sdk/agent_sdk/tutorials/query-explainer/part-02-das-client.md).
 
 ### Configure
 

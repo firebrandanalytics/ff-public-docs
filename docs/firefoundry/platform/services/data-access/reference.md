@@ -183,7 +183,7 @@ message StagedQueryDetail {
   int32 row_count = 4;
   int64 byte_size = 5;
   int32 duration_ms = 6;
-  bool reloaded_from_cold = 7;        // For scratch pad cold reloads
+  bool reloaded_from_cold = 7;        // True if a scratch pad table had to be reloaded before use
   string error = 8;                   // Error if this staged query failed
   string sql_hash = 9;               // Hash for audit correlation
 }
@@ -705,19 +705,14 @@ Response includes total queries, error rate, average duration, top connections, 
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/admin/scratch` | List all scratch pads |
-| GET | `/admin/scratch/stats` | Aggregate scratch pad stats |
 | GET | `/admin/scratch/{identity}` | Get scratch pad detail for an identity |
 | GET | `/admin/scratch/{identity}/tables` | List tables in a scratch pad |
-| GET | `/admin/scratch/{identity}/state` | Get hot/cold state |
-| POST | `/admin/scratch/{identity}/freeze` | Move to cold storage |
-| POST | `/admin/scratch/{identity}/thaw` | Restore from cold storage |
 | DELETE | `/admin/scratch/{identity}` | Purge entire scratch pad |
 | DELETE | `/admin/scratch/{identity}/tables/{table}` | Drop a single table |
 
 ### Scratch Pad Provenance API
 
-Provenance endpoints require a PostgreSQL backend (`PG_HOST`).
+Provenance is recorded only when the service runs with its persistent metadata store (the standard FireFoundry deployment); otherwise these endpoints return no records.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -913,9 +908,12 @@ Returns `201 Created` with the new provenance record. The table name is auto-gen
 
 ### Credential Methods
 
+The `credentials.method` field of a connection definition selects how the service obtains database credentials. In every case the secret itself is provisioned by your environment administrator; the connection only references it by name.
+
 | Method | Description |
 |--------|-------------|
-| `env` | Read username/password from environment variables |
+| `env` | Read username/password from environment variables available to the service (named in `envMappings`) |
+| `k8s_secret` | Read the password from a Kubernetes Secret in the service's namespace (must be enabled by your environment administrator) |
 | `service_principal` | OAuth2 client credentials (Azure AD) |
 | `managed_identity` | Azure/GCP managed identity |
 | `none` | No credentials (SQLite) |
@@ -943,37 +941,53 @@ See [Data Wrangling Guide](./wrangling.md) for WrangleSpec format, column rules,
 | `/health` | No | Service liveness |
 | `/health/live` | No | Liveness probe |
 | `/health/ready` | No | Readiness (checks database connections) |
-| `/debug/pools` | Yes | Connection pool statistics |
 
 ## Configuration
 
-### Connection Configuration (YAML)
+### Connection Definition Body
 
-```yaml
-connections:
-  - name: warehouse
-    type: postgresql          # postgresql | mysql | sqlite
-    description: Production data warehouse
-    config:
-      host: warehouse.internal
-      port: 5432
-      database: analytics
-      sslMode: require
-    credentials:
-      method: env
-      envMappings:
-        username: PG_WAREHOUSE_USER
-        password: PG_WAREHOUSE_PASSWORD
-    pool:
-      maxOpen: 25
-      maxIdle: 5
-      maxLifetime: 30m
-    limits:
-      maxRows: 100000
-      queryTimeout: 30s
+Used with `POST /admin/connections` and `PUT /admin/connections/{name}`:
+
+```json
+{
+  "name": "warehouse",
+  "type": "postgresql",
+  "description": "Production data warehouse",
+  "allow_raw_sql": false,
+  "config": {
+    "host": "warehouse.example.com",
+    "port": 5432,
+    "database": "analytics",
+    "sslMode": "require"
+  },
+  "credentials": {
+    "method": "env",
+    "envMappings": {
+      "username": "PG_WAREHOUSE_USER",
+      "password": "PG_WAREHOUSE_PASSWORD"
+    }
+  },
+  "pool": { "maxOpen": 25, "maxIdle": 5, "maxLifetime": "30m" },
+  "limits": {
+    "maxRows": 100000,
+    "maxBytes": 10485760,
+    "queryTimeout": "30s",
+    "requestsPerMinute": 100
+  }
+}
 ```
 
+| Field | Description |
+|-------|-------------|
+| `type` | Database type, e.g. `postgresql`, `mysql`, `sqlite` (see [Database Support](./README.md#database-support)) |
+| `allow_raw_sql` | Allow raw SQL (`query`/`execute`) on this connection. Set `false` to require AST queries |
+| `credentials` | Reference to provisioned credentials — see [Credential Methods](#credential-methods). Inline passwords are rejected |
+| `pool` | Connection pool size and lifetime |
+| `limits` | Per-connection caps on rows, response bytes, query time, and request rate. Request-level `QueryOptions` can lower but not raise these |
+
 ### ACL Configuration (YAML)
+
+ACL rules and the function blacklist are loaded by the service at startup, so they are applied by your environment administrator. This is the shape of the entries to request for your app's identities:
 
 ```yaml
 acl:
@@ -1010,21 +1024,7 @@ function_blacklist:
       - pg_catalog
 ```
 
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GRPC_PORT` | `50051` | gRPC server port |
-| `HTTP_PORT` | `8080` | HTTP server port (admin + REST gateway) |
-| `API_KEY` | `dev-api-key` | API key for authentication |
-| `PG_HOST` | — | FireFoundry PostgreSQL host (enables PG persistence for views, annotations, connections) |
-| `PG_PORT` | `5432` | FireFoundry PostgreSQL port |
-| `PG_PASSWORD` | — | Password for `fireread` user (read-only operations) |
-| `PG_INSERT_PASSWORD` | — | Password for `fireinsert` user (write operations) |
-| `PG_DATABASE` | `ff_int_dev_clone` | FireFoundry PostgreSQL database name |
-| `SCRATCH_DIR` | `/tmp/data-access-scratch` | Directory for scratch pad SQLite databases |
-| `LOG_LEVEL` | `info` | Logging level (`info` or `debug`) |
-| `ENABLE_REFLECTION` | `false` | Enable gRPC reflection |
+For enabling the service and the settings an app team configures, see [Operations](./operations.md).
 
 ## Scratch Pad Reference
 
@@ -1036,10 +1036,9 @@ Scratch pad connections follow the pattern `scratch:<identity>`:
 
 ### Behavior
 
-- **Auto-creation**: Scratch databases are created on first `save_as`
+- **Auto-creation**: A scratch pad is created on the first `save_as` (or CSV upload) for an identity
 - **Idempotent saves**: `save_as` drops and recreates the table if it exists
-- **WAL mode**: SQLite databases use WAL mode for concurrent read access
-- **Storage**: Files stored in `SCRATCH_DIR` as `{identity_hash}.db`
+- **Dialect**: Scratch pads are SQLite databases — use SQLite syntax when querying them
 - **ACL**: Scratch connections are implicitly authorized for the owning identity
 
 ### Limits
@@ -1069,22 +1068,6 @@ Scratch pad connections follow the pattern `scratch:<identity>`:
 | `RESOURCE_EXHAUSTED` | 429 | Staged query limits exceeded (rows, bytes, count) |
 | `DEADLINE_EXCEEDED` | 504 | Query timeout |
 | `INTERNAL` | 500 | Database error, serialization failure |
-
-## Deployment
-
-### Kubernetes
-
-- **Single binary**: No runtime dependencies beyond database connectivity
-- **Stateless**: All state is in target databases, the FireFoundry PostgreSQL backend, and scratch pad directory
-- **Liveness/readiness probes**: `/health/live` and `/health/ready`
-- **Credential injection**: Environment variables from Kubernetes secrets
-- **Credential rotation**: Call `/admin/connections/{name}/rotate` after secret updates
-- **Scratch pad**: Mount a persistent volume at `SCRATCH_DIR` for durable scratch data
-
-### Dependencies
-
-- **Go 1.22+** (build time only)
-- **Target databases**: At least one of PostgreSQL 13+, MySQL 8+, or SQLite 3.35+
 
 ## Ontology Service (gRPC)
 
@@ -1240,7 +1223,7 @@ All data plane operations are logged with:
 - `queryId` — Unique per request
 - `identity` — Authenticated caller
 - `connection` — Target connection
-- `sqlHash` — SHA256 prefix of SQL (for grouping without storing raw SQL)
+- `sqlHash` — Hash of the SQL (for grouping similar queries without exposing raw SQL)
 - `status` — success, truncated, error, denied
 - `durationMs` — Execution time
 - `rowCount` — Rows returned or affected
@@ -1248,6 +1231,24 @@ All data plane operations are logged with:
 Staged query operations log each staged query individually with the same fields plus tier number.
 
 ## Client Libraries
+
+### TypeScript (agent bundles)
+
+Agent bundles should use the published `@firebrandanalytics/data-access-client` package:
+
+```typescript
+import { DataAccessClient } from '@firebrandanalytics/data-access-client';
+
+const dasClient = new DataAccessClient({
+  serviceUrl: process.env.FF_DATA_SERVICE_URL || 'http://localhost:8080',
+});
+
+const schema = await dasClient.getSchema('firekicks');
+const plan = await dasClient.explainSQL('firekicks', { sql: 'SELECT * FROM orders LIMIT 10' });
+const tables = await dasClient.dictionaryTables({ connection: 'firekicks' });
+```
+
+The client sends the platform's function identity headers automatically when running inside an agent bundle, propagates request IDs for tracing, and converts HTTP errors into typed exceptions (`PermissionDeniedError`, `QueryError`, `TimeoutError`, and so on). See the [Query Explainer tutorial, Part 2](../../../sdk/agent_sdk/tutorials/query-explainer/part-02-das-client.md) for a full walkthrough.
 
 ### Python
 
@@ -1291,19 +1292,19 @@ connections = client.list_connections()
 client.test_connection("firekicks", verbose=True)
 ```
 
-The client supports both `requests` and `httpx` as HTTP backends. Source: `clients/python/ff_data_access.py` in the DAS repository.
+The client supports both `requests` and `httpx` as HTTP backends.
 
 ## Troubleshooting
 
 | Issue | Cause | Resolution |
 |-------|-------|------------|
-| `PermissionDenied` on query | Identity not in ACL for connection | Add identity via the ACL admin API |
-| `PermissionDenied` on table | Table in `tables_deny` list | Remove from deny list or use different identity |
-| `InvalidArgument: function blocked` | Function in blacklist | Use different function or adjust blacklist |
+| `PermissionDenied` on query | Identity not in ACL for connection | Ask your environment administrator to add the identity to the ACL configuration |
+| `PermissionDenied` on table/column | Table or column denied for this identity | Use a different identity, query a stored view that omits the column, or ask your administrator to change the ACL |
+| `InvalidArgument: function blocked` | Function in blacklist | Use a different function |
 | `InvalidArgument: AST validation` | Malformed AST structure | Check required fields, identifier format, depth |
 | `InvalidArgument: duplicate staged alias` | Two staged queries with same alias | Use unique aliases |
 | `InvalidArgument: cycle detected` | Circular staged query dependencies | Remove circular references |
-| `ResourceExhausted: staged row limit` | Staged query returned too many rows | Add WHERE clause or increase limit |
-| Connection timeout | Database unreachable | Check network, credentials, pool config |
+| `ResourceExhausted: staged row limit` | Staged query returned too many rows | Filter or aggregate the staged query so it returns fewer rows |
+| Connection timeout | Database unreachable | Run `POST /admin/connections/{name}/test`; check host, network reachability from the cluster, and that the referenced credentials are provisioned |
 | `NotFound: connection` | Connection not configured | Create via the admin API (`POST /admin/connections`) |
-| `save_warning` in response | Scratch pad save failed | Check `SCRATCH_DIR` permissions and disk space |
+| `save_warning` in response | The query succeeded but saving to the scratch pad failed | Retry the save; if it persists, report it to your environment administrator |

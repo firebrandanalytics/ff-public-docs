@@ -27,7 +27,7 @@ Users access DAS differently depending on their environment:
 | Environment | `FF_DATA_SERVICE_URL` | When to use |
 |-------------|----------------------|-------------|
 | Port-forward | `http://localhost:8080` | Local development with `kubectl port-forward` |
-| Kong gateway | `https://home.40.75.137.31.nip.io/das` | Remote access through the API gateway |
+| Kong gateway | `https://<your-gateway-host>/das` | Remote access through the API gateway |
 | In-cluster | `http://ff-data-access.ff-dev.svc.cluster.local:8080` | Agent bundle running in the same Kubernetes cluster |
 
 ## Step 1: Understand the Published Client

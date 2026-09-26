@@ -32,11 +32,11 @@ The **value table** contains canonical rows from the source database. For a vend
 | 3 | 103 | PUMA SE | Germany | 55 |
 | 4 | 104 | NEW BALANCE ATHLETICS | USA | 30 |
 
-The value table is a snapshot of the source data, stored in the **scratch pad** (SQLite). It's refreshed on demand or on schedule.
+The value table is a snapshot of the source data held by the service. It's refreshed on demand or on schedule. The `rowid` is what you pass as `value_row_id` when confirming a match.
 
 ### Search Table
 
-The **search table** unpivots all matchable terms from the value table and adds fuzzy matching metadata:
+The **search table** holds every matchable term, linked back to a value row, with a scope:
 
 | search_term | value_rowid | source_column | scope |
 |-------------|-------------|---------------|-------|
@@ -53,13 +53,7 @@ The `scope` column enables personalization:
 - **user:X**: Personal synonyms for user X
 - **team:X**: Team-level synonyms for team X
 
-The search table is backed by an FTS5 (Full-Text Search) index for fast pre-filtering, with fuzzy scoring computed in a second pass.
-
-### Data Storage Location
-
-**Important:** Value data NEVER goes to PostgreSQL. Only value store *configurations* are saved to PostgreSQL (name, description, source query, schedule). The actual data — both the value table and search table — live in the **system scratch pad** (a SQLite database).
-
-This keeps operational data separate from configuration and prevents the service's backend database from becoming a data warehouse.
+Value store data (both the value rows and the searchable terms) is held by the Data Access Service itself, separate from your source database. Your source database is only read when the store is refreshed.
 
 ## Create a Value Store
 
@@ -153,7 +147,7 @@ curl -s -X DELETE "$DA_URL/admin/value-stores/vendors" \
   -H "X-API-Key: $API_KEY"
 ```
 
-This deletes both the configuration and the data tables in the scratch pad.
+This deletes both the configuration and the store's loaded data.
 
 ## Refresh (Populate)
 
@@ -179,13 +173,11 @@ Response:
 
 ### What Happens During Refresh
 
-1. **Execute source query**: The service runs `source_query` against the `connection` database
-2. **Create value table**: Results are stored in the scratch pad as `{name}_values` (e.g., `vendors_values`)
-3. **Unpivot match columns**: For each row and each column in `match_columns`, a search term is created
-4. **Build search table**: All terms are inserted into `{name}_search` with `scope=primary` and `source_column` metadata
-5. **Create FTS5 index**: An FTS5 table `{name}_fts` is created for fast pre-filtering
+1. The service runs `source_query` against the `connection` database
+2. The result rows become the store's value rows
+3. For each row and each column in `match_columns`, a searchable term is created with `scope=primary`
 
-If the value store already has data, refresh **replaces** it (drops and recreates the tables). This ensures the value store stays in sync with the source database.
+If the value store already has data, refresh **replaces** the primary data. Learned synonyms (`user:`, `team:`, and `system` scopes) are kept.
 
 ### Scheduled Refresh
 
@@ -321,18 +313,6 @@ Each strategy produces a weighted score. The final score is a normalized composi
 3. **Normalization**: Final score is 0-1 scale
 
 This means a strong prefix match (e.g., "Nike" → "NIKE, INC.") scores higher than a weak multi-strategy match (several low signals).
-
-### Matching Implementation
-
-All matching functions are implemented as SQLite custom functions registered at startup:
-- `ff_match_score(candidate, input)` — composite score + strategy
-- `ff_levenshtein(a, b)` — edit distance
-- `ff_prefix_score(input, candidate)` — prefix match score
-- `ff_initials(s)` — extract initials from string
-- `ff_phonetic(s)` — generate phonetic code
-- `ff_word_jaccard(a, b)` — word set Jaccard similarity
-
-This allows the resolution query to compute fuzzy scores entirely in SQL, avoiding round-trip latency.
 
 ## The Learning Loop
 
@@ -680,29 +660,19 @@ The resolution query will skip any rows where the matched search term is "MORGAN
 **Possible causes:**
 1. **Different value_row_id** — Users must confirm the **same** term→value mapping (same rowid)
 2. **Scope is team, not user** — Promotion counts distinct `user:` scopes only, not `team:` scopes
-3. **Threshold not met** — Check logs for promotion messages; threshold is 3 by default
+3. **Threshold not met** — Promotion requires 3 distinct users by default
 
-**Solution:** Verify all users confirmed the same `value_row_id`. Check the `vendors_search` table in the scratch pad to see current scopes.
+**Solution:** Verify all users confirmed the same `value_row_id`.
 
 ## Performance Considerations
 
-### Pre-filtering with FTS5
+### Store Size
 
-The resolution query uses FTS5 (Full-Text Search) for fast pre-filtering before computing fuzzy scores. This keeps resolution fast even with thousands of values.
-
-The query flow:
-1. **FTS5 MATCH**: Find all terms that contain any word from the input (fast, indexed)
-2. **Fuzzy scoring**: Compute `ff_match_score()` for pre-filtered candidates (CPU-intensive but small set)
-3. **Ranking**: Sort by score, apply `min_score` threshold, limit to `max_candidates`
-
-This means resolution scales well up to ~100K values per store. Beyond that, consider partitioning value stores by domain or entity subtype.
+Resolution pre-filters candidates before fuzzy scoring, so it stays fast with thousands of values. It scales well up to roughly 100K values per store; beyond that, consider partitioning value stores by domain or entity subtype.
 
 ### Bulk Resolution
 
-Always batch multiple terms into a single request when possible. Sending 10 terms in one request is faster than 10 sequential requests because:
-- Single scratch pad connection
-- Single FTS5 index access
-- Reduced HTTP round-trip overhead
+Always batch multiple terms into a single request when possible. Sending 10 terms in one request is faster than 10 sequential requests.
 
 The service supports up to 1000 queries per request.
 

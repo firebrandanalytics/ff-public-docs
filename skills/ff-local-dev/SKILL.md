@@ -261,8 +261,8 @@ Once your control plane is running:
 ### "License exchange failed"
 
 ```bash
-# Check network connectivity
-curl -I https://home.20.59.124.75.nip.io
+# Check outbound network connectivity (license exchange needs internet access)
+curl -I https://github.com
 
 # Verify license file exists and is readable
 cat ./license.jwt | head -c 50

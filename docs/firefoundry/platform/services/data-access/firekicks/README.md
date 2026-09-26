@@ -107,8 +107,8 @@ products (200)
 ## Prerequisites
 
 - PostgreSQL 13+ server
-- Data Access Service running (gRPC on `:50051`, HTTP on `:8080`)
-- `ff-da` CLI installed (`go build -o ~/.local/bin/ff-da ./cmd/ff-da` from the DAS repo)
+- Data Access Service enabled in your environment and reachable (see [Operations](../operations.md))
+- `ff-da` CLI installed (see the [ff-da CLI reference](../../../../sdk/cli-tools/ff-da.md))
 
 ## Set Up the FireKicks Database
 
@@ -145,9 +145,6 @@ export DA_GRPC_PORT=50051
 export DA_API_KEY=dev-api-key
 export DA_IDENTITY=user:tutorial
 
-# FireKicks database credentials (for DAS connection config)
-export FIREKICKS_DB_USER=firekicks_tutorial
-export FIREKICKS_DB_PASSWORD=tutorial-password
 ```
 
 ## Register the Connection
@@ -213,7 +210,7 @@ Duration:   45ms
 Key configuration decisions:
 
 - **`allow_raw_sql: true`** — Enables direct SQL queries. Set to `false` for production agents that should only use AST queries (which enforce ACL and prevent injection).
-- **`credentials.method: env`** — Credentials are read from environment variables (`FIREKICKS_DB_USER` and `FIREKICKS_DB_PASSWORD` set above), never stored in config files. This allows rotation without service restarts.
+- **`credentials.method: env`** — The connection names the environment variables (`FIREKICKS_DB_USER` and `FIREKICKS_DB_PASSWORD`) that hold the database username and password; the password is never stored in the connection definition. These variables must be available to the Data Access Service itself, so your environment administrator provisions them (with the `firekicks_tutorial` credentials created above). This also allows rotation without service restarts.
 - **`pool`** — Conservative settings (5 open / 2 idle) appropriate for a tutorial dataset. Production would scale based on concurrency needs.
 - **`limits`** — Safety guardrails. `maxRows: 10000` prevents accidental full-table scans from overwhelming the response.
 
@@ -254,7 +251,7 @@ Access control is defined in [`data/firekicks-acl.json`](./data/firekicks-acl.js
 }
 ```
 
-> **Note:** ACL configuration is loaded by the Data Access Service at startup. Place the file in the service's config directory or pass it via the `--acl-config` flag.
+> **Note:** ACL configuration is loaded by the Data Access Service at startup, so it is applied by your environment administrator rather than through an API call. Hand them this file (or the entries your app needs).
 
 The ACL defines two identities:
 

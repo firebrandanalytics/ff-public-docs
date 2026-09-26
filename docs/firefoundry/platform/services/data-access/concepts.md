@@ -4,7 +4,7 @@
 
 A **connection** is a named reference to a database with its type, credentials, pool settings, and query limits. The service supports 7 backends: PostgreSQL, MySQL, SQLite, SQL Server, Oracle, Snowflake, and Databricks. Connections are managed via the Admin API.
 
-Connections never store credentials directly — they reference environment variable names. This allows credential rotation without restarting the service.
+Connections never store credentials directly — they reference named credentials (for example, environment variable names) that must be available to the Data Access Service. Your environment administrator provisions those credentials; you reference them by name. This allows credential rotation without restarting the service.
 
 ```json
 {
@@ -160,11 +160,10 @@ Staged queries are **pre-queries** that execute against specific connections bef
 ### How They Work
 
 1. You define one or more `StagedQuery` objects, each with an `alias`, `connection`, and `query` (AST)
-2. The service builds a dependency graph — if staged query B references staged query A's alias, B depends on A
-3. Queries are sorted into execution tiers using topological sort
-4. Each tier executes in parallel; dependencies between tiers execute sequentially
-5. Results from each staged query are injected as `WITH <alias> AS (VALUES ...)` CTEs
-6. The main query can reference any staged alias in FROM, JOIN, WHERE, etc.
+2. If staged query B references staged query A's alias, B depends on A and runs after it
+3. Independent staged queries run in parallel
+4. Results from each staged query are injected as CTEs into the queries that reference them
+5. The main query can reference any staged alias in FROM, JOIN, WHERE, etc.
 
 ### Dependency Graph Example
 
@@ -189,17 +188,9 @@ Main query               (connection: "analytics")    → SQLite
 The main SQLite query can JOIN pg_users and mysql_logs as if they were local tables.
 ```
 
-### VALUES CTE Injection
+### Result Injection
 
-Results are injected as VALUES CTEs, formatted for each backend:
-
-- **PostgreSQL**: `WITH alias(col1,col2) AS (VALUES ($1::text,$2::integer), ...)`
-- **MySQL**: `WITH alias(col1,col2) AS (VALUES ROW(?,?), ROW(?,?), ...)`
-- **SQLite**: `WITH alias(col1,col2) AS (VALUES ('val1',42), ('val2',99), ...)` (inline literals)
-- **SQL Server**: `WITH alias AS (SELECT col1,col2 FROM (VALUES (@p1,@p2),(@p3,@p4)) AS t(col1,col2))`
-- **Oracle**: `WITH alias(col1,col2) AS (SELECT :1,:2 FROM DUAL UNION ALL SELECT :3,:4 FROM DUAL)`
-- **Snowflake**: `WITH alias AS (SELECT col1,col2 FROM (VALUES (?,?),(?,?)) AS t(col1,col2))`
-- **Databricks**: `WITH alias(col1,col2) AS (VALUES ROW(?,?), ROW(?,?), ...)`
+Staged results are injected into the downstream query as a `WITH <alias> AS (VALUES ...)` CTE, written in the target database's dialect. From the main query's point of view, each staged alias is just a table. Because the rows are inlined into the query, staged results are capped (see below) — stage small, filtered result sets, not whole tables.
 
 ### Execution Limits
 
@@ -225,7 +216,7 @@ The scratch pad provides **per-identity SQLite databases** for persisting interm
 ### How It Works
 
 1. Include `save_as: "my_results"` in an `ASTQueryRequest`
-2. After the query executes, results are saved to a SQLite table named `my_results` in the caller's scratch database
+2. After the query executes, results are saved to a table named `my_results` in the caller's scratch pad (a SQLite database, so query it with SQLite syntax)
 3. The scratch database is auto-registered as connection `scratch:<identity>` (e.g., `scratch:user:alice`)
 4. Subsequent requests can query `scratch:user:alice` using QueryAST or QueryRaw
 5. Saves are idempotent — if the table exists, it's dropped and recreated
@@ -267,16 +258,16 @@ Series (query template: connection + AST)
 │   └── Snapshot (2026-02-20T10:00:00Z) → table: "series_a1b2c3d4_20260220T100000"
 ```
 
-- **Series** — a query template identified by `SHA256(connection + AST)[:16]`. All executions of the same query structure (regardless of parameter values) share a series ID.
-- **Permutation** — a specific set of parameter values within a series, identified by `SHA256(seriesID + params)[:16]`. Changing parameters creates a new permutation.
-- **Snapshot** — a point-in-time execution stored as a SQLite table. Multiple snapshots can exist for the same permutation.
+- **Series** — a query template (connection + AST), identified by a stable `seriesId`. All executions of the same query structure (regardless of parameter values) share a series ID.
+- **Permutation** — a specific set of parameter values within a series, identified by a stable `permutationId`. Changing parameters creates a new permutation.
+- **Snapshot** — a point-in-time execution stored as a scratch pad table. Multiple snapshots can exist for the same permutation.
 
 **What's recorded:**
 
 | Field | Description |
 |-------|-------------|
-| `seriesId` | Hash identifying the query template |
-| `permutationId` | Hash identifying the parameter combination |
+| `seriesId` | Identifies the query template |
+| `permutationId` | Identifies the parameter combination |
 | `connection` | Source database connection |
 | `ast` | Full AST (protobuf JSON) for re-execution |
 | `generatedSql` | Dialect-specific SQL that was executed |
@@ -294,9 +285,11 @@ Series (query template: connection + AST)
 - **Catalog** — search scratch pad contents by source connection, series, time range, or label
 - **Lineage** — trace any materialized table back to its source query and parameters
 
-Provenance requires a PostgreSQL backend (`PG_HOST` configuration). Without it, scratch pads still work but provenance is not tracked.
+Provenance is recorded only when the service is deployed with its persistent metadata store (the standard FireFoundry deployment). Without it, scratch pads still work but provenance is not tracked.
 
 ## Access Control
+
+ACL rules and the function blacklist are part of the service configuration, loaded at startup. Your environment administrator applies them; the YAML below shows the shape of the entries your app will need.
 
 ### Connection-Level ACL
 
@@ -649,7 +642,7 @@ WHERE customer_id = 42              -- security predicate (injected)
 
 ### Variable Persistence
 
-Variable definitions and mapping tables are persisted in the DAS internal PostgreSQL database (when `PG_HOST` is configured). Without PG, they exist in memory only and are lost on restart.
+Variable definitions and mapping tables persist across restarts in a standard FireFoundry deployment. If the service runs without its persistent metadata store (for example, a bare local run), they are kept in memory only and lost on restart.
 
 ## Ontology
 
@@ -735,18 +728,15 @@ Named Entity Resolution bridges the gap between user terms and actual database v
 
 ### Value Stores
 
-A value store is a searchable index of canonical values from a source database. Each value store consists of:
-- A **value table** with full rows from the source database, stored in a system SQLite scratch pad
-- A **search table** with all matchable terms, linked back to value rows via rowid
-- An **FTS5 index** for fast candidate retrieval
+A value store is a searchable index of canonical values pulled from a source database by a `source_query`. Each value store holds:
+- **Value rows** — full rows from the source query, so a match gives you IDs and other attributes, not just a name
+- **Search terms** — every matchable term (from `match_columns`, plus learned synonyms), linked back to a value row
 
-Value store configs (name, source query, match columns) are persisted in PostgreSQL. The actual data values never go to PostgreSQL — they live exclusively in SQLite scratch pads.
+The store's data is held by the Data Access Service and refreshed on demand or on a schedule; your source database is only read at refresh time.
 
 ### Fuzzy Matching
 
-The matching engine uses six strategies implemented as SQLite custom functions: prefix matching, Levenshtein edit distance, initials comparison, reverse initials (acronym detection), word-level Jaccard similarity, and phonetic matching. A composite score (`ff_match_score`) combines all strategies with configurable weights.
-
-Matching uses a two-pass approach: FTS5 pre-filtering narrows to ~100 candidates, then custom scoring functions rank them. This avoids full table scans on large value sets.
+The matching engine combines six strategies: prefix matching, Levenshtein edit distance, initials comparison, reverse initials (acronym detection), word-level Jaccard similarity, and phonetic matching. Each candidate gets a composite score (0–1) and the name of the strongest strategy. Candidates are pre-filtered before scoring, so resolution stays fast on large value sets.
 
 ### Personalized Scopes
 

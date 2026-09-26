@@ -303,13 +303,13 @@ This pattern is especially useful for reference data that lives in spreadsheets 
 Understanding CSV upload constraints and behavior:
 
 **Size and Row Limits**
-- Max file size: 50MB (configurable via `SCRATCH_MAX_UPLOAD_SIZE`)
-- Max rows: 100,000 (default, configurable via `SCRATCH_MAX_ROWS`)
+- Max file size: 50MB (default; your environment administrator can change it)
+- Max rows: 100,000 (default; your environment administrator can change it)
 - Files exceeding these limits return an error
 
 **Schema Handling**
 - All columns are imported as TEXT type
-- SQLite handles type affinity automatically (numeric strings work in math operations)
+- Scratch pads are SQLite databases, so query them with SQLite syntax; numeric strings work in math operations
 - First row must be headers
 - Empty cells become NULL values
 
@@ -384,9 +384,9 @@ This completes the FireKicks tutorial series. You've learned:
 
 Continue exploring:
 
-- [Data Access Service Overview](../../overview.md) - Architecture and design principles
-- [Concepts](../../concepts.md) - Deep dive into core abstractions
-- [API Reference](../../reference.md) - Complete endpoint documentation
+- [Data Access Service Overview](../README.md) - Architecture and design principles
+- [Concepts](../concepts.md) - Deep dive into core abstractions
+- [API Reference](../reference.md) - Complete endpoint documentation
 
 For production use, review:
 - Authentication and authorization patterns

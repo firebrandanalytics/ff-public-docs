@@ -52,80 +52,60 @@ The data dictionary (Layer 2) is particularly important for AI: it provides desc
 - **Identity Mapping Tables**: DAS-managed key-value lookups that translate between identity systems (e.g., email → customer_id)
 - **Ontology Service**: Maps business concepts to database structures — entity types, relationships, column mappings, and concept hierarchies for AI entity resolution
 - **Process Model Service**: Encodes business rules, calendar contexts, tribal knowledge, and process steps that inform query generation
-- **Credential Management**: Environment-variable-based credentials with zero-downtime rotation
+- **Credential Management**: Connections reference provisioned credentials by name (never inline passwords), with zero-downtime rotation
 - **Admin API**: REST endpoints for connection CRUD, credential rotation, view management, annotation management, variable/mapping management, ontology management, and process management
 - **Dictionary Query API**: Non-admin read-only access to data dictionary with tag inclusion/exclusion, semantic type, and classification filters
 - **Named Entity Resolution (NER)**: Value stores with fuzzy matching engine — resolves user terms ("Microsoft") to database values ("MICROSOFT CORP") with ranked candidates, personalized scopes, and a learning loop
-- **Data Wrangling**: Go-native validation and transformation pipeline — WrangleSpec JSON definitions, column-level rules (type coercion, trim, case, currency parsing, fuzzy matching, pattern validation), built-in templates, spec storage, and CSV upload+wrangle in one step
+- **Data Wrangling**: Validation and transformation pipeline — WrangleSpec JSON definitions, column-level rules (type coercion, trim, case, currency parsing, fuzzy matching, pattern validation), built-in templates, spec storage, and CSV upload+wrangle in one step
 - **CSV Upload & Export**: Upload CSV files into scratch pads for ad-hoc analysis; export any query result or scratch pad table as CSV
 - **Audit API**: Query execution history with filtering by connection, identity, time range, slow queries, and error status
-- **Audit Logging**: All operations logged with identity, connection, SQL hash, and duration
+- **Audit Logging**: All operations logged with identity, connection, status, and duration
 
 ## Architecture Overview
 
+The Data Access Service sits between your agent bundle (or other client) and the databases your app needs. Your code sends SQL or structured AST queries plus a caller identity; the service applies access control, stored definitions, and row-level security, runs the query against the right database, and returns rows. The knowledge layers (dictionary, ontology, process models, value stores) are read through the same service to give your agents business context.
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     API Layer                                │
-│            gRPC (:50051) + REST Gateway (:8080)             │
-│   Query | Execute | QueryAST | TranslateAST | GetSchema    │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│                  Auth & ACL Layer                             │
-│   API Key Auth → Identity Extraction → Connection ACL        │
-│                                      → Table/Column ACL      │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│              AST Processing Pipeline                         │
-│   Validate → Blacklist Check → View/UDF Expansion →          │
-│   Table/Column ACL → Serialize to SQL                        │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│            Staged Execution Engine                            │
-│   Dependency Graph → Topological Sort → Tier-by-Tier         │
-│   Parallel Execution → VALUES CTE Injection                  │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│              Database Adapter Layer                           │
-│   PostgreSQL | MySQL | SQLite | SQL Server | Oracle          │
-│   Snowflake | Databricks | Scratch Pad (SQLite)              │
-│   (Connection pooling, type normalization, timeouts)         │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────┐      ┌──────────────────────────┐
+│ Agent bundle / app backend   │      │ Admin tooling (ff-da,    │
+│ @firebrandanalytics/         │      │ scripts, data stewards)  │
+│   data-access-client         │      │ connections, dictionary, │
+│ ff-da CLI / REST / gRPC      │      │ views, ontology, NER ... │
+└──────────────┬───────────────┘      └────────────┬─────────────┘
+   query / schema / dictionary /                   │ /admin/*
+   ontology / process / resolve-values             │
+               ▼                                   ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     Data Access Service                          │
+│  auth + caller identity → ACL → stored views / RLS → execution   │
+│  knowledge layers · scratch pads · wrangling · CSV import/export │
+└──────┬──────────────┬──────────────┬──────────────┬─────────────┘
+       ▼              ▼              ▼              ▼
+  PostgreSQL       MySQL /       Snowflake /     Per-identity
+  warehouse        SQL Server    Databricks /    scratch pads
+                   / Oracle      SQLite          (SQLite)
 ```
+
+Query activity is recorded for auditing and can be read back through the [Audit API](./reference.md#audit-api).
 
 ## Database Support
 
-The service architecture is designed for broad database support. Each database requires an adapter (connection/pooling/metadata) and a serializer (identifier quoting, parameter placeholders, boolean literals).
-
-### Tier 1: Foundation (Current)
+### Supported
 
 | Database | Status |
 |----------|--------|
 | PostgreSQL 13+ | **Supported** |
 | MySQL 8+ | **Supported** |
 | SQLite 3.35+ | **Supported** |
+| SQL Server | **Supported** — less field-tested; validate against your own instance |
+| Oracle | **Supported** — less field-tested; validate against your own instance |
+| Snowflake | **Supported** — less field-tested; validate against your own instance |
+| Databricks | **Supported** — less field-tested; validate against your own instance |
 
-### Tier 2: Enterprise
+### Planned
 
-| Database | Driver | Status |
-|----------|--------|--------|
-| SQL Server | `microsoft/go-mssqldb` | **Supported** (adapter + serializer) |
-| Oracle | `sijms/go-ora/v2` | **Supported** (adapter + serializer) |
-| Snowflake | `snowflakedb/gosnowflake` | **Supported** (adapter + serializer) |
-| Databricks | `databricks/databricks-sql-go` | **Supported** (adapter + serializer) |
-
-> **Note:** Tier 2 adapters are fully implemented with real drivers. E2E tests require live database instances; unit tests cover DSN building, parameter placeholders, type normalization, and SQL serialization for all 4 backends.
-
-### Tier 3: Extended (Planned)
-
-Wire-compatible databases that can reuse existing adapters with minor adjustments:
 - **MariaDB**, **SingleStore** (MySQL-compatible)
 - **CockroachDB**, **Greenplum**, **Amazon Redshift** (PostgreSQL-compatible)
-
-Specialized databases with their own adapters:
 - **ClickHouse**, **Trino**, **Vertica**, **DuckDB**, **Teradata**, **Google BigQuery**
 
 ## Documentation
@@ -133,14 +113,27 @@ Specialized databases with their own adapters:
 - **[Concepts](./concepts.md)** — Core concepts: AST queries, staged queries, scratch pad, ACL model, stored definitions, data dictionary
 - **[Getting Started](./getting-started.md)** — Step-by-step tutorial from first connection to cross-database federation and building a data dictionary
 - **[FireKicks Tutorial](./firekicks/)** — Multi-part walkthrough using the FireKicks retail dataset: connection setup, data dictionary, stored definitions, ontology, process models, context-aware querying, NER value resolution, and CSV upload
-- **[Reference](./reference.md)** — API reference: gRPC/REST endpoints, dictionary query API, admin API, proto messages, config, env vars, error codes
+- **[Reference](./reference.md)** — API reference: gRPC/REST endpoints, dictionary query API, admin API, proto messages, connection/ACL configuration, client libraries, error codes
+- **[Operations](./operations.md)** — Enabling the service for your app, connecting from a bundle, verifying, limits, and troubleshooting
 
 ## Guides & References
 
 - **[Data Wrangling](./wrangling.md)** — WrangleSpec format, column rules, built-in templates, API endpoints, scratch pad integration, and pipeline patterns
 - **[Regex Pattern Library](./regex-patterns.md)** — Curated, cross-database regex patterns for use with the AST `regex_match` expression: email, phone, financial, date/time, identifiers, URLs, and data quality checks
 
+## Version and Maturity
+
+- **Helm chart**: `data-access` 0.1.0, packaged as an optional sub-chart of `firefoundry-core` (disabled by default)
+- **Status**: Optional service. PostgreSQL, MySQL, and SQLite are the most exercised backends; see [Database Support](#database-support) for the others
+- **Client libraries**: TypeScript (`@firebrandanalytics/data-access-client`), Python (`ff-data-access`), and the `ff-da` CLI
+
+## Repository
+
+Source code: ff-services-data-access (private)
+
 ## Related
 
 - [Platform Services Overview](../README.md)
 - [Platform Architecture](../../architecture.md)
+- [ff-da CLI](../../../sdk/cli-tools/ff-da.md)
+- [Query Explainer tutorial](../../../sdk/agent_sdk/tutorials/query-explainer/README.md) — building an agent bundle on the Data Access Service

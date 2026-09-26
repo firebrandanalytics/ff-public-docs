@@ -2,9 +2,9 @@
 
 ## Overview
 
-The Data Wrangling subsystem is a Go-native validation and transformation pipeline built into the Data Access Service. It processes tabular data through a sequence of deterministic rules defined in a `WrangleSpec` — a JSON-serializable format compatible with the TypeScript validation library's `WrangleSpec` format (deterministic rules only).
+Data Wrangling is a validation and transformation pipeline built into the Data Access Service. It processes tabular data through a sequence of deterministic rules defined in a `WrangleSpec` — a JSON-serializable format compatible with the TypeScript validation library's `WrangleSpec` format (deterministic rules only).
 
-Wrangling sits in the DAS ingestion pipeline: raw data enters (via inline JSON, CSV upload, or scratch pad), passes through column-level rules (type coercion, trimming, case normalization, currency parsing, fuzzy matching, pattern validation), and exits as clean, validated rows ready for downstream use.
+Raw data enters (via inline JSON, CSV upload, or scratch pad), passes through column-level rules (type coercion, trimming, case normalization, currency parsing, fuzzy matching, pattern validation), and exits as clean, validated rows ready for downstream use.
 
 ### When to Use Wrangling
 
@@ -15,9 +15,9 @@ Wrangling sits in the DAS ingestion pipeline: raw data enters (via inline JSON, 
 
 ### Relationship to TypeScript Validation Library
 
-The Go wrangling engine implements the **deterministic subset** of the TypeScript `@firebrandanalytics/shared-utils` validation library. Both share the same `WrangleSpec` JSON format and column rule semantics. The Go engine does not support AI-powered transforms (`@AITransform`, `@AIValidate`, `@AISpellCheck`) — those require the TypeScript library with broker integration.
+The Data Access Service's wrangling engine implements the **deterministic subset** of the TypeScript `@firebrandanalytics/shared-utils` validation library. Both share the same `WrangleSpec` JSON format and column rule semantics. It does not support AI-powered transforms (`@AITransform`, `@AIValidate`, `@AISpellCheck`) — those require the TypeScript library with broker integration.
 
-For the TypeScript validation library and `compileWrangleSpec()`, see the [Validation Library docs](../../sdk/utils/validation/) and the [Catalog Intake Tutorial Part 12](../../sdk/agent_sdk/tutorials/catalog-intake/part-12-data-wrangling.md).
+For the TypeScript validation library and `compileWrangleSpec()`, see the [Validation Library docs](../../../sdk/utils/validation/README.md) and the [Catalog Intake Tutorial Part 12](../../../sdk/agent_sdk/tutorials/catalog-intake/part-12-data-wrangling.md).
 
 ---
 
@@ -308,7 +308,7 @@ If `identity` is provided, valid rows are saved to the scratch pad and the respo
 
 ## Spec Storage
 
-Specs can be persisted in a dedicated SQLite database (`_wrangle_specs.db`) for reuse across requests.
+Specs can be saved by ID and reused across requests.
 
 ### List Specs
 
@@ -538,7 +538,7 @@ A `required` failure short-circuits — no further rules are checked for that co
 ## Related
 
 - [Data Access Service Overview](./README.md)
-- [Validation Library (TypeScript)](../../sdk/utils/validation/)
-- [Catalog Intake Part 12: Data Wrangling](../../sdk/agent_sdk/tutorials/catalog-intake/part-12-data-wrangling.md)
+- [Validation Library (TypeScript)](../../../sdk/utils/validation/README.md)
+- [Catalog Intake Part 12: Data Wrangling](../../../sdk/agent_sdk/tutorials/catalog-intake/part-12-data-wrangling.md)
 - [NER Value Resolution](./firekicks/06-value-resolution.md)
 - [CSV Upload](./firekicks/07-csv-upload.md)
