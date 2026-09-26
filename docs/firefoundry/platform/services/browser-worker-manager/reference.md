@@ -1,23 +1,23 @@
 # Browser Worker Manager — Reference
 
-Complete reference for the BWM manager API, the per-session harness API, error codes, environment variables, and database schema.
+Reference for the BWM session API, the per-session browser API, and error codes.
 
-BWM exposes two HTTP APIs, both JSON over REST:
+BWM exposes two HTTP APIs, both JSON over REST and reachable only from inside the cluster:
 
-| API | Served by | Port | Base URL |
-|-----|-----------|------|----------|
-| **Manager API** | `ff-services-bwm` (Deployment + Service `bwm-manager`) | 3001 | `http://bwm-manager.<namespace>.svc.cluster.local:3001` |
-| **Harness API** | `ff-bwm-harness` (one pod per session) | 3000 | The session's `harness_url` (pod IP), e.g. `http://10.244.0.23:3000` |
+| API | Use it for | Base URL |
+|-----|------------|----------|
+| **Session API** (manager) | Create, inspect, keep alive, and close sessions | `http://bwm-manager.<namespace>.svc.cluster.local:3001` (ask your administrator for the exact address) |
+| **Browser API** (harness) | Browser actions for one session | The session's `harness_url`, e.g. `http://10.244.0.23:3000` |
 
 Neither API requires authentication headers in this release. Send `Content-Type: application/json` on requests with a body.
 
 ---
 
-## Manager API
+## Session API
 
 ### POST /sessions
 
-Create a browser session. Returns immediately; the pod starts in the background.
+Create a browser session. Returns immediately; the browser starts in the background. Poll [`GET /sessions/:id`](#get-sessionsid) until `status` is `ready`.
 
 **Request Body** (optional):
 ```json
@@ -28,7 +28,7 @@ Create a browser session. Returns immediately; the pod starts in the background.
 
 | Field | Description |
 |-------|-------------|
-| `credsSecretName` | Name of a Kubernetes Secret in the BWM namespace to mount at `/secrets` in the harness pod. Defaults to `bwm-creds-<first 8 chars of sessionId>`. The mount is optional — if the Secret does not exist, the session starts without credentials. |
+| `credsSecretName` | Name of the credential set to make available to this session (see [Credentials and Redaction](./security.md)). Optional. If the named set does not exist, the session still starts, and credential actions return `412`. |
 
 **Response** (201):
 ```json
@@ -37,7 +37,7 @@ Create a browser session. Returns immediately; the pod starts in the background.
 
 ### GET /sessions
 
-List up to 100 sessions owned by this manager instance (`manager_id` = the manager's `MANAGER_ID`), newest first.
+List up to 100 recent sessions, newest first. Sessions from before a manager restart may not appear; use `GET /sessions/:id` for a known session.
 
 **Query Parameters**:
 
@@ -49,13 +49,13 @@ List up to 100 sessions owned by this manager instance (`manager_id` = the manag
 
 ### GET /sessions/:id
 
-Get one session by ID (any manager instance).
+Get one session by ID.
 
 **Response** (200): a [session row](#session-object). **404** `{"error":"not found"}` if the ID is unknown.
 
 ### DELETE /sessions/:id
 
-Tear down a session: `POST /shutdown` to the harness (5 s timeout), delete the Kubernetes Job (background propagation), then mark the session `closed`.
+Close a session. The browser is shut down and its state discarded.
 
 **Response** (200):
 ```json
@@ -66,7 +66,7 @@ Tear down a session: `POST /shutdown` to the harness (5 s timeout), delete the K
 
 ### POST /sessions/:id/ping
 
-Keep-alive called by the harness after each successful verb. Sets `last_active_at = now()` and moves `ready` → `active`. Consumers do not normally call this.
+Keep-alive. Every successful browser action already does this for you; call it yourself only if your agent must pause longer than the idle timeout without sending actions. Moves a `ready` session to `active` and resets the idle timer.
 
 **Response** (200): `{ "ok": true }`
 
@@ -76,7 +76,7 @@ Liveness check. **Response** (200): `{ "ok": true }`
 
 ### Session Object
 
-Rows are returned as stored in `bwm_sessions`:
+Returned by `GET /sessions` and `GET /sessions/:id`:
 
 ```json
 {
@@ -86,26 +86,31 @@ Rows are returned as stored in `bwm_sessions`:
   "created_at": "ISO-8601",
   "updated_at": "ISO-8601",
   "closed_at": "ISO-8601 | null",
-  "harness_url": "http://<pod-ip>:3000 | null",
+  "harness_url": "string | null",
   "last_active_at": "ISO-8601 | null"
 }
 ```
 
-`harness_url` is populated once the harness answers its health check (readiness gate 2). Only send verbs once `status` is `ready` or `active`.
+| Field | Notes |
+|-------|-------|
+| `status` | See [Concepts — Session lifecycle](./concepts.md#session-lifecycle) |
+| `harness_url` | Where to send browser actions. May appear shortly before `ready`; only send actions once `status` is `ready` or `active`. |
+| `last_active_at` | Time of the last successful action (`null` until the first one) |
+| `manager_id` | Internal; ignore |
 
 ---
 
-## Harness API
+## Browser API
 
-All verbs act on the session's single browser page. Every successful verb (except `/health`, `/ready`, `/shutdown`) pings the manager to refresh `last_active_at`. Error responses have the shape `{"ok": false, "error": "…", "detail"?: "…"}`.
+All actions act on the session's single browser page. Every successful action (except `/health` and `/ready`) counts as session activity. Error responses have the shape `{"ok": false, "error": "…", "detail"?: "…"}`.
 
 ### GET /health
 
-Process liveness. **Response** (200): `{ "ok": true }`
+Liveness of the session's browser service. **Response** (200): `{ "ok": true }`
 
 ### GET /ready
 
-Launches Chromium if it is not already running. **Response** (200) `{ "ok": true }`, or **503** `{ "ok": false, "error": "…" }` if the browser cannot start.
+Browser readiness. **Response** (200) `{ "ok": true }`, or **503** `{ "ok": false, "error": "…" }` if the browser cannot start. You normally rely on the session `status` instead.
 
 ### POST /session/navigate
 
@@ -131,7 +136,7 @@ Load a URL (waits for `domcontentloaded`, 30 s timeout).
 
 ### POST /session/snapshot
 
-Capture interactive elements (roles `button`, `link`, `textbox`, `combobox`, `checkbox`, `menuitem`) in the main frame. Increments the snapshot epoch and replaces the ref table. No request body.
+Capture interactive elements (roles `button`, `link`, `textbox`, `combobox`, `checkbox`, `menuitem`) in the main frame. Invalidates refs from any earlier snapshot. No request body.
 
 **Response** (200):
 ```json
@@ -153,7 +158,7 @@ Capture interactive elements (roles `button`, `link`, `textbox`, `combobox`, `ch
 }
 ```
 
-`checked` appears only for checkboxes, `required` only when the attribute is present, `type` only for `<input>` elements. Element values are never returned.
+`snapshot_epoch` increases with every snapshot; refs are only valid for the latest one. `checked` appears only for checkboxes, `required` only when the field is required, `type` only for `<input>` elements. Field values are never returned.
 
 ### POST /session/extract
 
@@ -216,16 +221,16 @@ Type into a form field, either a literal `value` or a secret looked up by `crede
 | Status | `error` | When |
 |--------|---------|------|
 | 400 | `malformed ref` | `ref` is not a valid token |
-| 404 | `credentialRef not found: <key>` | Key missing from `credentials.json`, or entry is not `mode: "value"` |
-| 409 | `stale-ref` | Ref from an old epoch; element gone; or `detail: "credential revalidation failed"` when the element is no longer attached/editable, is not an `<input>`, its `type` differs from the snapshot, or a `field: "password"` credential targets a non-password input |
-| 412 | `credentials file not mounted` | No `/secrets/credentials.json` in the pod |
-| 500 | `failed to read credentials` / `fill request failed` | Unreadable credentials file / selector fill failed |
+| 404 | `credentialRef not found: <key>` | Key not in the session's credential set, or not a `value` entry |
+| 409 | `stale-ref` | Ref from an old snapshot or element gone; or `detail: "credential revalidation failed"` when the target is no longer editable, is not an `<input>`, its `type` changed since the snapshot, or a password credential targets a non-password input |
+| 412 | `credentials file not mounted` | The session was created without a (valid) credential set |
+| 500 | `failed to read credentials` / `fill request failed` | Credential set unreadable / selector fill failed |
 
 Fill errors never echo the typed value.
 
 ### POST /session/login
 
-One-call login using a named entry from `credentials.json`.
+One-call login using a named `formFill` or `storageState` entry from the session's credential set.
 
 **Request Body**:
 ```json
@@ -247,11 +252,11 @@ or
 |--------|---------|------|
 | 400 | `credentialKey required` | Missing field |
 | 401 | `login failure: success selector not found` | `formFill` submitted but `successSelector` did not appear within 10 s |
-| 404 | `credentialKey not found: <key>` | Key missing, or entry is a `mode: "value"` fill credential |
-| 412 | `credentials file not mounted` | No credentials file in the pod |
-| 500 | `failed to read credentials` / `formFill action failed before login could complete` | File unreadable / navigation, fill, or click failed |
+| 404 | `credentialKey not found: <key>` | Key not in the credential set, or it is a `value` (fill) entry |
+| 412 | `credentials file not mounted` | The session was created without a (valid) credential set |
+| 500 | `failed to read credentials` / `formFill action failed before login could complete` | Credential set unreadable / navigation, fill, or click failed |
 
-See [Credentials and Redaction](./security.md#credential-file-format) for entry formats.
+See [Credentials and Redaction](./security.md#credential-entry-types) for entry types.
 
 ### POST /session/print-to-pdf
 
@@ -267,7 +272,7 @@ Render the current page as an A4 PDF and store it in Context Service working mem
 { "ok": true, "workingMemoryId": "string", "blobKey": "string", "bytes": 48213, "mimeType": "application/pdf" }
 ```
 
-**Errors**: 500 (including `context-service <status>: …` when the upload fails).
+**Errors**: 500 (including `context-service <status>: …` when the upload fails, or a connection error when Context Service is not configured for BWM).
 
 ### POST /session/download
 
@@ -292,10 +297,6 @@ Click a trigger element, capture the resulting browser download, and store it in
 
 **Errors**: 400 `triggerSelector required`; 500 (no download within `waitMs`, stream unavailable, or upload failure).
 
-### POST /shutdown
-
-Respond `{ "ok": true }`, clear the in-memory set of injected secrets, close the browser, and exit the process. The pod completes and its Job is garbage-collected after 300 s. Normally called by the manager.
-
 ### Not available
 
 There is no `POST /session/evaluate` (arbitrary JavaScript) endpoint; requests to it return `404`.
@@ -308,95 +309,14 @@ There is no `POST /session/evaluate` (arbitrary JavaScript) endpoint; requests t
 |--------|---------|
 | 400 | Missing or invalid request fields, malformed ref |
 | 401 | `formFill` login did not reach its success selector |
-| 404 | Unknown session (manager) / credential key not found (harness) |
+| 404 | Unknown session (session API) / credential key not found (browser API) |
 | 409 | `stale-ref` — take a new snapshot and retry |
-| 412 | Credentials file not mounted in the session pod |
-| 500 | Browser, Kubernetes, database, or Context Service failure (manager returns `{"error": "..."}`) |
-| 503 | Harness `/ready`: browser failed to launch |
+| 412 | Session has no credential set |
+| 500 | Browser, site, or Context Service failure; on the session API, an internal error (`{"error": "..."}`) |
+| 503 | `GET /ready`: browser failed to start |
 
----
+## Related
 
-## Environment Variables
-
-### Manager (`ff-services-bwm`)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3001` | HTTP listen port |
-| `PG_CONNECTION_STRING` | — (required) | PostgreSQL connection string |
-| `BWM_NAMESPACE` | `bwm` | Namespace where session Jobs are created (and pods are looked up) |
-| `BWM_IMAGE` | `bwm-harness:dev` | Harness container image for session Jobs |
-| `BWM_MANAGER_URL` | `http://bwm-manager:3001` | Manager URL passed to harness pods as `MANAGER_URL` for keep-alive pings |
-| `MANAGER_ID` | Pod hostname | Identity used to scope session listing and reaping |
-| `INACTIVITY_TIMEOUT_MS` | `1800000` (30 min) | Idle time after which a `ready`/`active` session is reaped |
-| `SPAWN_TIMEOUT_MS` | `300000` (5 min) | Time after which a `pending`/`spawning` session is reaped |
-| `REAPER_INTERVAL_MS` | `60000` (1 min) | Reaper sweep interval |
-| `CONTEXT_SERVICE_ADDRESS` | — | Forwarded to harness pods (only if set) |
-| `CONTEXT_SERVICE_API_KEY` | — | Forwarded to harness pods (only if set) |
-| `FF_ENVIRONMENT` | — | Forwarded to harness pods (only if set) |
-
-The manager also needs in-cluster Kubernetes credentials (a ServiceAccount) or a kubeconfig.
-
-### Harness (`ff-bwm-harness`)
-
-Set by the manager on every session Job:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3000` | HTTP listen port |
-| `SESSION_ID` | `unknown` | Session ID, used in log lines and pings |
-| `MANAGER_URL` | — | Manager base URL for `POST /sessions/:id/ping`; pings are skipped if unset |
-| `SECRETS_PATH` | `/secrets` | Directory containing `credentials.json` |
-| `CONTEXT_SERVICE_ADDRESS` | `http://localhost:50051` | Context Service base URL **including scheme**; used for `print-to-pdf` and `download` |
-| `CONTEXT_SERVICE_API_KEY` | — | Sent as `x-api-key` to Context Service |
-| `FF_ENVIRONMENT` | `default` | Sent as `x-ff-environment` to Context Service |
-| `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | `/usr/bin/chromium-browser` (image) | Chromium binary Playwright launches |
-
----
-
-## Session Job Specification
-
-Jobs are built by the manager at runtime (`k8s/browser-job.yaml` is a reference copy only):
-
-| Setting | Value |
-|---------|-------|
-| Name | `bwm-<first 8 chars of sessionId>-<timestamp base36>` |
-| Labels | `app.kubernetes.io/name: bwm-harness`, `bwm.firefoundry.io/session-id: <sessionId>` |
-| `backoffLimit` / `restartPolicy` | `0` / `Never` |
-| `ttlSecondsAfterFinished` | `300` |
-| `automountServiceAccountToken` | `false` |
-| Resources | requests `250m` CPU / `512Mi`; limits `1000m` CPU / `2Gi` |
-| Readiness probe | `GET /ready` on 3000, every 5 s, up to 24 failures |
-| Volume | Secret `credsSecretName` at `/secrets`, read-only, `optional: true` |
-
----
-
-## Database Schema
-
-Created automatically at manager startup.
-
-**`bwm_sessions`**
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `id` | TEXT PK | Session UUID |
-| `manager_id` | TEXT | Owning manager instance |
-| `status` | TEXT | See [Concepts — Session Lifecycle](./concepts.md#session-lifecycle) |
-| `created_at`, `updated_at` | TIMESTAMPTZ | |
-| `closed_at` | TIMESTAMPTZ | Set on close |
-| `harness_url` | TEXT | `http://<pod-ip>:3000` |
-| `last_active_at` | TIMESTAMPTZ | Last successful verb |
-
-**`bwm_jobs`**
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `id` | TEXT PK | |
-| `session_id` | TEXT FK → `bwm_sessions.id` (cascade delete) | |
-| `k8s_job_name` | TEXT | |
-| `status` | TEXT | `pending`, `scheduled`, `harness_ready`, `browser_ready`, `failed` |
-| `scheduled_at`, `harness_ready_at`, `browser_ready_at` | TIMESTAMPTZ | Readiness gate timestamps |
-| `failed_at`, `failure_reason` | TIMESTAMPTZ, TEXT | Set when a gate fails |
-| `created_at` | TIMESTAMPTZ | |
-
-Indexes: `(manager_id, status)` and `(last_active_at) WHERE status = 'active'` on sessions; `(session_id)` on jobs.
+- [Concepts](./concepts.md)
+- [Getting Started](./getting-started.md)
+- [Credentials and Redaction](./security.md)
