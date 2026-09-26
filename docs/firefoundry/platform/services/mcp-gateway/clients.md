@@ -1,14 +1,14 @@
 # MCP Gateway — Connecting Clients
 
-This page shows how different kinds of clients connect to and authenticate with the MCP Gateway: external MCP clients such as Claude Code, Virtual Workers, in-cluster callers (agent bundles, platform components), and A2A agents.
+This page shows how different kinds of clients connect to and authenticate with the MCP Gateway: external MCP clients such as Claude Code, Virtual Workers, agent bundles and other in-cluster callers, and A2A agents.
 
 ## What Every Client Needs
 
 | Item | Value |
 |------|-------|
-| **Endpoint** | `POST /mcp` for all tools, or `POST /mcp/<adapter>` for one adapter (see [Concepts](./concepts.md#unified-vs-per-adapter-servers)) |
+| **Endpoint** | `POST /mcp` for all tools, or `POST /mcp/<adapter>` for one adapter (see [Concepts](./concepts.md#unified-vs-per-adapter-endpoints)) |
 | **In-cluster URL** | `http://firefoundry-core-mcp-gateway.<namespace>.svc.cluster.local:8080/mcp` (default release name `firefoundry-core`) |
-| **Authentication** | `X-Api-Key: <key>` header, when the gateway has `API_KEY` set |
+| **Authentication** | `X-Api-Key: <key>` header (see [Getting the API key](./operations.md#getting-the-api-key)) |
 | **Content type** | `Content-Type: application/json`; body is a single JSON-RPC 2.0 message |
 | **Optional headers** | `X-On-Behalf-Of`, `X-Trace-Id`, `X-Span-Id` (see [Identity and tracing headers](#identity-and-tracing-headers)) |
 
@@ -25,12 +25,12 @@ Configure clients for the **HTTP** (streamable HTTP) transport. Clients that onl
 
 ### Authentication
 
-Authentication is a single shared secret. When `API_KEY` is configured:
+Authentication is a single shared API key for the environment:
 
 - a request without `X-Api-Key` gets `401 {"error":"Missing X-Api-Key header"}`,
 - a request with a wrong key gets `403 {"error":"Invalid API key"}`.
 
-When `API_KEY` is not set (local development), MCP and admin routes are open. The Helm chart always sets `API_KEY`; replace the placeholder value before exposing the gateway. There is no per-user authentication or per-tool authorization at the gateway — every holder of the key sees every connected tool. Give narrower clients a per-adapter URL, and keep the gateway on the cluster network unless you have deliberately enabled ingress.
+There is no per-user authentication or per-tool authorization at the gateway — every holder of the key sees every active tool, including write-capable ones (entity writes, working-memory deletes, code execution, SQL queries). Give narrower clients a per-adapter URL, keep the key out of source control, and reach the gateway over the cluster network or `kubectl port-forward`.
 
 ## Claude Code and Other External MCP Clients
 
@@ -104,11 +104,11 @@ console.log(result.content);
 ]
 ```
 
-Use `…/mcp/<adapter>` to give a worker only one service's tools. If the gateway has `API_KEY` set, the worker's MCP connection must also send the `X-Api-Key` header; see the [Virtual Worker Manager reference](../virtual-workers/reference.md) for how your version supplies credentials for MCP connections.
+Use `…/mcp/<adapter>` to give a worker only one service's tools. The worker's MCP connection must also send the `X-Api-Key` header; see the [Virtual Worker Manager reference](../virtual-workers/reference.md) for how your version supplies credentials for MCP connections.
 
-## In-Cluster Callers
+## Agent Bundles and Other In-Cluster Callers
 
-Agent bundles and platform components can call the gateway directly over HTTP. Forward the caller identity and trace context so downstream services and telemetry can attribute the work:
+Agent bundles and other in-cluster components can call the gateway directly over HTTP. Forward the caller identity and trace context so downstream services and telemetry can attribute the work:
 
 ```bash
 curl -s -X POST http://firefoundry-core-mcp-gateway.ff-dev.svc.cluster.local:8080/mcp/context \
@@ -127,15 +127,15 @@ Code that already uses the FireFoundry client libraries (entity client, context 
 
 | Header | Format | Effect |
 |--------|--------|--------|
-| `X-On-Behalf-Of` | `app=<id>; bundle=<id>; user=<id>` (`user` optional) | Parsed and placed in the request context for downstream calls; forwarded by the Skills adapter. Ignored if `app` or `bundle` is missing. |
+| `X-On-Behalf-Of` | `app=<id>; bundle=<id>; user=<id>` (`user` optional) | Carried to downstream calls; the Skills adapter uses it to resolve skills in the caller's scope. Ignored if `app` or `bundle` is missing. |
 | `X-Trace-Id` | Any string (UUID or W3C trace ID) | Trace to continue; generated if absent |
 | `X-Span-Id` | Any string | Recorded as the parent of the gateway's span |
 
-On per-adapter endpoints, trace IDs are also written to the `mcp_tool_call` telemetry event emitted for each tool call.
+Trace headers are forwarded to backing services and recorded in an `mcp_tool_call` telemetry event only on per-adapter endpoints; use those when you need calls to show up under your request's trace.
 
 ## A2A Clients
 
-With `A2A_ENABLED=true`, agents that speak the A2A protocol can use the gateway's tools without MCP.
+When A2A is enabled on the gateway (see [Operations](./operations.md#optional-features)), agents that speak the A2A protocol can use the gateway's tools without MCP.
 
 **1. Discover the agent card** (always public):
 
@@ -170,11 +170,11 @@ curl -s -X POST http://localhost:8080/a2a \
 
 The response is an A2A task whose artifact contains the tool's text result. A message that does not name a tool returns the list of available tools as an artifact.
 
-**Authentication for A2A:** the `X-Api-Key` check on `/a2a` (including `/a2a/tasks`) applies only when **both** `A2A_AUTH_REQUIRED=true` and `API_KEY` are set. With the default `A2A_AUTH_REQUIRED=false`, anyone who can reach the gateway can run tools over A2A — enable it whenever A2A is on. See [Reference — A2A endpoints](./reference.md#a2a-endpoints).
+**Authentication for A2A:** `/a2a` requires `X-Api-Key` only when the gateway's `A2A_AUTH_REQUIRED` setting is on. Without it, anyone who can reach the gateway can run tools over A2A — turn it on whenever you enable A2A. The Agent Card is always public. See [Reference — A2A endpoints](./reference.md#a2a-endpoints).
 
 ## Related
 
 - [Getting Started](./getting-started.md) — Try every call with curl
 - [Tools Catalog](./tools.md) — What each tool does and its arguments
-- [Operations — Security](./operations.md#security)
+- [Operations](./operations.md)
 - [Virtual Worker Manager](../virtual-workers/README.md)

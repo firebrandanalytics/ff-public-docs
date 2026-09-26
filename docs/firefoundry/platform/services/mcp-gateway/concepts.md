@@ -1,6 +1,6 @@
 # MCP Gateway — Concepts
 
-This page explains the mental model behind the MCP Gateway: what an adapter is, how the unified and per-adapter MCP servers differ, how tools, resources, and prompts are exposed, and how identity, caching, and the optional A2A layer fit in.
+This page explains the mental model you need to give AI agents access to FireFoundry through the MCP Gateway: what an adapter is, when to use the unified or a per-adapter endpoint, what tool results look like, how identity and tracing flow, how to add your own tools, and where A2A fits.
 
 ## MCP in One Paragraph
 
@@ -16,154 +16,107 @@ The gateway implements MCP protocol version `2024-11-05` over plain HTTP: the cl
 
 ## Adapters
 
-An **adapter** is the unit of integration. Each adapter wraps one FireFoundry service client and declares:
+An **adapter** exposes one FireFoundry service as MCP tools. Each adapter has a name (used in URLs such as `/mcp/entity`), a set of tools with a common prefix, and optionally resource templates. An adapter is active only when its service is configured for the gateway in your environment (see [Operations](./operations.md#enabling-adapters-for-your-app)).
 
-- a **name** (used in URLs such as `/mcp/entity` and in status output),
-- a list of **tools**, each with a typed input schema that is converted to JSON Schema for `tools/list`,
-- optionally, **resource templates** and a `readResource` implementation.
+| Adapter | Backing service | Tools |
+|---------|-----------------|-------|
+| `entity` | [Entity Service](../entity-service/README.md) | 7 |
+| `context` | [Context Service](../context-service/README.md) | 13 |
+| `docproc` | [Document Processing](../doc-proc-service/README.md) | 5 |
+| `telemetry` | [Telemetry Service](../telemetry-service/README.md) | 9 |
+| `sandbox` | [Code Sandbox](../code-sandbox/README.md) | 1 |
+| `websearch` | [Web Search](../web-search/README.md) | 3 |
+| `dataaccess` | [Data Access Service](../data-access/README.md) | 7 |
+| `knowledgebase` | Knowledge base ingestion and RAG query APIs | 7 |
+| `skills` | [Skills Service](../skills-service/README.md) | 3 |
+| `grpc` | Your own gRPC services | dynamic |
+| `a2a-client` | Remote A2A agents | dynamic |
 
-| Adapter | Backing service | Enabled when | Tools |
-|---------|-----------------|--------------|-------|
-| `entity` | [Entity Service](../entity-service/README.md) | `ENTITY_SERVICE_URL` is set | 7 |
-| `context` | [Context Service](../context-service/README.md) (gRPC) | `CONTEXT_SERVICE_ADDRESS` is set | 13 |
-| `docproc` | [Document Processing](../doc-proc-service/README.md) | `DOC_PROC_SERVICE_URL` is set | 5 |
-| `telemetry` | [Telemetry Service](../telemetry-service/README.md) | `TELEMETRY_SERVICE_URL` is set | 9 |
-| `sandbox` | [Code Sandbox](../code-sandbox/README.md) | `SANDBOX_SERVICE_URL` is set | 1 |
-| `websearch` | [Web Search](../web-search/README.md) | `WEB_SEARCH_SERVICE_URL` is set | 3 |
-| `dataaccess` | [Data Access Service](../data-access/README.md) | `DATA_ACCESS_SERVICE_URL` is set | 7 |
-| `knowledgebase` | Knowledge base ingestion and RAG query APIs | both `KB_INGESTION_SERVICE_URL` and `KB_RAG_QUERY_SERVICE_URL` are set | 7 |
-| `skills` | [Skills Service](../skills-service/README.md) | `SKILLS_SERVICE_URL` is set | 3 |
-| `grpc` | Any gRPC service you register | `GRPC_BACKENDS_ENABLED=true` | dynamic |
-| `a2a-client` | Remote A2A agents | `A2A_REMOTE_AGENTS` lists at least one agent | dynamic |
+The full tool list is in the [Tools Catalog](./tools.md). `GET /status` and `GET /mcp` show which adapters are active on a running gateway; `tools/list` is always the source of truth.
 
-The full tool list is in the [Tools Catalog](./tools.md).
+A misconfigured service URL usually does not stop the adapter from appearing — it surfaces on the first tool call as an error result. Smoke-test with one cheap read tool per adapter you rely on.
 
-### Adapter lifecycle
+## Unified vs. Per-Adapter Endpoints
 
-1. **Startup** — the gateway creates every adapter, then initializes only those whose configuration is present. An adapter without configuration is reported as `disabled`.
-2. **Connected** — a successfully initialized adapter is `connected`. The gateway creates a per-adapter MCP server for it and includes its tools in the unified server.
-3. **Error** — if initialization throws, the adapter stays out of the MCP surface and its error is shown in `GET /status`.
-4. **Shutdown** — on `SIGTERM`/`SIGINT` each adapter releases its client.
-
-Initialization creates the client object; for most adapters it does not make a network call. A misconfigured URL therefore usually surfaces on the first tool call (as a tool error), not at startup.
-
-### Dynamic adapters
-
-Two adapters build their tool list at runtime instead of from a fixed definition:
-
-- **`grpc`** — you register gRPC backends (from a JSON file at startup, or through `POST /admin/grpc/backends`). Each backend supplies a `.proto` file path, the service name, and a list of *tool mappings* from an MCP tool name to a gRPC method. Unary and server-streaming methods are supported; server reflection is not.
-- **`a2a-client`** — you list remote A2A agents (`A2A_REMOTE_AGENTS`, or `PUT /admin/a2a/agents`). The gateway fetches each agent's card from `<url>/.well-known/agent-card.json` and turns every skill into an MCP tool named `a2a:<agent-name>:<skill-id>`. Calling the tool sends an A2A `message/send` request to `<url>/a2a`.
-
-> **Note:** The unified endpoint indexes tools once, at startup. Backends or agents that you register later through the admin API appear in `tools/list` but can only be *called* through their per-adapter endpoint (`/mcp/grpc` or `/mcp/a2a-client`), and only if that adapter was enabled at startup. Restart the gateway to add them to the unified index.
-
-## Unified vs. Per-Adapter Servers
-
-The gateway runs several MCP servers side by side:
-
-| | Unified server | Per-adapter server |
+| | Unified `POST /mcp` | Per-adapter `POST /mcp/<adapter>` |
 |---|---|---|
-| Endpoint | `POST /mcp` | `POST /mcp/<adapter>` |
-| Tools | All connected adapters | One adapter |
-| Resources / templates | All connected adapters | One adapter |
+| Tools and resources | Every active adapter | One adapter |
 | Prompts, `completion/complete` | Yes | No |
-| `tools/list` / `resources/list` pagination | Yes (cursor, 50 per page) | No (full list) |
-| Read-only result cache | Yes (60 s) | No |
-| Trace context passed to adapters | No | Yes |
-| MCP tool-call telemetry events | No | Yes (when the telemetry adapter is connected) |
-| Server name in `initialize` | `MCP_SERVER_NAME` (default `firefoundry-mcp-gateway`) | `firefoundry-mcp-<adapter>` |
+| `tools/list` pagination | Optional cursor, 50 per page | Full list |
+| Read results | Read-only tools may return a result up to 60 s old | Always fresh |
+| Trace headers forwarded to the backing service | No | Yes |
+| `mcp_tool_call` telemetry event per call | No | Yes (when telemetry is enabled) |
 
-Use the **unified server** for general-purpose agents that should see everything. Use a **per-adapter server** to give a client a narrow tool set (for example a debugging agent that only needs `telemetry`), or when you want per-call telemetry and trace propagation.
+**Choose the unified endpoint** for general-purpose agents that should see everything, such as a developer's Claude Code session exploring an environment.
 
-Tool names are globally unique by convention (each adapter uses its own prefix). If two adapters ever declared the same name, the unified server would log a collision and route to the adapter registered last.
+**Choose a per-adapter endpoint** when:
 
-## Tools, Resources, and Prompts
+- the agent should only see a narrow tool set (a debugging agent that only needs `telemetry`, a research worker that only needs `websearch`) — this is also the main way to limit what a client can do, since the gateway has no per-tool authorization;
+- you want each tool call traced and recorded in telemetry under the caller's trace;
+- the agent must see fresh data immediately after writing it, or backing services return caller-specific data for the same arguments (unified read results are shared between callers with identical arguments for up to 60 seconds).
 
-### Tool results
+An agent can connect to several per-adapter endpoints at once (for example `/mcp/entity` and `/mcp/context`) to get a curated tool set with fresh reads and tracing.
 
-Every tool returns an MCP `CallToolResult`: a `content` array with one text item. For almost all tools the text is pretty-printed JSON of the backing service's response. `skills_read_file` returns raw file text, and `a2a-client` tools return the remote agent's text artifacts.
+## Tool Results
 
-A failure inside a tool (bad arguments, downstream error) is returned as a normal result with `isError: true` and the error message as text — not as a JSON-RPC error. JSON-RPC errors are reserved for protocol problems such as an unknown method or an unknown tool name (see [Reference](./reference.md#json-rpc-error-codes)).
+Every tool returns an MCP `CallToolResult`: a `content` array with one text item. For almost all tools the text is pretty-printed JSON of the backing service's response. `skills_read_file` returns raw file text, and `a2a-client` tools return the remote agent's text.
 
-Binary data (documents, blobs, generated PDFs) travels as **base64** strings inside the JSON arguments and results. The HTTP layer accepts request bodies up to 50 MB.
+A failure inside a tool (bad arguments, downstream error) comes back as a normal result with `isError: true` and the error message as text — not as a JSON-RPC error. JSON-RPC errors are reserved for protocol problems such as an unknown method or an unknown tool name (see [Reference](./reference.md#json-rpc-error-codes)). Design agents to read `isError` and recover.
+
+Binary data (documents, blobs, generated PDFs) travels as **base64** strings inside JSON arguments and results. Request bodies are limited to 50 MB; for large files, store them via the Context Service and pass references.
 
 ### Resources
 
-The built-in adapters expose resource **templates** (no static resources):
+Resource templates give URI-style read access:
 
 | Template | Adapter | Returns |
 |----------|---------|---------|
 | `entity://nodes/{node_id}` | `entity` | The node as JSON |
 | `context://blobs/{blob_key}` | `context` | The blob, base64 in `blob`, with its content type |
-| `telemetry://requests/{request_id}` | `telemetry` | All telemetry events whose trace ID equals `request_id` |
+| `telemetry://requests/{request_id}` | `telemetry` | All telemetry events for that trace ID |
 
 ### Prompts
 
-The unified server offers five built-in prompts that produce a short, step-by-step plan using gateway tools: `list_tools_by_adapter`, `debug_request`, `explore_entity_graph`, `ingest_and_query`, and `data_analysis`. `list_tools_by_adapter` is generated live from the connected adapters; the others are static templates. See the [Tools Catalog](./tools.md#prompts).
+The unified endpoint offers five prompts that produce a short, step-by-step plan using gateway tools: `list_tools_by_adapter`, `debug_request`, `explore_entity_graph`, `ingest_and_query`, and `data_analysis`. See the [Tools Catalog](./tools.md#prompts).
 
-## Caller Identity and Tracing
+## Identity and Tracing
 
-Every HTTP request passes through a middleware that reads three optional headers:
+Clients can send three optional headers on every request:
 
 | Header | Purpose |
 |--------|---------|
-| `X-Trace-Id` | Trace ID to continue; a new UUID is generated when absent |
-| `X-Span-Id` | Caller's span; becomes the parent span of the gateway's own span |
-| `X-On-Behalf-Of` | Caller identity in the form `app=<application-id>; bundle=<agent-bundle-id>; user=<user-id>` (`user` optional) |
+| `X-On-Behalf-Of` | Caller identity: `app=<application-id>; bundle=<agent-bundle-id>; user=<user-id>` (`user` optional). Ignored unless both `app` and `bundle` are present. |
+| `X-Trace-Id` | Trace to continue; a new one is generated when absent |
+| `X-Span-Id` | Caller's span; becomes the parent of the gateway's span |
 
-A well-formed `X-On-Behalf-Of` value (both `app` and `bundle` present) is parsed and stored in the request's async context so downstream FireFoundry client calls made during the request can carry it. The Skills adapter explicitly forwards it as an `X-On-Behalf-Of` header on its calls to the Skills Service, which uses it for environment-scoped skill resolution.
+`X-On-Behalf-Of` is carried to downstream service calls; the Skills adapter uses it so skill resolution respects the caller's application and environment scope. Always send it from agent bundles and Virtual Workers so work is attributed correctly.
 
-Downstream **credentials** are not per-caller: the gateway authenticates to backing services with its own configuration (for example the single `API_KEY`, which is also forwarded to several services — see [Operations](./operations.md#security)).
+**Access is not per-caller.** The gateway authenticates clients with a single shared API key, and it calls backing services with its own configured credentials. Every key holder sees every active tool. Entity tools act in the scope of the agent bundle configured for the gateway (see [Operations](./operations.md#enabling-adapters-for-your-app)), not the caller's bundle.
 
-## Result Caching
+## Bringing Your Own Tools
 
-The unified server keeps an in-memory cache of successful results for tools whose names start with a read-only prefix (`entity_get_`, `entity_search_`, `context_get_`, `context_list_`, `context_fetch_`, `telemetry_get_`, `telemetry_search_`, `das_get_`, `das_query`, `das_list_`, `das_ontology_`, `das_resolve_`, `kb_list_`, `kb_get_`, `kb_query`, `docproc_extract_`). Entries live for 60 seconds, the cache holds at most 1,000 entries, and error results are never cached.
+Two adapters build their tools from registrations instead of a fixed list, so an app team can put its own capabilities next to the platform's:
 
-The cache key is the tool name plus its arguments — it does **not** include the caller identity. Two callers issuing the same read within a minute receive the same result. If your backing services return caller-specific data for identical arguments, use the per-adapter endpoints (which do not cache).
+- **`grpc`** — register a gRPC service with a `.proto` file and a list of *tool mappings* from an MCP tool name to a gRPC method. Unary and server-streaming methods are supported; server reflection is not.
+- **`a2a-client`** — register a remote A2A agent by URL. The gateway reads its agent card and turns every skill into an MCP tool named `a2a:<agent-name>:<skill-id>`.
 
-## Admin Configuration Records
-
-With `DATABASE_ENABLED=true`, the gateway stores configuration in the `mcp_gateway` PostgreSQL schema and exposes it through the admin API:
-
-- **Adapter configuration** (`adapter_config`) — an `enabled` flag per adapter
-- **Tool configuration** (`tool_config`) — an `enabled` flag and optional `rate_limit_per_minute` per tool
-- **External services** (`external_services`) — a catalog of outbound integrations (MCP servers, webhooks, REST, gRPC endpoints) with a connectivity test
-- **Inbound APIs** (`inbound_apis`) — a catalog of inbound API definitions
-
-> **Important:** In the current version these records are **stored and reported only**. The MCP request path does not consult the adapter/tool `enabled` flags or enforce `rate_limit_per_minute`, and the gateway does not route traffic to registered external services. Whether an adapter is active is controlled by its environment variables. Treat these records as configuration metadata for tooling such as the FireFoundry Console.
+Register them in the gateway's startup configuration (persistent) or through the admin API (in memory, lost on restart). Tools registered through the admin API after startup are callable only on the per-adapter endpoint (`/mcp/grpc` or `/mcp/a2a-client`) until the gateway restarts, and only if that adapter was enabled at startup. See [Reference — Registering your own tools](./reference.md#registering-your-own-tools).
 
 ## A2A Protocol Support (Optional)
 
-When `A2A_ENABLED=true`, the gateway also acts as an **A2A agent**:
+When A2A is enabled, the gateway also acts as an **A2A agent**:
 
-- It publishes an **Agent Card** at `/.well-known/a2a-agent-card` (and the older `/.well-known/agent-card.json`). Each connected adapter becomes one skill, with ID `firefoundry-<adapter>` and a description that lists the adapter's tools.
-- It accepts A2A JSON-RPC requests at `POST /a2a`. A `message/send` or `message/stream` whose text part is JSON of the form `{"tool": "<tool-name>", "arguments": {...}}` (or a data part with the same fields) runs that MCP tool and returns the result as a text artifact. A message that does not name a tool returns the list of available tools.
-- Task history is kept in memory and exposed at `GET /a2a/tasks`; tasks can be cancelled with `POST /a2a/tasks/{id}/cancel`.
+- It publishes an **Agent Card** at `/.well-known/a2a-agent-card` (and `/.well-known/agent-card.json`). Each active adapter becomes one skill, `firefoundry-<adapter>`.
+- It accepts A2A `message/send` and `message/stream` at `POST /a2a`. A message whose text (or data part) is `{"tool": "<tool-name>", "arguments": {...}}` runs that tool and returns the result as a text artifact. A message that does not name a tool returns the list of available tools.
 
-The opposite direction — calling *remote* A2A agents as MCP tools — is the `a2a-client` adapter described above.
+Use this when an A2A-native agent needs FireFoundry tools without an MCP client. The opposite direction — calling remote A2A agents as MCP tools — is the `a2a-client` adapter.
 
-## How the Gateway Interacts with Other Services
+## Designing Your App Around the Gateway
 
-```
-                ┌──────────────── MCP Gateway ─────────────────┐
-  MCP client ──►│ /mcp  or  /mcp/<adapter>                     │
-                │    │                                          │
-                │    ├─ entity ─────── REST ──► Entity Service  │
-                │    ├─ context ────── gRPC ──► Context Service │
-                │    ├─ docproc ────── REST ──► Doc Processing  │
-                │    ├─ telemetry ──── HTTP ──► Telemetry       │
-                │    ├─ sandbox ────── REST ──► Code Sandbox    │
-                │    ├─ websearch ──── REST ──► Web Search      │
-                │    ├─ dataaccess ─── HTTP ──► Data Access     │
-                │    ├─ knowledgebase  REST ──► KB ingestion/RAG│
-                │    ├─ skills ─────── REST ──► Skills Service  │
-                │    ├─ grpc ───────── gRPC ──► your backends   │
-                │    └─ a2a-client ─── A2A ───► remote agents   │
-                └──────────────────────────────────────────────┘
-```
-
-- **Entity Service** — the entity adapter uses the entity client with the configured `AGENT_BUNDLE_ID` (and optional `ENTITY_GRAPH_NAME`); nodes are created and read in that bundle's scope.
-- **Telemetry Service** — besides the read tools, the gateway writes one `mcp_tool_call` event per tool call made through a per-adapter endpoint (tool, adapter, duration, error flag), linked to the caller's trace.
-- **Entitlement agent** — the `mcp.access` entitlement is evaluated for MCP serving routes and A2A task execution; see [Operations](./operations.md#entitlements).
+- **Coding agents against a dev environment** — a developer connects Claude Code to `/mcp` to inspect entities, telemetry, and working memory while building a bundle. Add a second, per-adapter connection (for example `/mcp/telemetry`) for focused debugging sessions.
+- **Virtual Workers** — give each worker definition only the per-adapter endpoints its job needs. A document-review worker might get `/mcp/docproc`, `/mcp/context`, and `/mcp/entity`.
+- **LLM agents inside a bundle** — when a bot needs open-ended tool use across services, point its MCP client at the gateway and forward `X-On-Behalf-Of` and trace headers. Deterministic code paths should still use the SDK directly.
+- **Exposing app capabilities to agents** — register your app's gRPC service with the `grpc` adapter so every agent that already uses the gateway can call it, with no per-agent integration.
 
 ## Related
 

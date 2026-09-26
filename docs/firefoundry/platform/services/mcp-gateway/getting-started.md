@@ -4,9 +4,9 @@ This guide walks through talking to the MCP Gateway with nothing but `curl`: che
 
 ## Prerequisites
 
-- A FireFoundry environment with the `mcp-gateway` chart enabled (it is enabled by default in `firefoundry-core`), or the gateway running locally
-- At least one backing service configured — for example the Entity Service (`ENTITY_SERVICE_URL` plus `AGENT_BUNDLE_ID`)
-- The gateway API key, if `API_KEY` is set (the Helm chart sets it; see [Operations](./operations.md#configuration))
+- A FireFoundry environment with the MCP Gateway enabled (it is enabled by default in `firefoundry-core`)
+- At least one adapter active — the entity, context, document processing, code sandbox, and web search adapters are on by default (see [Operations](./operations.md#enabling-adapters-for-your-app))
+- The gateway API key (ask your environment administrator, or see [Operations](./operations.md#getting-the-api-key))
 - `curl` and, optionally, `jq`
 
 ## Step 1: Reach the Gateway
@@ -58,7 +58,7 @@ curl -s $MCP_URL/status | jq '.adapters | map_values({enabled, connected, toolCo
 }
 ```
 
-An adapter with `enabled: false` has no configuration; one with `enabled: true, connected: false` failed to initialize — check the `error` field and the pod logs.
+An adapter with `enabled: false` is not configured in this environment; one with `enabled: true, connected: false` failed to start — its `error` field says why (see [Operations — Troubleshooting](./operations.md#troubleshooting)).
 
 ## Step 3: Discover the MCP Endpoints
 
@@ -236,11 +236,11 @@ curl -s -X POST $MCP_URL/mcp/entity \
 ]
 ```
 
-Per-adapter endpoints are not cached, pass your trace headers through to the adapter, and record an `mcp_tool_call` telemetry event for each `tools/call` when the telemetry adapter is connected.
+Per-adapter endpoints always return fresh reads, pass your trace headers through to the backing service, and record an `mcp_tool_call` telemetry event for each `tools/call` when telemetry is enabled. See [Concepts — Unified vs. per-adapter endpoints](./concepts.md#unified-vs-per-adapter-endpoints) for how to choose.
 
 ## Next Steps
 
 - **[Connecting Clients](./clients.md)** — Configure Claude Code, Virtual Workers, and other MCP clients
 - **[Tools Catalog](./tools.md)** — Arguments and behavior of every tool
-- **[Reference](./reference.md)** — All endpoints, MCP methods, error codes, and environment variables
-- **[Operations](./operations.md)** — Enable more adapters, secure the gateway, troubleshoot
+- **[Reference](./reference.md)** — All endpoints, MCP methods, and error codes
+- **[Operations](./operations.md)** — Enable more adapters, verify, troubleshoot

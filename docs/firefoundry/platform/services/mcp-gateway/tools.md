@@ -1,6 +1,6 @@
 # MCP Gateway — Tools Catalog
 
-This page lists every MCP tool, resource template, and prompt the gateway exposes, grouped by adapter. A tool appears only when its adapter is connected (see [Concepts — Adapters](./concepts.md#adapters)); `tools/list` on a running gateway is always the source of truth, and it returns the exact JSON Schema for each tool's arguments.
+This page lists every MCP tool, resource template, and prompt the gateway exposes, grouped by adapter. A tool appears only when its adapter is active in your environment (see [Concepts — Adapters](./concepts.md#adapters)); `tools/list` on a running gateway is always the source of truth, and it returns the exact JSON Schema for each tool's arguments.
 
 In the argument tables, **Req** marks required arguments; defaults are applied by the gateway when an argument is omitted. Unless noted otherwise, a tool's result is a single text content item containing the backing service's response as JSON.
 
@@ -22,7 +22,7 @@ In the argument tables, **Req** marks required arguments; defaults are applied b
 
 ## Entity Adapter
 
-Knowledge-graph operations on the [Entity Service](../entity-service/README.md), scoped to the gateway's configured `AGENT_BUNDLE_ID` (and `ENTITY_GRAPH_NAME`, if set).
+Knowledge-graph operations on the [Entity Service](../entity-service/README.md), scoped to the agent bundle (and graph, if set) configured for the gateway — see [Operations](./operations.md#enabling-adapters-for-your-app).
 
 | Tool | Description | Arguments |
 |------|-------------|-----------|
@@ -134,7 +134,7 @@ Access control is enforced by the Data Access Service, not by the gateway.
 
 ## Knowledge Base Adapter
 
-RAG queries and ingestion jobs against the knowledge base ingestion and RAG query APIs. Requires both `KB_INGESTION_SERVICE_URL` and `KB_RAG_QUERY_SERVICE_URL`. See also the [Knowledge Service](../knowledge-service/README.md).
+RAG queries and ingestion jobs against the knowledge base ingestion and RAG query APIs. See also the [Knowledge Service](../knowledge-service/README.md).
 
 | Tool | Description | Arguments |
 |------|-------------|-----------|
@@ -160,17 +160,17 @@ Read access to the [Skills Service](../skills-service/README.md). The caller's `
 
 ## gRPC Adapter (Dynamic)
 
-Enabled with `GRPC_BACKENDS_ENABLED=true`. Each registered backend contributes one tool per entry in its `tools` mapping:
+Each gRPC backend you register contributes one tool per entry in its `tools` mapping:
 
 - **Name** — the mapping's `toolName`
 - **Description** — the mapping's `description`, or `Call <serviceName>.<grpcMethod> via gRPC`
 - **Arguments** — built from the mapping's `inputSchema` (a map of field name to `{ "type": "string" | "number" | "integer" | "boolean" | "array" | "object", "description"?, "optional"? }`); without an `inputSchema`, any JSON object is accepted and passed as the gRPC request message
 
-The result is the gRPC response message as JSON; for a server-streaming method (`streaming: true`), an array of every message received before the stream ended. See [Reference — gRPC backend admin](./reference.md#grpc-backend-admin) for the registration format.
+The result is the gRPC response message as JSON; for a server-streaming method (`streaming: true`), an array of every message received before the stream ended. See [Reference — Registering your own tools](./reference.md#registering-your-own-tools) for the registration format.
 
 ## A2A Client Adapter (Dynamic)
 
-Enabled when `A2A_REMOTE_AGENTS` lists at least one reachable agent. Each skill on each remote agent's card becomes one tool:
+Each remote A2A agent you register contributes tools: each skill on each remote agent's card becomes one tool:
 
 - **Name** — `a2a:<agent-name>:<skill-id>`
 - **Description** — `[Remote: <agent-name>] <skill name>: <skill description>`
@@ -194,10 +194,10 @@ Available on the unified endpoint (`POST /mcp`) through `prompts/list` and `prom
 
 `completion/complete` offers argument completion for the `adapter` argument of `list_tools_by_adapter` (connected adapter names) and prefix completion for static resource URIs.
 
-> **Note:** The `debug_request` prompt text refers to some tool names that differ from the telemetry adapter's actual tool names (for example `telemetry_get_request`). Agents should rely on `tools/list`; the equivalent tools are `telemetry_get_request_trace`, `telemetry_search_llm_api_requests`, `telemetry_search_tool_calls`, and `telemetry_search_broker_requests`.
+> **Note:** Prompt plans are guidance, not exact tool names. If a plan mentions a tool that `tools/list` does not return (for example `telemetry_get_request` in `debug_request`), use the listed equivalent: `telemetry_get_request_trace`, `telemetry_search_llm_api_requests`, `telemetry_search_tool_calls`, or `telemetry_search_broker_requests`.
 
 ## Related
 
-- [Concepts](./concepts.md) — Adapters, result format, caching
+- [Concepts](./concepts.md) — Adapters, result format, choosing an endpoint
 - [Getting Started](./getting-started.md) — Calling tools with curl
 - [Reference](./reference.md) — MCP methods and error codes
