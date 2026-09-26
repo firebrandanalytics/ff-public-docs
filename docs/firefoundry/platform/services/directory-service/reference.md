@@ -1,10 +1,10 @@
 # Directory Service — Reference
 
-Complete reference for the Directory Service REST API, error codes, and configuration.
+Reference for the Directory Service REST API and error codes. There is no client library yet; call the REST API directly.
 
 ## Conventions
 
-- **Base URL**: `http://<directory-service>.<namespace>.svc.cluster.local:8090` in-cluster; the port is set by `PORT` (default `8090`).
+- **Base URL**: the directory URL for your environment (see [Operations](./operations.md#availability-in-your-environment)).
 - **Content type**: JSON request and response bodies, except `items:upload` (raw body) and `items/{id}/content` (raw bytes). JSON request bodies are limited to 1 MiB.
 - **IDs**: drives, items, grants, connections, and import jobs are UUIDs. Import entries use integer ids.
 - **Timestamps**: RFC 3339.
@@ -14,7 +14,7 @@ Complete reference for the Directory Service REST API, error codes, and configur
 
 | Header | Required | Description |
 |--------|----------|-------------|
-| `X-API-Key` | Yes (all `/v1` routes except `/v1/connections/callback`) | Service API key; resolves to the calling application principal |
+| `X-API-Key` | Yes (all `/v1` routes except `/v1/connections/callback`) | Your application's API key |
 | `X-On-Behalf-Of` | Catalog: optional. Connections and imports: required | `user=<uuid>` (full grammar `app=<id>; bundle=<id>; user=<id>`). Only `user=` is read. A non-UUID `user=` value returns `400`. |
 | `If-Match` | Optional on `PATCH /v1/items/{id}` | ETag from a previous read; mismatch returns `412` |
 | `Content-Type` | On `items:upload` | Stored as the item's MIME type (default `application/octet-stream`) |
@@ -30,7 +30,7 @@ Complete reference for the Directory Service REST API, error codes, and configur
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Liveness (unauthenticated) |
-| `GET` | `/ready` | Readiness — checks PostgreSQL (unauthenticated) |
+| `GET` | `/ready` | Readiness (unauthenticated) |
 | `POST` | `/v1/drives` | Create a drive; the calling application becomes owner |
 | `GET` | `/v1/drives` | List drives the calling application can reach |
 | `GET` | `/v1/drives/{id}` | Get a drive |
@@ -68,12 +68,12 @@ Complete reference for the Directory Service REST API, error codes, and configur
 Always `200` while the process is serving:
 
 ```json
-{"status": "healthy", "version": "<BUILD_COMMIT or \"unknown\">"}
+{"status": "healthy", "version": "<build>"}
 ```
 
 ### `GET /ready`
 
-`200 {"ready": true}` when PostgreSQL answers a ping within 3 seconds; otherwise `503 {"ready": false, "error": "..."}`.
+`200 {"ready": true}` when the service can serve requests; otherwise `503 {"ready": false, "error": "..."}`.
 
 ## Drives
 
@@ -124,8 +124,8 @@ Requires `reader`. **`200`** — `{"entryPoints": [Item, ...]}`, sorted by path:
 | `parentId` | uuid | Absent on the drive root |
 | `kind` | string | `folder` or `file` |
 | `name` | string | Unique per folder (case-insensitive) among live items |
-| `path` | string | Materialized path, e.g. `/reports/q3.pdf`; the root is `/` |
-| `aclAnchorId` | uuid | The item whose grants govern this one |
+| `path` | string | Full path, e.g. `/reports/q3.pdf`; the root is `/` |
+| `aclAnchorId` | uuid | The item whose grants govern this one (see [Inheritance](./authorization.md#inheritance)) |
 | `blobKey` | string | Blob content pointer (files) |
 | `workingMemoryId` | uuid | Working-memory content pointer (files) |
 | `mimeType`, `sizeBytes`, `checksumSha256` | | Content metadata |
@@ -150,8 +150,8 @@ Requires `writer` on the parent. Registers existing content without copying it.
 |------------|----------|-------|
 | `parentId` | Yes | Folder uuid |
 | `name` | Yes | |
-| `blobKey` | One of | Must exist in the service's configured blob store, else `400` |
-| `workingMemoryId` | One of | A working-memory uuid; not validated against the Context Service |
+| `blobKey` | One of | Must already exist in the directory's blob store, else `400` |
+| `workingMemoryId` | One of | A working-memory uuid. The directory does not check that it exists — pass a valid id. |
 | `mimeType` | No | |
 | `sizeBytes` | No | |
 | `metadata` | No | JSON object |
@@ -162,9 +162,9 @@ Exactly one of `blobKey` and `workingMemoryId` is required. **`201`** — the it
 
 Requires `writer` on the parent. Query: `parentId` (uuid, required), `name` (required). Body: the raw file bytes. `Content-Type` becomes the item's MIME type.
 
-The service hashes the content, stores it at `directory/<driveId>/<sha256>`, and returns **`201`** with the item (`origin: "created"`, `checksumSha256` set).
+**`201`** — the item (`origin: "created"`, `checksumSha256` and `sizeBytes` set).
 
-> **Size.** The upload endpoint reads at most 256 MiB of the request body, and it currently does **not** reject larger bodies — bytes beyond 256 MiB are not stored. Keep uploads below 256 MiB. The request is buffered in memory while it is hashed, so size the service's memory for your largest concurrent uploads.
+> **Size limit: 256 MiB.** Larger request bodies are not rejected, but only the first 256 MiB is stored. Keep uploads at or below 256 MiB and compare the returned `sizeBytes` with what you sent. For large documents already in storage, use `items:promote`; for documents in Microsoft 365 or Box, use an import.
 
 ### `GET /v1/items:by-path?driveId=<uuid>&path=<path>`
 
@@ -191,7 +191,7 @@ Requires `reader` on the folder. Returns only children the caller can see.
 
 Results are ordered folders first, then by name. `nextAfter` is present whenever the page is non-empty; an empty `items` array means you have reached the end.
 
-> **Paging caveat.** The cursor is the last item's *name*. If a page ends inside the folder section of a listing, files whose names sort at or before that folder name can be skipped on the next page. For folders with many subfolders, request a `limit` large enough to cover them (up to 500).
+> **Paging tip.** In folders with many subfolders, a page boundary that falls among the subfolders can cause some files to be missed on the next page. Request a `limit` large enough to cover all subfolders in one page (up to 500).
 
 ### `GET /v1/items/{id}/content`
 
@@ -212,7 +212,7 @@ Requires `writer`. Soft-deletes the item and its subtree; content is not deleted
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | uuid | |
-| `driveId`, `itemId` | uuid | `itemId` is the anchor item |
+| `driveId`, `itemId` | uuid | `itemId` is the item the grant is attached to |
 | `principalId` | uuid | |
 | `principalKind` | string | `user` or `app` |
 | `role` | string | `reader`, `writer`, `owner` |
@@ -247,7 +247,7 @@ All connection routes require `X-On-Behalf-Of: user=<uuid>` and only ever show c
 | `status` | string | `pending`, `ok`, `auth_revoked`, `revoked` |
 | `displayName` | string | |
 | `scopes` | string[] | Granted scopes |
-| `providerSubject` | string | Immutable account id at the provider (OIDC `sub` for Graph, user id for Box) |
+| `providerSubject` | string | Stable account id at the provider |
 | `providerTenant` | string | Tenant id (Graph) or enterprise id (Box) |
 | `providerLogin` | string | Display login (UPN/email); informational |
 | `expectedSubject` | string | The caller's mistake-guard value, if set |
@@ -262,7 +262,7 @@ Body: `{"provider": "msgraph" | "box", "displayName"?: string (≤128), "expecte
 
 ### `GET /v1/connections/callback?code=...&state=...`
 
-The OAuth redirect target; no API key. Consumes the state atomically.
+The OAuth redirect target the provider sends the person's browser to; no API key. Your app does not call it directly. Each `state` can be used once.
 
 | Status | Code | Meaning |
 |--------|------|---------|
@@ -272,7 +272,7 @@ The OAuth redirect target; no API key. Consumes the state atomically.
 | `409` | `SUBJECT_MISMATCH` | A different account consented than expected or than previously recorded |
 | `502` | `SOURCE_UNREACHABLE` | Token exchange failed or no refresh token returned — retryable |
 | `502` | `SOURCE_IDENTITY_UNAVAILABLE` | The provider returned no account identity — retryable |
-| `503` | `CONNECTIONS_NOT_CONFIGURED` | Provider or token key not configured — retryable after fixing configuration |
+| `503` | `CONNECTIONS_NOT_CONFIGURED` | Provider not configured in this environment |
 
 Retryable responses keep the connection `pending` and include `connectionId` and a fresh `authorizeUrl`.
 
@@ -286,7 +286,7 @@ Retryable responses keep the connection `pending` and include `connectionId` and
 
 ### `DELETE /v1/connections/{id}`
 
-Sets `status` to `revoked` and erases stored tokens. **`204`**. Does not call the provider's revocation endpoint.
+Sets `status` to `revoked` and erases the stored credential. **`204`**. Does not revoke consent at the provider.
 
 ### Browse routes
 
@@ -367,7 +367,6 @@ Entry states: `queued`, `importing`, `imported`, `unchanged`, `failed`, `unreach
 | 400 | `PROVIDER_UNSUPPORTED` | Route not supported by the connection's provider |
 | 401 | `UNAUTHENTICATED` | Missing or unrecognized `X-API-Key` |
 | 401 | `AUTH_REVOKED` | Box rejected the connection's credential on a resource call |
-| 402 | *(entitlement body)* | `directory.access` not entitled — only when `FF_ENTITLEMENT_MODE=enforce` |
 | 403 | `FORBIDDEN` | Drive-level dual-grant failure on drive routes |
 | 403 | `SOURCE_FORBIDDEN` | The provider denied access to the source item |
 | 404 | `NOT_FOUND` | Unknown or unreachable item, drive, connection, or job (never distinguishes the two) |
@@ -379,81 +378,7 @@ Entry states: `queued`, `importing`, `imported`, `unchanged`, `failed`, `unreach
 | 409 | `DUPLICATE_SOURCE` | Source already imported under another folder in the drive |
 | 412 | `PRECONDITION_FAILED` | `If-Match` did not match |
 | 429 | `THROTTLED` | Provider throttling during browse; `Retry-After` header (≤ 120 s) |
-| 500 | `INTERNAL` | Unexpected error (logged server-side) |
+| 500 | `INTERNAL` | Unexpected error |
 | 502 | `SOURCE_UNREACHABLE` | Provider or token endpoint unreachable — retryable |
 | 502 | `SOURCE_IDENTITY_UNAVAILABLE` | Provider returned no consenting identity |
-| 503 | `CONNECTIONS_NOT_CONFIGURED` | Connection surface or provider not configured |
-
-## Configuration
-
-### Core
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `8090` | HTTP listen port |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
-| `DATABASE_URL` | local development URL | PostgreSQL connection URL. Always set it explicitly. |
-| `DIRECTORY_API_KEYS` | — | **Required.** Comma-separated `name:key:principal-uuid` entries mapping API keys to application principals. The service refuses to start without at least one. |
-| `BUILD_COMMIT` | — | Reported as `version` by `/health` |
-
-### Blob storage
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BLOB_STORAGE_PROVIDER` | inferred | `azure` or `local`. Inferred as `azure` when `BLOB_STORAGE_ACCOUNT` is set, otherwise `local`. |
-| `BLOB_STORAGE_ACCOUNT` | — | Azure storage account name |
-| `BLOB_STORAGE_KEY` | — | Azure storage account key |
-| `BLOB_STORAGE_CONTAINER` | — | Azure container; required for `azure` |
-| `BLOB_STORAGE_LOCAL_DIR` | `./.blobs` | Directory for `local` storage (development) |
-
-### Delegated import
-
-All optional. Without `DIRECTORY_TOKEN_KEY` and at least one complete provider, the connection and import routes answer `503` and nothing else changes.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DIRECTORY_TOKEN_KEY` | — | Base64 of exactly 32 random bytes; seals OAuth tokens at rest. Never logged. |
-| `DIRECTORY_MSGRAPH_CLIENT_ID` | — | Entra ID application (client) id |
-| `DIRECTORY_MSGRAPH_CLIENT_SECRET` | — | Client secret. Never logged. |
-| `DIRECTORY_MSGRAPH_TENANT` | — | Tenant id (the authorize and token URLs must already target your tenant) |
-| `DIRECTORY_MSGRAPH_AUTHORIZE_URL` | — | OAuth authorize endpoint |
-| `DIRECTORY_MSGRAPH_TOKEN_URL` | — | OAuth token endpoint |
-| `DIRECTORY_MSGRAPH_GRAPH_URL` | Microsoft Graph | Graph API base URL override (testing only) |
-| `DIRECTORY_MSGRAPH_REDIRECT_URL` | — | Must route to `/v1/connections/callback` |
-| `DIRECTORY_MSGRAPH_SCOPES` | `openid profile Files.Read.All offline_access` | Space-separated; must include `openid` and `offline_access` |
-| `DIRECTORY_BOX_CLIENT_ID` | — | Box OAuth client id |
-| `DIRECTORY_BOX_CLIENT_SECRET` | — | Box client secret. Never logged. |
-| `DIRECTORY_BOX_AUTHORIZE_URL` | `https://account.box.com/api/oauth2/authorize` | Override for testing |
-| `DIRECTORY_BOX_TOKEN_URL` | `https://api.box.com/oauth2/token` | Override for testing |
-| `DIRECTORY_BOX_API_URL` | `https://api.box.com/2.0` | Override for testing |
-| `DIRECTORY_BOX_REDIRECT_URL` | — | Must route to `/v1/connections/callback` |
-| `DIRECTORY_BOX_SCOPES` | `root_readonly` | Must be exactly `root_readonly` |
-| `IMPORT_WORKERS` | `4` | Import worker goroutines per replica; `0` serves the API without running imports |
-| `DIRECTORY_IMPORT_TEMP_DIR` | OS temp dir | Scratch space for in-progress downloads |
-
-### Entitlements
-
-All optional; see [Operations](./operations.md#entitlements).
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `FF_ENTITLEMENT_AGENT_URL` | — | In-cluster entitlement agent base URL |
-| `FF_ENTITLEMENT_ISSUER` | — | Licence issuer identity |
-| `FF_ENTITLEMENT_JWKS_URL` | — | The issuer's JWKS URL |
-| `FF_CLUSTER_REF` | — | This cluster's identity |
-| `FF_NAMESPACE` | — | When set, must match the entitlement token's namespace |
-| `FF_ENTITLEMENT_MODE` | `report` | `report` or `enforce`; anything other than exactly `enforce` means `report` |
-
-## Operator CLI: `dirctl`
-
-The repository ships an operator CLI. It reads `DIRECTORY_URL` (default `http://127.0.0.1:8090`), `DIRECTORY_API_KEY`, and `DIRECTORY_USER` (a user UUID, sent as `X-On-Behalf-Of: user=<uuid>`), or the `--url`, `--api-key`, and `--user` flags.
-
-| Command | Purpose |
-|---------|---------|
-| `dirctl migrate [--database-url URL] [--dir migrations] [--status] [--down N]` | Apply, inspect, or revert schema migrations |
-| `dirctl connect [--provider msgraph\|box] [--name N] [--expect-subject S]` | Start a connection and print the consent URL; also `--list`, `--show <id>`, `--delete <id>` |
-| `dirctl browse --connection <id> [--site S] [--drive D] [--item I] [--kind K] [--stat] [--page-token T]` | Browse the source |
-| `dirctl import --connection <id> --drive D --item I [--kind K] --target <folder-uuid>` | Start an import; `--cancel <job-id>` to cancel |
-| `dirctl import status <job-id> [--watch 2s] [--entries] [--state S]` | Follow a job |
-| `dirctl ls --item <folder-uuid>` | List a directory folder |
-| `dirctl cat --item <file-uuid> [--out FILE]` | Download a directory file |
+| 503 | `CONNECTIONS_NOT_CONFIGURED` | Microsoft 365 / Box connections, or the requested provider, not configured in this environment |

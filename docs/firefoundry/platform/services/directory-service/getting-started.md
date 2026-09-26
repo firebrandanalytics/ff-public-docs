@@ -1,20 +1,17 @@
 # Directory Service — Getting Started
 
-This walkthrough creates a drive, gives a user access to it, uploads and shares a file, and lets a second user find it through entry points. Every step uses `curl` against the REST API.
+This walkthrough creates a drive, gives a user access to it, uploads and shares a file, and lets a second user find it through entry points. Every step uses `curl` against the REST API; in an agent bundle or app backend you make the same HTTP calls with your HTTP client of choice.
 
 ## Prerequisites
 
-- A running Directory Service with its database migrations applied (see [Operations](./operations.md#deployment))
-- The service URL. Inside the cluster this is `http://<directory-service>.<namespace>.svc.cluster.local:8090`; from a workstation, port-forward the service or run it locally on port `8090`
-- An API key configured in the service's `DIRECTORY_API_KEYS` variable. Each entry maps a key to an **application principal UUID** (`name:key:principal-uuid`)
-- User principal UUIDs for the people you want to grant. In a FireFoundry environment these are the users' identity principal ids
+- The Directory Service available in your environment, and its URL (see [Operations](./operations.md#availability-in-your-environment))
+- An **API key for your application**, issued by your environment administrator. The key identifies your application's principal in the directory.
+- User principal UUIDs for the people you want to grant — in a FireFoundry environment, their identity principal ids
 - `curl` and `jq`
 
-Set some shell variables for the rest of the guide:
-
 ```bash
-export DIRECTORY_URL=http://localhost:8090
-export APP_KEY='<your-api-key>'                       # from DIRECTORY_API_KEYS
+export DIRECTORY_URL=http://localhost:8090                # or your environment's directory URL
+export APP_KEY='<your-api-key>'
 export ALICE=11111111-1111-4111-8111-111111111111     # a user principal UUID
 export BOB=22222222-2222-4222-8222-222222222222       # another user principal UUID
 ```
@@ -29,15 +26,15 @@ curl -s $DIRECTORY_URL/ready
 ```
 
 ```json
-{"status":"healthy","version":"unknown"}
+{"status":"healthy","version":"<build>"}
 {"ready":true}
 ```
 
-`version` reports the `BUILD_COMMIT` environment variable when it is set. `/ready` returns `503` with `{"ready":false,"error":"..."}` when PostgreSQL is unreachable.
+`/ready` returns `503` with `{"ready":false,...}` when the service cannot serve requests yet.
 
 ## Step 2: Create a Drive
 
-Drive creation is done by an application. The calling application becomes the drive's `owner`:
+A drive is created by your application (no user asserted). Your application becomes the drive's `owner`:
 
 ```bash
 curl -s -X POST $DIRECTORY_URL/v1/drives \
@@ -94,7 +91,7 @@ alice() { curl -s -H "X-API-Key: $APP_KEY" -H "X-On-Behalf-Of: user=$ALICE" "$@"
 bob()   { curl -s -H "X-API-Key: $APP_KEY" -H "X-On-Behalf-Of: user=$BOB" "$@"; }
 ```
 
-> Always include the `user=` prefix. A bare UUID in `X-On-Behalf-Of` is not recognized as a user, and the request is then authorized as the application alone. See [Authorization](./authorization.md#who-is-calling).
+> Always include the `user=` prefix. A bare UUID in `X-On-Behalf-Of` is not recognized as a user, and the request is then authorized as the application alone. See [Authorization](./authorization.md#acting-on-behalf-of-a-user).
 
 ## Step 4: Create Folders
 
@@ -125,7 +122,7 @@ alice -X POST $DIRECTORY_URL/v1/folders -H 'Content-Type: application/json' \
 }
 ```
 
-Note `aclAnchorId`: the new folder inherits the root's anchor. `createdByPrincipalId` records the user when one is asserted.
+Note `aclAnchorId`: the new folder inherits the root's permissions. `createdByPrincipalId` records the user when one is asserted.
 
 ## Step 5: Upload a File
 
@@ -146,7 +143,7 @@ export FILE_ID=$(jq -r .id file.json)
   "name": "q3-summary.pdf",
   "path": "/reports/q3-summary.pdf",
   "aclAnchorId": "0e6d0b7a-8f3c-4b8e-a1b2-2c3d4e5f6a7b",
-  "blobKey": "directory/5b0c4a8e-3f51-4a3e-9d0e-6a2f1c7e9b10/9c1e...",
+  "blobKey": "…",
   "mimeType": "application/pdf",
   "sizeBytes": 482113,
   "checksumSha256": "9c1e...",
@@ -156,11 +153,11 @@ export FILE_ID=$(jq -r .id file.json)
 }
 ```
 
-The blob key is content-addressed (`directory/<driveId>/<sha256>`). Keep uploads under 256 MiB — see [Reference](./reference.md#post-v1itemsupload).
+Keep uploads at or below 256 MiB — see [Reference](./reference.md#post-v1itemsupload). For large files already in storage, promote them instead.
 
 ### Alternative: register existing content
 
-If the bytes already exist — a blob in the service's storage container or a Context Service working memory — register them instead of uploading. Nothing is copied:
+If the content already exists — typically a Context Service working memory your agent bundle produced — register it instead of uploading. Nothing is copied:
 
 ```bash
 alice -X POST $DIRECTORY_URL/v1/items:promote -H 'Content-Type: application/json' -d '{
@@ -172,7 +169,7 @@ alice -X POST $DIRECTORY_URL/v1/items:promote -H 'Content-Type: application/json
 }'
 ```
 
-Exactly one of `blobKey` or `workingMemoryId` is required.
+Exactly one of `blobKey` or `workingMemoryId` is required. For a working-memory item, your app reads the content from the [Context Service](../context-service/README.md) after the directory confirms the user can see the item.
 
 ## Step 6: Browse and Read
 
@@ -191,14 +188,14 @@ The children response includes `nextAfter` when items were returned; pass it bac
 
 ## Step 7: Share a Folder With Another User
 
-Visibility is decided by an item's **own anchor**. The first grant on `/reports` turns it into an anchor, and from then on only principals granted on `/reports` can see into it — Alice's grant on the root no longer covers it. So give Alice a grant on `/reports` **first**, while she can still reach it through the root:
+Visibility is decided by the grants on an item's governing folder. The first grant on `/reports` gives it its own permission list, and from then on only principals granted on `/reports` can see into it — Alice's grant on the root no longer covers it. So give Alice a grant on `/reports` **first**, while she can still reach it through the root:
 
 ```bash
 alice -X PUT $DIRECTORY_URL/v1/items/$REPORTS_ID/permissions -H 'Content-Type: application/json' \
   -d "{\"principalId\":\"$ALICE\",\"principalKind\":\"user\",\"role\":\"owner\"}"
 ```
 
-Now, as the owner of the `/reports` anchor, Alice gives Bob `reader` there:
+Now, as an owner of `/reports`, Alice gives Bob `reader` there:
 
 ```bash
 alice -X PUT $DIRECTORY_URL/v1/items/$REPORTS_ID/permissions -H 'Content-Type: application/json' \
@@ -207,7 +204,7 @@ alice -X PUT $DIRECTORY_URL/v1/items/$REPORTS_ID/permissions -H 'Content-Type: a
 alice $DIRECTORY_URL/v1/items/$REPORTS_ID/permissions | jq '.grants[] | {principalId, role}'
 ```
 
-If you ever lock a user out of a subfolder this way, the owner application can repair it by making the grant call **without** `X-On-Behalf-Of`. See [Authorization](./authorization.md#anchors-and-inheritance).
+If you ever lock a user out of a subfolder this way, the owner application can repair it by making the grant call **without** `X-On-Behalf-Of`. See [Authorization](./authorization.md#inheritance).
 
 ## Step 8: Let Bob Find His Starting Point
 
@@ -246,11 +243,12 @@ alice -X DELETE $DIRECTORY_URL/v1/items/$FILE_ID -w '%{http_code}\n'
 # 204
 ```
 
-Trashing removes the item (and, for a folder, its subtree) from the namespace and frees its name. The content blob is **not** deleted. The drive root cannot be trashed.
+Trashing removes the item (and, for a folder, its subtree) from the directory and frees its name. The underlying content is **not** deleted, and trash cannot currently be restored. The drive root cannot be trashed.
 
 ## Next Steps
 
 - **[Authorization](./authorization.md)** — the dual-grant model in depth
 - **[Integrations](./integrations.md)** — connect Microsoft 365 or Box and import documents
 - **[Reference](./reference.md)** — all endpoints, fields, and error codes
-- **[Operations](./operations.md)** — configuration and deployment
+- **[Concepts](./concepts.md#designing-your-app)** — app design patterns
+- **[Operations](./operations.md)** — availability, configuration, and troubleshooting
