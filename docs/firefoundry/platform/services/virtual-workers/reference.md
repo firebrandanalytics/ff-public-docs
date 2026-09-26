@@ -314,7 +314,7 @@ POST /admin/workers
     "maxTokens": 8192
   },
   "mcpServers": [
-    { "name": "ff-gateway", "url": "http://mcp-gateway:8080" }
+    { "name": "ff-gateway", "url": "http://firefoundry-core-mcp-gateway.<namespace>.svc.cluster.local:8080/mcp" }
   ],
   "workerRepoUrl": "https://github.com/org/knowledge-base",
   "workerRepoBranch": "main",
