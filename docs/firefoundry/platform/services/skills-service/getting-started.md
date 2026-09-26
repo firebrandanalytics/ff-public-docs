@@ -1,270 +1,243 @@
 # Skills Service — Getting Started
 
-This guide walks you through publishing a skill to the registry, reading it back through the consumer API the way an agent would, pinning a version with an installation, adding an environment-specific custom skill, and restricting access with a grant.
+This guide walks you through authoring a custom skill for your application, uploading and activating it, granting it to your application, and reading it the way your agents do — over REST and through the MCP Gateway. It ends with installing a registry skill into your environment.
 
 ## Prerequisites
 
-- A running Skills Service (deployed with the `firefoundry-core` Helm chart with `skills-service.enabled: true`, or run locally from source — see [Operations](./operations.md))
-- The `skills` database schema migrated (the Helm chart sets `RUN_MIGRATIONS=true`, which migrates on startup)
-- **Blob storage configured** for the service — uploads and file reads fail without it
-- `ENVIRONMENT_ID` set on the service if you want to follow the installation and custom-skill steps (Steps 7–8)
+- The Skills Service enabled in your environment (see [Operations](./operations.md#enabling-the-service)), with blob storage configured in your environment — uploads and file reads require it
+- Your **environment ID** (the UUID the Skills Service is configured to serve) and your **application ID**; your environment administrator can provide both
 - `curl`, `zip`, and optionally `jq`
 
-In a cluster, port-forward the service to your machine:
+For local work against a cluster, port-forward the service:
 
 ```bash
 kubectl -n <namespace> port-forward svc/firefoundry-core-skills-service 8080:8080
 ```
 
-All examples below use `http://localhost:8080`. From inside the cluster, use `http://firefoundry-core-skills-service.<namespace>.svc.cluster.local:8080`.
-
-## Step 1: Verify the Service Is Running
+The examples use `http://localhost:8080`. From inside the cluster (for example from your agent bundle), use `http://firefoundry-core-skills-service.<namespace>.svc.cluster.local:8080`.
 
 ```bash
-curl -s http://localhost:8080/health
-# {"status":"healthy","timestamp":"2026-09-26T12:00:00.000Z"}
-
-curl -s http://localhost:8080/status
-# {"service":"ff-services-skills","version":"0.1.0","uptime":42.1,"environment":"production"}
+SKILLS=http://localhost:8080
+ENV_ID=22222222-2222-4222-8222-222222222222   # your environment ID
+APP_ID=11111111-1111-4111-8111-111111111111   # your application ID
 ```
 
-## Step 2: Package a Skill
+## Step 1: Check the Service
+
+```bash
+curl -s $SKILLS/health
+# {"status":"healthy","timestamp":"2026-09-26T12:00:00.000Z"}
+```
+
+## Step 2: Author a Skill
 
 Create a skill folder with a `SKILL.md`, one mode, and a reference document, then zip it:
 
 ```bash
-mkdir -p hello-skill/modes hello-skill/references
+mkdir -p ticket-triage/modes ticket-triage/references
 
-cat > hello-skill/SKILL.md <<'EOF'
+cat > ticket-triage/SKILL.md <<'EOF'
 ---
-name: hello-skill
-description: Greets users politely and explains the greeting policy
+name: ticket-triage
+description: How to classify and route incoming support tickets. Read before triaging any ticket.
 version: 1.0.0
-tags: [demo, greeting]
+tags: [support, triage]
 ---
 
-# Hello Skill
+# Ticket Triage
 
-Always greet the user by name. See references/policy.md for tone rules.
+Classify each ticket as billing, technical, or account.
+See references/routing.md for which queue each category goes to.
 EOF
 
-cat > hello-skill/modes/formal.md <<'EOF'
+cat > ticket-triage/modes/escalation.md <<'EOF'
 ---
-description: Formal greetings for business contexts
+description: Rules for escalating urgent tickets
 ---
-Use "Good morning" / "Good afternoon" and the user's surname.
+Escalate when the customer reports data loss or an outage affecting more than one user.
 EOF
 
-echo "# Greeting policy" > hello-skill/references/policy.md
+cat > ticket-triage/references/routing.md <<'EOF'
+# Routing table
+- billing -> finance-queue
+- technical -> tier2-queue
+- account -> accounts-queue
+EOF
 
-(cd hello-skill && zip -r ../hello-skill.zip .)
+(cd ticket-triage && zip -r ../ticket-triage.zip .)
 ```
 
-`SKILL.md` must be at the root of the zip (or inside a single top-level folder). See [Concepts](./concepts.md#skill-zip-format) for the full format.
+`SKILL.md` must be at the root of the zip or inside a single top-level folder. See [Concepts](./concepts.md#skill-zip-format) for the format.
 
-## Step 3: Create a Registry Entry
+## Step 3: Create the Custom Skill
+
+Create the skill in your environment with the zip attached. It starts as a `draft`, so agents don't see it in listings yet; the attached zip becomes version `0.1.0`:
 
 ```bash
-curl -s -X POST http://localhost:8080/admin/registry \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "hello-skill",
-    "description": "Demo greeting skill",
-    "category": "demo",
-    "tags": ["demo", "greeting"]
-  }'
+curl -s -X POST $SKILLS/admin/custom \
+  -F "file=@ticket-triage.zip" \
+  -F "metadata={\"environment_id\":\"$ENV_ID\",\"name\":\"ticket-triage\",\"description\":\"Support ticket triage\",\"tags\":[\"support\"]}"
 ```
 
 Response (`201 Created`):
 
 ```json
 {
-  "id": "3f7c1a52-9d0e-4b8a-a1f4-2c6d5e7f8a90",
-  "name": "hello-skill",
-  "publisher": "firebrand",
-  "description": "Demo greeting skill",
-  "category": "demo",
-  "tags": ["demo", "greeting"],
-  "is_system": false,
-  "default_include": false,
+  "id": "5a1e7c2d-3b4f-4c6d-8e9f-0a1b2c3d4e5f",
+  "environment_id": "22222222-2222-4222-8222-222222222222",
+  "name": "ticket-triage",
+  "description": "Support ticket triage",
+  "skill_type": "general",
+  "status": "draft",
+  "tags": ["support"],
   "created_at": "2026-09-26T12:00:00.000Z",
   "updated_at": "2026-09-26T12:00:00.000Z"
 }
 ```
 
-Save the ID:
+```bash
+SKILL_ID=5a1e7c2d-3b4f-4c6d-8e9f-0a1b2c3d4e5f
+```
+
+Check the parsed manifest of the version you just uploaded:
 
 ```bash
-ENTRY_ID=3f7c1a52-9d0e-4b8a-a1f4-2c6d5e7f8a90
+curl -s $SKILLS/admin/custom/$SKILL_ID/versions | jq '.[0] | {version, manifest}'
 ```
 
-## Step 4: Upload a Version
+## Step 4: Upload a New Version
 
-Upload the zip as multipart form data. The `file` field carries the zip and the `metadata` field carries a JSON string with the version:
+Edit the skill, re-zip it, and upload it with a new version string (version strings must be unique per skill):
 
 ```bash
-curl -s -X POST http://localhost:8080/admin/registry/$ENTRY_ID/versions \
-  -F "file=@hello-skill.zip" \
-  -F 'metadata={"version":"1.0.0"}'
-```
+(cd ticket-triage && zip -r ../ticket-triage.zip .)
 
-Response (`201 Created`, abbreviated):
-
-```json
-{
-  "id": "b2d4f6a8-1c3e-4a5b-9d7f-0e1a2b3c4d5e",
-  "entry_id": "3f7c1a52-9d0e-4b8a-a1f4-2c6d5e7f8a90",
-  "version": "1.0.0",
-  "manifest": {
-    "name": "hello-skill",
-    "description": "Greets users politely and explains the greeting policy",
-    "version": "1.0.0",
-    "content": "# Hello Skill\n\nAlways greet the user by name. ...",
-    "tags": ["demo", "greeting"],
-    "modes": [
-      { "name": "formal", "description": "Formal greetings for business contexts", "content": "Use \"Good morning\" ..." }
-    ],
-    "companionFiles": ["references/policy.md"]
-  },
-  "blob_id": "registry/hello-skill/1.0.0.zip",
-  "content_hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
-  "requirements": {},
-  "published_at": "2026-09-26T12:01:00.000Z"
-}
-```
-
-The manifest was parsed at upload time; consumers will read this JSON rather than the zip.
-
-## Step 5: List Skills as a Consumer
-
-Consumer requests must carry an `X-On-Behalf-Of` identity with at least `app` and `bundle`. Without it the listing is empty.
-
-```bash
-ON_BEHALF='app=11111111-1111-4111-8111-111111111111; bundle=my-bundle'
-
-curl -s "http://localhost:8080/v1/skills?tags=demo" \
-  -H "X-On-Behalf-Of: $ON_BEHALF"
-```
-
-Response (content is stripped by default):
-
-```json
-[
-  {
-    "name": "hello-skill",
-    "description": "Greets users politely and explains the greeting policy",
-    "version": "1.0.0",
-    "tags": ["demo", "greeting"],
-    "modes": [
-      { "name": "formal", "description": "Formal greetings for business contexts" }
-    ],
-    "companionFiles": ["references/policy.md"],
-    "source": "registry"
-  }
-]
-```
-
-Other useful variants:
-
-```bash
-# Glob filter on name
-curl -s "http://localhost:8080/v1/skills?name=hello*" -H "X-On-Behalf-Of: $ON_BEHALF"
-
-# Whole environment manifest, including full content
-curl -s "http://localhost:8080/v1/skills/manifest?include=content" -H "X-On-Behalf-Of: $ON_BEHALF"
-```
-
-## Step 6: Read the Skill, a Mode, and a File
-
-```bash
-# Full skill definition with instructions
-curl -s "http://localhost:8080/v1/skills/hello-skill?include=content" \
-  -H "X-On-Behalf-Of: $ON_BEHALF"
-
-# A single mode
-curl -s "http://localhost:8080/v1/skills/hello-skill/modes/formal" \
-  -H "X-On-Behalf-Of: $ON_BEHALF"
-# {"name":"formal","description":"Formal greetings for business contexts","content":"Use \"Good morning\" ..."}
-
-# Files inside the zip
-curl -s "http://localhost:8080/v1/skills/hello-skill/files" \
-  -H "X-On-Behalf-Of: $ON_BEHALF"
-# {"skill":"hello-skill","files":[{"path":"SKILL.md","compressedSize":...,"uncompressedSize":...}, ...]}
-
-# One file, returned raw with a content type based on its extension
-curl -s "http://localhost:8080/v1/skills/hello-skill/files/references/policy.md" \
-  -H "X-On-Behalf-Of: $ON_BEHALF"
-
-# The whole zip
-curl -s -o hello-skill-latest.zip "http://localhost:8080/v1/skills/hello-skill/download" \
-  -H "X-On-Behalf-Of: $ON_BEHALF"
-```
-
-Agents usually reach these endpoints through the [MCP Gateway](../mcp-gateway/README.md) tools `skills_list`, `skills_read`, and `skills_read_file` rather than calling them directly.
-
-## Step 7: Pin a Version with an Installation
-
-Registry skills are listed at their latest version by default. To pin the version listed in an environment, install it. Use the same UUID the service is configured with as `ENVIRONMENT_ID`:
-
-```bash
-ENV_ID=22222222-2222-4222-8222-222222222222
-VERSION_ID=b2d4f6a8-1c3e-4a5b-9d7f-0e1a2b3c4d5e
-
-curl -s -X POST http://localhost:8080/admin/installations \
-  -H "Content-Type: application/json" \
-  -d "{\"environment_id\":\"$ENV_ID\",\"entry_id\":\"$ENTRY_ID\",\"version_id\":\"$VERSION_ID\"}"
-
-curl -s "http://localhost:8080/admin/installations?environment_id=$ENV_ID"
-# [{"id":"...","environment_id":"...","entry_id":"...","version_id":"...","entry_name":"hello-skill","version":"1.0.0", ...}]
-```
-
-Posting another installation for the same entry and environment replaces the installed version.
-
-## Step 8: Add a Custom Skill
-
-Custom skills belong to one environment. Create one with its zip attached; the first version is recorded as `0.1.0`. Set `status` to `active` so it appears in consumer listings:
-
-```bash
-(cd hello-skill && sed -i 's/^name: hello-skill/name: team-greeting/' SKILL.md && zip -r ../team-greeting.zip .)
-
-curl -s -X POST http://localhost:8080/admin/custom \
-  -F "file=@team-greeting.zip" \
-  -F "metadata={\"environment_id\":\"$ENV_ID\",\"name\":\"team-greeting\",\"status\":\"active\",\"tags\":[\"demo\"]}"
-```
-
-Upload later versions with:
-
-```bash
-curl -s -X POST http://localhost:8080/admin/custom/<custom-skill-id>/versions \
-  -F "file=@team-greeting.zip" \
+curl -s -X POST $SKILLS/admin/custom/$SKILL_ID/versions \
+  -F "file=@ticket-triage.zip" \
   -F 'metadata={"version":"0.2.0"}'
 ```
 
-The custom skill now appears in `GET /v1/skills` with `"source": "custom"`.
+Agents always read the most recently uploaded version of a custom skill.
 
-## Step 9: Restrict Access with a Grant
+## Step 5: Activate It
 
-By default an application with no grants sees every skill. Once an application has at least one grant, it sees only granted skills (plus system skills with `default_include`):
+Set the status to `active` so it appears in consumer listings:
 
 ```bash
-APP_ID=11111111-1111-4111-8111-111111111111
+curl -s -X PUT $SKILLS/admin/custom/$SKILL_ID \
+  -H "Content-Type: application/json" \
+  -d '{"status":"active"}'
+```
 
-curl -s -X POST http://localhost:8080/admin/access-grants \
+## Step 6: Grant It to Your Application
+
+An application with no grants sees every skill. To limit your app to the skills it should use, grant them. Once an application has at least one grant, it sees only granted skills (plus system skills with `default_include`), so grant every skill the app needs:
+
+```bash
+curl -s -X POST $SKILLS/admin/access-grants \
   -H "Content-Type: application/json" \
   -d "{
     \"environment_id\": \"$ENV_ID\",
-    \"skill_source\": \"registry\",
-    \"skill_id\": \"$ENTRY_ID\",
+    \"skill_source\": \"custom\",
+    \"skill_id\": \"$SKILL_ID\",
     \"grantee_type\": \"application\",
     \"grantee_id\": \"$APP_ID\"
   }"
 ```
 
-Now `GET /v1/skills` for `app=$APP_ID` returns `hello-skill` but not `team-greeting`, and `GET /v1/skills/team-greeting` returns `403 {"error":"Access denied"}`.
+## Step 7: Discover Skills as an Agent
+
+Consumer calls must carry an `X-On-Behalf-Of` identity with at least `app` and `bundle`. Without it the listing is empty.
+
+```bash
+ON_BEHALF="app=$APP_ID; bundle=support-bundle"
+
+curl -s "$SKILLS/v1/skills?tags=support" -H "X-On-Behalf-Of: $ON_BEHALF"
+```
+
+Response (content omitted by default):
+
+```json
+[
+  {
+    "name": "ticket-triage",
+    "description": "How to classify and route incoming support tickets. Read before triaging any ticket.",
+    "version": "1.0.0",
+    "tags": ["support", "triage"],
+    "modes": [
+      { "name": "escalation", "description": "Rules for escalating urgent tickets" }
+    ],
+    "companionFiles": ["references/routing.md"],
+    "source": "custom"
+  }
+]
+```
+
+Other variants:
+
+```bash
+# Glob filter on name
+curl -s "$SKILLS/v1/skills?name=ticket*" -H "X-On-Behalf-Of: $ON_BEHALF"
+
+# Everything this app can see, with full content
+curl -s "$SKILLS/v1/skills/manifest?include=content" -H "X-On-Behalf-Of: $ON_BEHALF"
+```
+
+## Step 8: Read the Skill, a Mode, and a File
+
+```bash
+# Full instructions
+curl -s "$SKILLS/v1/skills/ticket-triage?include=content" -H "X-On-Behalf-Of: $ON_BEHALF"
+
+# One mode
+curl -s "$SKILLS/v1/skills/ticket-triage/modes/escalation" -H "X-On-Behalf-Of: $ON_BEHALF"
+# {"name":"escalation","description":"Rules for escalating urgent tickets","content":"Escalate when ..."}
+
+# Files in the skill
+curl -s "$SKILLS/v1/skills/ticket-triage/files" -H "X-On-Behalf-Of: $ON_BEHALF"
+
+# One file, returned raw
+curl -s "$SKILLS/v1/skills/ticket-triage/files/references/routing.md" -H "X-On-Behalf-Of: $ON_BEHALF"
+
+# The whole zip (for example, to unpack into a worker's workspace)
+curl -s -o ticket-triage.zip "$SKILLS/v1/skills/ticket-triage/download" -H "X-On-Behalf-Of: $ON_BEHALF"
+```
+
+A request from an application that has grants but not for this skill returns `403 {"error":"Access denied"}`.
+
+## Step 9: Read Skills Through the MCP Gateway
+
+MCP-capable agents don't need to call REST directly. With the skills adapter enabled on the [MCP Gateway](../mcp-gateway/README.md), agents get three tools, and the gateway forwards the agent's `X-On-Behalf-Of` identity so grants apply:
+
+| Tool | Use |
+|------|-----|
+| `skills_list` | Discover skills (metadata only); optional `tags`, `name` |
+| `skills_read` | Load a skill's full instructions; `name` |
+| `skills_read_file` | Read one companion file; `name`, `path` (for example `references/routing.md`) |
+
+A typical agent loop: call `skills_list`, pick a skill by its description, call `skills_read`, then `skills_read_file` for any reference it needs. See [MCP Gateway — Tools](../mcp-gateway/tools.md#skills-adapter).
+
+## Step 10 (Optional): Install a Registry Skill
+
+To use a platform catalog skill at a fixed version, find its entry and version, then install it into your environment:
+
+```bash
+curl -s "$SKILLS/admin/registry?limit=100" | jq '.data[] | {id, name, description}'
+ENTRY_ID=<entry-id>
+
+curl -s $SKILLS/admin/registry/$ENTRY_ID/versions | jq '.[] | {id, version, published_at}'
+VERSION_ID=<version-id>
+
+curl -s -X POST $SKILLS/admin/installations \
+  -H "Content-Type: application/json" \
+  -d "{\"environment_id\":\"$ENV_ID\",\"entry_id\":\"$ENTRY_ID\",\"version_id\":\"$VERSION_ID\"}"
+```
+
+Installing again for the same entry replaces the pinned version. If your application has grants, also grant the registry skill (`"skill_source": "registry"`, `"skill_id": "$ENTRY_ID"`).
 
 ## Next Steps
 
-- **[Concepts](./concepts.md)** — How listings are assembled and how the ACL works
+- **[Concepts](./concepts.md)** — How listings are assembled and how grants work
 - **[Reference](./reference.md)** — All endpoints, fields, and error responses
-- **[Operations](./operations.md)** — Deployment, blob storage, environment context, and troubleshooting
+- **[Operations](./operations.md)** — Enabling the service, verifying from a bundle, limits, and troubleshooting
 - **[MCP Gateway](../mcp-gateway/README.md)** — Exposing skills to agents as MCP tools
