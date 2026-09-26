@@ -1,31 +1,29 @@
-# Telemetry Service — Getting Started
+# Telemetry Service: Getting Started
 
-The Telemetry Service runs in the background, so "getting started" means two things:
+This page has two parts:
 
-- **Part A** — inspecting the telemetry recorded for a request (what most developers and operators need)
-- **Part B** — emitting telemetry from a producer service (for platform service authors)
+- **Part A**: inspect the telemetry recorded for a request your bundle made. Most developers only need this.
+- **Part B**: send your own events so they appear in the same traces. This is optional.
 
-If you only want to see what the broker and LLMs did for an agent run, start with the [`ff-telemetry-read`](../../../sdk/cli-tools/ff-telemetry-read.md) CLI — it is the most convenient tool for broker request, LLM, and tool-call telemetry. The steps below use the service's own HTTP API, which works for any producer's events.
+For everyday debugging of broker, LLM, and tool-call activity, the [`ff-telemetry-read`](../../../sdk/cli-tools/ff-telemetry-read.md) CLI is usually the quickest route. For example, `ff-telemetry-read trace by-breadcrumb <EntityType> <entity-id>` finds the requests an entity made, and `ff-telemetry-read trace get <broker-request-id>` shows the full trace. The steps below use the service's HTTP API, which works for events from any producer, including your own.
 
 ## Prerequisites
 
-- A running FireFoundry deployment with the telemetry service enabled (it is enabled by default in `firefoundry-core`)
-- `kubectl` access to the namespace where FireFoundry core is installed (`ff-dev` in the local-development conventions)
-- `curl` and `jq`
+- A FireFoundry environment with the telemetry service enabled. It is on by default in `firefoundry-core`.
+- `kubectl` access to the namespace where FireFoundry core is installed (`ff-dev` in the local-development conventions).
+- `curl` and `jq`.
 
-The service is `ClusterIP`-only and has no ingress by default. For local work, port-forward both ports:
+The service is only reachable inside the cluster. From your machine, port-forward it:
 
 ```bash
 kubectl port-forward svc/firefoundry-core-telemetry-service -n ff-dev 3000:3000 50051:50051
 ```
 
-From inside the cluster, use the service DNS name instead, e.g. `http://firefoundry-core-telemetry-service.<namespace>.svc.cluster.local:3000`. In-cluster workloads also receive the addresses as `TELEMETRY_SERVICE_HTTP_URL` and `TELEMETRY_SERVICE_INGEST_URL`.
-
-> Some features below (`partition_key`, `POST /events/batch`) require service version 0.3.0 or later. See [Version compatibility](./operations.md#version-compatibility).
+From code running in the cluster, use the service name instead. See [Operations → Reaching the Service from a Bundle](./operations.md#reaching-the-service-from-a-bundle).
 
 ## Part A: Inspect Telemetry for a Request
 
-### Step 1: Check the Service Is Ready
+### Step 1: Check the Service Is Up
 
 ```bash
 curl -s http://localhost:3000/ready
@@ -35,95 +33,54 @@ curl -s http://localhost:3000/ready
 { "status": "ready" }
 ```
 
-A `503` with `{"status":"not ready", ...}` means the service is starting or its current/next weekly partitions are missing — see [Operations → Troubleshooting](./operations.md#troubleshooting).
+### Step 2: Find the Request
 
-`/info` shows the running configuration:
-
-```bash
-curl -s http://localhost:3000/info
-```
-
-```json
-{
-  "service": "ff-telemetry-shredder",
-  "version": "0.1.0",
-  "environment": "production",
-  "shredStrategy": "size:1024"
-}
-```
-
-### Step 2: List Recent Events
-
-`GET /events` returns event metadata (no payloads), newest first. Filter by `service`, `layer`, or failures only:
+`GET /events` lists event metadata (without payloads), newest first. Filter by `layer`, `service`, or failures:
 
 ```bash
-# 20 most recent events
-curl -s "http://localhost:3000/events?limit=20" | jq '.events[] | {eventId, traceId, service, layer, error, createdAt}'
+# Most recent broker requests
+curl -s "http://localhost:3000/events?layer=broker&limit=20" \
+  | jq '.events[] | {eventId, traceId, error, createdAt}'
 
-# Only failed events from one producer
-curl -s "http://localhost:3000/events?service=ff-broker&error=true&limit=20" | jq '.events[] | {eventId, traceId, layer}'
+# Only failed broker requests
+curl -s "http://localhost:3000/events?layer=broker&error=true&limit=20" \
+  | jq '.events[] | {eventId, traceId, createdAt}'
 ```
 
 ```json
 {
   "eventId": "6b1f0d52-6f0e-4a7e-9d0a-2f0a3f8b9c11",
   "traceId": "trace-7f3a",
-  "service": "ff-broker",
-  "layer": "LLMResponse",
-  "error": false,
+  "error": true,
   "createdAt": "2026-06-30T14:02:11.482Z"
 }
 ```
 
 Use `offset` to page through results. `limit` is capped at 100.
 
-### Step 3: Pull Every Event in a Trace
+If you already know the entity that made the request, `ff-telemetry-read trace by-breadcrumb <EntityType> <entity-id>` is a faster way to find its broker request IDs. The broker request ID is the trace ID.
 
-Once you have a `traceId`, fetch the whole run. Trace queries return events in chronological order:
+### Step 3: Pull Every Event in the Trace
 
 ```bash
 TRACE=trace-7f3a
 curl -s "http://localhost:3000/events?trace_id=$TRACE&limit=100" \
-  | jq '.events[] | {createdAt, service, layer, spanId, parentSpanId, error, payloadSize}'
+  | jq '.events[] | {createdAt, service, layer, spanId, parentSpanId, error}'
 ```
 
-This gives you the shape of the run: which services took part, which step failed, and how the spans nest.
+Trace queries return events oldest first. The result shows which services took part, which step failed, and how the spans nest.
 
-### Step 4: Read an Event's Full Payload
+### Step 4: Read an Event's Payload
 
-`GET /event/{eventId}` returns the event with its reconstructed JSON payload:
+`GET /event/{eventId}` returns the event with its full JSON payload, such as the prompt sent to the model or the response it returned:
 
 ```bash
-curl -s http://localhost:3000/event/6b1f0d52-6f0e-4a7e-9d0a-2f0a3f8b9c11 | jq .
+curl -s http://localhost:3000/event/6b1f0d52-6f0e-4a7e-9d0a-2f0a3f8b9c11 | jq '{layer: .event.layer, payload}'
 ```
-
-```json
-{
-  "event": {
-    "partitionKey": "2026-06-29",
-    "eventId": "6b1f0d52-6f0e-4a7e-9d0a-2f0a3f8b9c11",
-    "traceId": "trace-7f3a",
-    "spanId": "span-2",
-    "parentSpanId": "span-1",
-    "layer": "LLMResponse",
-    "service": "ff-broker",
-    "environment": "production",
-    "error": false,
-    "payloadSize": 18234,
-    "nodeCount": 37,
-    "createdAt": "2026-06-30T14:02:11.482Z",
-    "meta": null
-  },
-  "payload": { "...": "the original JSON document" },
-  "reconstruction": { "nodesFetched": 37, "durationMs": 4.2, "cached": false }
-}
-```
-
-A second request for the same event is typically served from the document cache (`"cached": true`).
 
 ### Step 5: Fetch Several Payloads at Once
 
-To load payloads for every event in a trace without one request per event, use `POST /events/batch`:
+To load payloads for a whole trace without one request per event, use `POST /events/batch`:
 
 ```bash
 IDS=$(curl -s "http://localhost:3000/events?trace_id=$TRACE&limit=100" | jq -c '[.events[].eventId]')
@@ -134,33 +91,28 @@ curl -s -X POST http://localhost:3000/events/batch \
   | jq '.results[] | select(. != null) | {layer: .event.layer, payload}'
 ```
 
-Results are returned in the same order as `eventIds`; an ID that is not found yields `null` in that position.
+Results come back in the same order as `eventIds`. An ID that is not found yields `null` in its position.
 
-### Step 6: Narrow Queries to One Week
+### Step 6: Narrow a Query to One Week
 
-Every query accepts an optional `partition_key` — the Monday (UTC) of the week, in `YYYY-MM-DD` form. When you know roughly when something happened, pass it to scan a single week:
+If you know roughly when something happened, pass `partition_key`, the Monday (UTC) of that week in `YYYY-MM-DD` form. The query then searches only that week, which is faster:
 
 ```bash
 curl -s "http://localhost:3000/events?trace_id=$TRACE&partition_key=2026-06-29"
-curl -s "http://localhost:3000/event/6b1f0d52-6f0e-4a7e-9d0a-2f0a3f8b9c11?partition_key=2026-06-29"
 ```
 
-A value that is not a valid Monday returns `400` (`partition_key must be a Monday in UTC`).
+Every event includes its `partitionKey`, so you can reuse the value when you fetch payloads.
 
-## Part B: Emit Telemetry from a Producer Service
+## Part B: Send Your Own Events
 
-This part is for authors of platform services that produce telemetry. Agent bundle code does not need to do this.
+Your bundle can send its own events so that application-level steps, such as "document classified" or "validation failed", appear in the same trace as the platform's LLM and tool events. This is optional. The Agent SDK does not require it, and you should only add it if the extra detail helps you debug.
 
-### Step 1: Understand the Protocol
+### Step 1: Send a Test Event
 
-Ingestion is a single Protobuf RPC, `firefoundry.telemetry.v1.TelemetryIngestionService/IngestBatch`, served on port `50051` using the [Connect](https://connectrpc.com/) protocol over HTTP/1.1. You can call it with a generated Connect client or with plain HTTP + JSON. See [Reference → Ingestion API](./reference.md#ingestion-api) for the message definitions.
-
-### Step 2: Send a Test Event with curl
-
-With the Connect protocol, a unary RPC is a `POST` of the JSON-encoded request. Protobuf `bytes` fields (`payload`, `meta`) are base64-encoded, and `int64` fields may be sent as strings:
+The ingestion API is one RPC, `IngestBatch`, served on port `50051` with the [Connect](https://connectrpc.com/) protocol. You can call it as plain HTTP with JSON. In the JSON encoding, `payload` and `meta` are base64-encoded JSON, and `createdAtMs` may be a string:
 
 ```bash
-PAYLOAD=$(printf '%s' '{"model":"example-model","messages":[{"role":"user","content":"hello"}]}' | base64 | tr -d '\n')
+PAYLOAD=$(printf '%s' '{"step":"classify","label":"invoice","confidence":0.93}' | base64 | tr -d '\n')
 EVENT_ID=$(uuidgen | tr 'A-Z' 'a-z')
 NOW_MS=$(($(date +%s) * 1000))
 
@@ -172,8 +124,8 @@ curl -s -X POST \
       \"eventId\": \"$EVENT_ID\",
       \"traceId\": \"getting-started-trace\",
       \"spanId\": \"span-1\",
-      \"layer\": \"BotRequest\",
-      \"service\": \"my-producer\",
+      \"layer\": \"app.classify\",
+      \"service\": \"my-bundle\",
       \"environment\": \"dev\",
       \"payload\": \"$PAYLOAD\",
       \"createdAtMs\": \"$NOW_MS\"
@@ -182,30 +134,27 @@ curl -s -X POST \
 ```
 
 ```json
-{
-  "ingestedCount": 1,
-  "rootHashes": ["q0lE2c9m...base64 BLAKE3 hash..."]
-}
+{ "ingestedCount": 1, "rootHashes": ["..."] }
 ```
 
-If any event fails validation, the response includes an `errors` map keyed by the event's index in the batch, and that event's root hash is 32 zero bytes:
+If an event is rejected, the response includes an `errors` map keyed by the event's index in the batch:
 
 ```json
-{ "ingestedCount": 0, "rootHashes": ["AAAAAAAA..."], "errors": { "0": "Invalid JSON payload" } }
+{ "ingestedCount": 0, "rootHashes": ["..."], "errors": { "0": "Invalid JSON payload" } }
 ```
 
-### Step 3: Confirm the Event Was Stored
+### Step 2: Confirm the Event Arrived
 
-The RPC returns once events are queued; they are written to the database on the next batch flush (within about a second with default settings). Then query the trace:
+Events become queryable shortly after they are accepted, usually within a second or two:
 
 ```bash
-curl -s "http://localhost:3000/events?trace_id=getting-started-trace" | jq '.events[] | {eventId, layer, nodeCount}'
+curl -s "http://localhost:3000/events?trace_id=getting-started-trace" | jq '.events[] | {eventId, layer}'
 curl -s "http://localhost:3000/event/$EVENT_ID" | jq .payload
 ```
 
-### Step 4: Use a Generated Client
+### Step 3: Send Events from TypeScript
 
-For production producers, generate TypeScript types and a Connect client from `proto/firefoundry/telemetry/v1/telemetry.proto` (the service itself uses `buf generate` with `protoc-gen-es` and `protoc-gen-connect-es`), then call it through a Connect transport:
+Generate a Connect client from the service's `telemetry.proto` (package `firefoundry.telemetry.v1`) with `buf generate` using `protoc-gen-es` and `protoc-gen-connect-es`, then call it through a Connect transport. Platform services use the `@firebrandanalytics/telemetry-client` package for the same purpose.
 
 ```typescript
 import { createPromiseClient } from "@connectrpc/connect";
@@ -217,43 +166,47 @@ const transport = createConnectTransport({
   baseUrl: process.env.TELEMETRY_SERVICE_INGEST_URL!, // e.g. http://firefoundry-core-telemetry-service:50051
   httpVersion: "1.1",
 });
-const client = createPromiseClient(TelemetryIngestionService, transport);
-
+const telemetry = createPromiseClient(TelemetryIngestionService, transport);
 const encoder = new TextEncoder();
-const res = await client.ingestBatch({
-  events: [
-    new TelemetryEvent({
-      eventId: crypto.randomUUID(),
-      traceId,
-      spanId,
-      parentSpanId,
-      layer: "LLMResponse",
-      service: "my-producer",
-      environment: "production",
-      error: false,
-      payload: encoder.encode(JSON.stringify(responseBody)),
-      createdAtMs: BigInt(Date.now()),
-    }),
-  ],
-});
 
-if (Object.keys(res.errors).length > 0) {
-  console.warn("Some telemetry events were rejected", res.errors);
-}
+// Fire and forget: never let telemetry block or fail the user-facing work.
+telemetry
+  .ingestBatch({
+    events: [
+      new TelemetryEvent({
+        eventId: crypto.randomUUID(),
+        traceId,           // reuse the trace of the run this step belongs to
+        spanId: crypto.randomUUID(),
+        parentSpanId,
+        layer: "app.classify",
+        service: "my-bundle",
+        environment: "production",
+        error: false,
+        payload: encoder.encode(JSON.stringify({ label, confidence })),
+        createdAtMs: BigInt(Date.now()),
+      }),
+    ],
+  })
+  .then((res) => {
+    if (Object.keys(res.errors).length > 0) console.warn("Telemetry events rejected", res.errors);
+  })
+  .catch((err) => console.warn("Telemetry send failed", err));
 ```
 
-### Producer Guidelines
+### Guidelines for Your Own Events
 
-- **Batch your events.** Send up to 100 events per call (the default `MAX_BATCH_SIZE`); larger batches are rejected outright.
-- **Always set a UUID `eventId`.** Uniqueness is enforced per week on `(partition_key, event_id)`; the ID column is a UUID type.
-- **Propagate `traceId` and span IDs** from the incoming request so your events join the rest of the run.
-- **Keep payloads under 10 MB** and nesting under 100 levels (defaults).
-- **Treat telemetry as fire-and-forget.** Do not block user-facing work on the ingestion call, and tolerate failures.
-- **Omit `partitionKey`** unless you have a reason to set it; the service derives it from `createdAtMs`. If you do set it, it must be the Monday of that timestamp's UTC week.
+- **Always set a UUID `eventId`.** Event IDs must be UUIDs, and a non-UUID ID can cause the event to be lost silently.
+- **Reuse trace IDs.** Put your events on the trace of the run they belong to so they show up next to the broker and tool events.
+- **Pick a distinct `layer` and `service`.** A prefix such as `app.` keeps your events easy to filter and avoids confusion with platform layers such as `broker` or `llm`.
+- **Batch.** Send up to 100 events per call. Larger batches are rejected as a whole.
+- **Keep payloads under 10 MB** and JSON nesting under 100 levels.
+- **Fire and forget.** Do not wait on the ingestion call in a user-facing path, and tolerate failures.
+- **Leave `partitionKey` unset.** The service derives it from `createdAtMs`.
+- **Mind what you record.** Anyone who can query the service can read your payloads, so do not put secrets or credentials in them.
 
 ## Next Steps
 
-- [Concepts](./concepts.md) — How shredding, deduplication, and weekly partitions work
-- [Reference](./reference.md) — Every endpoint, message, and configuration variable
-- [Operations](./operations.md) — Deployment, partition maintenance, and troubleshooting
-- [`ff-telemetry-read` CLI](../../../sdk/cli-tools/ff-telemetry-read.md) — Interactive inspection of broker, LLM, and tool-call telemetry
+- [Concepts](./concepts.md): what is captured and how traces work
+- [Reference](./reference.md): every query endpoint and the ingestion message format
+- [Operations](./operations.md): enabling the service and reaching it from a bundle
+- [`ff-telemetry-read` CLI](../../../sdk/cli-tools/ff-telemetry-read.md): interactive inspection of broker, LLM, and tool-call telemetry

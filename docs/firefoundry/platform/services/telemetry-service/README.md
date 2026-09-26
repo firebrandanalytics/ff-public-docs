@@ -2,87 +2,63 @@
 
 ## Overview
 
-The Telemetry Service is a background FireFoundry platform service that collects, stores, and serves telemetry emitted by other platform services. Producer services send it structured JSON events (for example, a bot request, an LLM response, or a broker request); the service stores them compactly and lets tools read them back by event, by trace, or by filter.
+The Telemetry Service records what happened when your agent bundle did its work: the broker requests your bots made, the individual LLM calls behind them, the tool calls the models made, and events from other platform services involved in the same request. Each record keeps the full JSON payload (prompts, responses, tool arguments and results), so you can go back and see exactly what a model was sent and what it returned.
 
-Application developers do not normally interact with it directly. Telemetry is emitted automatically by the services that produce it, and developers consume it through the FireFoundry Console UI or the [`ff-telemetry-read`](../../../sdk/cli-tools/ff-telemetry-read.md) CLI when they need to debug, audit, or analyze what their agent workloads did. These pages document the service for completeness and for platform operators; in day-to-day agent development you should not need to plan around it.
-
-Internally the service is also known as the **Telemetry Shredding Service (TSS)**, after the technique it uses to store payloads (see [Concepts](./concepts.md)).
+You do not need to add anything to your bundle to get this telemetry. The platform services your bundle calls, such as the [FF Broker](../ff-broker/README.md) and the [MCP Gateway](../mcp-gateway/README.md), emit it for you. You use it when you debug, audit, or tune an application: through the FireFoundry Console, the [`ff-telemetry-read`](../../../sdk/cli-tools/ff-telemetry-read.md) CLI, the MCP Gateway's `telemetry_*` tools, or the service's HTTP query API.
 
 ## Purpose and Role in Platform
 
-The Telemetry Service is the platform's store for runtime event telemetry. Producer services emit events to it as they work, and operators and tools read them back to:
+Telemetry answers "what did the models and services actually do for this request?" Use it to:
 
-- Trace a single agent run end-to-end across services (events share a `trace_id`)
-- Inspect the exact JSON payloads involved — prompts, tool calls, and responses
-- Audit which services produced which events, and which ones failed
-- Reconstruct events long after they happened, within the retention window
+- Trace one agent run end to end across services. Every event in a run shares a `trace_id`.
+- Inspect the exact prompts, responses, and tool calls behind a bad or failed answer.
+- Find failed requests and see which step failed.
+- Review token usage and model choice for a workflow.
 
-Telemetry payloads are highly repetitive: the same system prompt, tool schemas, and context blocks appear in thousands of events. The service is designed to absorb high-volume event streams while storing each repeated piece of content only once, keeping storage modest and query latency low.
+Telemetry complements the other debugging views. Logs show what your code did, the entity graph shows your application's current state, and telemetry shows what happened in the LLM and service interactions. See [Monitoring & Debugging](../../../sdk/agent_sdk/guides/monitoring-debugging.md) for how the three fit together.
 
 ## Key Features
 
-- **Unified ingestion** — One batched RPC, `IngestBatch`, for every producer service (Connect/Protobuf, port `50051`)
-- **Trace correlation** — Events carry `trace_id`, `span_id`, and `parent_span_id`, so a run can be reassembled across services
-- **Payload deduplication** — JSON payloads are "shredded" into content-addressed nodes (BLAKE3 hashes); identical subtrees within a week are stored once
-- **Faithful reconstruction** — Queries return the reassembled JSON document, semantically identical to what was ingested
-- **Filtered queries** — HTTP endpoints list events by trace, service, layer, and error flag, and fetch one or many events with payloads
-- **Weekly partitions and retention** — Data is partitioned by UTC week; whole weeks age out on a configurable retention policy
-- **Self-provisioning storage** — The service creates upcoming weekly partitions itself, using a least-privilege database role
-- **Health and metrics** — Liveness, readiness, and Prometheus metrics endpoints for platform monitoring
+- **Captured automatically.** Broker requests, LLM calls, tool calls, and MCP Gateway tool calls are recorded without code in your bundle.
+- **Trace correlation.** Events carry `trace_id`, `span_id`, and `parent_span_id`, so you can pull back a whole run with one query and rebuild its parent/child structure.
+- **Full payloads.** Queries return the original JSON document for each event.
+- **Filtering.** You can list events by trace, producing service, event kind (`layer`), or error flag.
+- **Custom events.** Your application can send its own events into the same traces through the ingestion API. See [Getting Started](./getting-started.md#part-b-send-your-own-events).
+- **Compact storage.** Large payloads that repeat, such as system prompts and tool schemas, are stored once, so recording full payloads stays affordable.
 
 ## Architecture Overview
 
-The service has separate ingestion and query paths over the same PostgreSQL store:
-
 ```
-┌─────────────────────────────────────────────────────┐
-│      Producer services (platform services that      │
-│      emit telemetry, e.g. broker / bot layers)      │
-└───────────────────┬─────────────────────────────────┘
-                    │ IngestBatch (Connect RPC, :50051)
-                    ▼
-┌─────────────────────────────────────────────────────┐
-│                Telemetry Service                    │
-│  ┌─────────────────┐      ┌──────────────────────┐  │
-│  │  Ingestion API  │      │  Query API (HTTP)    │  │
-│  │  Shredder       │      │  :3000 /events,      │  │
-│  │  (BLAKE3 DAG)   │      │  /event/:id, ...     │  │
-│  └────────┬────────┘      └──────────▲───────────┘  │
-│           │                          │              │
-│  ┌────────▼────────┐      ┌──────────┴───────────┐  │
-│  │  BatchManager   │      │  Rehydrator +        │  │
-│  │  → PgWriter     │      │  LRU document cache  │  │
-│  └────────┬────────┘      └──────────▲───────────┘  │
-│           │   Partition provisioner  │              │
-│           │   + readiness monitor    │              │
-└───────────┼──────────────────────────┼──────────────┘
-            │ fireinsert               │ fireread
-      ┌─────▼──────────────────────────┴─────┐
-      │  PostgreSQL — schema "telemetry"     │
-      │  weekly partitions (Monday UTC)      │
-      └──────────────────────────────────────┘
+┌──────────────────────────┐
+│  Your agent bundle       │──── optional: your own events (IngestBatch) ───┐
+└────────────┬─────────────┘                                                │
+             │ completions, tool calls                                      │
+             ▼                                                              ▼
+┌──────────────────────────┐   emit events    ┌──────────────────────────────────┐
+│  FF Broker, MCP Gateway, │ ───────────────▶ │        Telemetry Service         │
+│  other platform services │   (IngestBatch)  │  ingestion :50051 · query :3000  │
+└──────────────────────────┘                  └────────────────┬─────────────────┘
+                                                               │ read
+                     ┌───────────────────┬─────────────────────┼────────────────────┐
+                     ▼                   ▼                     ▼                    ▼
+              FireFoundry Console   ff-telemetry-read   MCP Gateway telemetry   HTTP query API
+                                          CLI                 tools             (curl, scripts)
 ```
 
-**Core components:**
-
-- **Ingestion API** — Validates each event, parses the JSON payload, and hands it to the shredder
-- **Shredder** — Canonicalizes the JSON and splits it into content-addressed nodes and edges
-- **BatchManager / PgWriter** — Buffers events and flushes them to PostgreSQL in bulk, deduplicating nodes with `ON CONFLICT DO NOTHING`
-- **Rehydrator** — Reassembles stored payloads on read, with an in-memory LRU cache of reconstructed documents
-- **Partition provisioner and readiness monitor** — Keep the current and upcoming weekly partitions in place and take the replica out of rotation if they are missing
+- **Producers** are the platform services your bundle calls. They send events to the ingestion API as they work. Your bundle can also be a producer if you want custom events.
+- **Consumers** read the events back. The Console and CLI are the usual tools. The HTTP query API is available to scripts and in-cluster code.
 
 ## Documentation
 
-- **[Concepts](./concepts.md)** — Events, traces, layers, shredding and deduplication, weekly partitions, and how producers and consumers fit together
-- **[Getting Started](./getting-started.md)** — Inspect the telemetry for a request, and emit telemetry from a producer service
-- **[Reference](./reference.md)** — The `IngestBatch` RPC, every HTTP endpoint, error codes, and environment variables
-- **[Operations](./operations.md)** — Helm deployment, database roles, partition maintenance and retention, monitoring, and troubleshooting
+- **[Concepts](./concepts.md)**: what is captured, events, traces and layers, and how telemetry behaves
+- **[Getting Started](./getting-started.md)**: inspect the telemetry for a request, and send your own events
+- **[Reference](./reference.md)**: the query endpoints, the `IngestBatch` RPC, and errors
+- **[Operations](./operations.md)**: enabling the service, reaching it from a bundle, limits, and troubleshooting
 
 ## Version and Maturity
 
 - **Current Version**: 0.5.0 (source `main`)
-- **Maturity**: Early production. Ingestion, query, deduplication, and weekly partitioning are implemented. The query and ingestion endpoints are unauthenticated and intended for in-cluster use only.
-- **Deployment note**: the `firefoundry-core` Helm chart currently pins the telemetry-service image at `0.1.0`, which predates weekly partitions, `partition_key`, `POST /events/batch`, and the admin maintenance endpoint. See [Operations](./operations.md#version-compatibility).
+- **Maturity**: Early production. Ingestion, trace queries, and payload retrieval are implemented. The query and ingestion endpoints have no authentication and are meant to be reached only from inside the cluster.
 
 ## Repository
 
@@ -90,7 +66,9 @@ Source code: [ff-services-telemetry](https://github.com/firebrandanalytics/ff-se
 
 ## Related
 
-- [Platform Services Overview](../README.md) — Overview of all FireFoundry services
+- [Platform Services Overview](../README.md): all FireFoundry services
 - [Platform Architecture](../../architecture.md)
-- [FF Broker](../ff-broker/README.md) — Primary producer of LLM call telemetry
-- [`ff-telemetry-read` CLI](../../../sdk/cli-tools/ff-telemetry-read.md) — Recommended way to inspect broker request, LLM, and tool-call telemetry interactively
+- [FF Broker](../ff-broker/README.md): the main producer of LLM call telemetry
+- [MCP Gateway](../mcp-gateway/README.md): exposes telemetry read tools and records MCP tool-call events
+- [`ff-telemetry-read` CLI](../../../sdk/cli-tools/ff-telemetry-read.md): interactive inspection of broker, LLM, and tool-call telemetry
+- [Monitoring & Debugging guide](../../../sdk/agent_sdk/guides/monitoring-debugging.md)
