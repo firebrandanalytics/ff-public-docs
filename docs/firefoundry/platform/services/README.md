@@ -33,7 +33,7 @@ Each is opt-in — turn it on if your application needs the capability, leave it
 Background services that run in every environment but are not normally called by application code. App developers benefit from them indirectly — through the Console UI, CLI tools, or other services that depend on them.
 
 - **[Telemetry Service](./telemetry-service.md)** — Captures broker LLM calls and other producer-service telemetry. Inspect via the FireFoundry Console or the `ff-telemetry-read` CLI.
-- **[Document Processing Python Worker](./doc-proc-pyworker.md)** — ML-based document processing backend that the Document Processing Service delegates to for advanced OCR and table extraction.
+- **[Document Processing Python Worker](./doc-proc-pyworker/README.md)** — ML-based document processing backend that the Document Processing Service delegates to for advanced OCR and table extraction.
 
 ## Service Matrix
 
@@ -52,7 +52,7 @@ Background services that run in every environment but are not normally called by
 | [Virtual Worker Manager](./virtual-workers/README.md) | Optional | CLI coding agent orchestration with managed sessions | REST |
 | [Web Search Service](./web-search/README.md) | Optional | Provider-agnostic web search with Bing integration | REST |
 | [Telemetry Service](./telemetry-service.md) | System | Telemetry capture; consumed via Console UI or `ff-telemetry-read` CLI | gRPC + REST |
-| [Document Processing Python Worker](./doc-proc-pyworker.md) | System | ML-based backend that Document Processing delegates to | gRPC |
+| [Document Processing Python Worker](./doc-proc-pyworker/README.md) | System | ML-based backend that Document Processing delegates to | gRPC |
 
 ## How Services Fit Together
 
