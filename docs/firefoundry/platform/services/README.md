@@ -23,7 +23,7 @@ Each is opt-in — turn it on if your application needs the capability, leave it
 - **[Document Processing Service](./doc-proc-service/README.md)** — Document extraction, generation, and transformation. OCR and table extraction via the Python worker backend.
 - **[Knowledge Service](./knowledge-service.md)** — CRUD for knowledge bases and document metadata, with ingestion delegated to the RAG agent bundle.
 - **[Notification Service](./notification-service/README.md)** — Cloud-agnostic email and SMS delivery with pluggable provider adapters.
-- **[Skills Service](./skills-service.md)** — Skill registry, versioning, and environment-scoped installation for hosted agents.
+- **[Skills Service](./skills-service/README.md)** — Skill registry, versioning, and environment-scoped installation for hosted agents.
 - **[Test Harness Service](./test-harness-service/README.md)** — Define, run, and analyze automated tests against agent bundles, with LLM-judged semantic assertions powered by the Test Evaluation Agent.
 - **[Virtual Worker Manager](./virtual-workers/README.md)** — Orchestrates CLI coding agents (Claude Code, Cursor, Gemini, OpenCode) with managed sessions and persistent workspaces.
 - **[Web Search Service](./web-search/README.md)** — Provider-agnostic web search with Bing integration.
@@ -47,7 +47,7 @@ Background services that run in every environment but are not normally called by
 | [Document Processing](./doc-proc-service/README.md) | Optional | Document extraction, OCR, generation, transformation | REST |
 | [Knowledge Service](./knowledge-service.md) | Optional | CRUD for knowledge bases; delegates ingestion to RAG agent | REST |
 | [Notification Service](./notification-service/README.md) | Optional | Email and SMS delivery with pluggable providers | REST |
-| [Skills Service](./skills-service.md) | Optional | Skill registry, versioning, and environment-scoped installation | REST |
+| [Skills Service](./skills-service/README.md) | Optional | Skill registry, versioning, and environment-scoped installation | REST |
 | [Test Harness Service](./test-harness-service/README.md) | Optional | Test suite management, execution, results, scheduled runs | REST |
 | [Virtual Worker Manager](./virtual-workers/README.md) | Optional | CLI coding agent orchestration with managed sessions | REST |
 | [Web Search Service](./web-search/README.md) | Optional | Provider-agnostic web search with Bing integration | REST |
