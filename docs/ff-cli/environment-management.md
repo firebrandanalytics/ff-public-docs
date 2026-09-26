@@ -24,7 +24,7 @@ A FireFoundry environment is a namespace with the `firefoundry-core` Helm chart 
 - `ff-broker`: Routes LLM requests to different providers (OpenAI, Anthropic, etc.)
 - `context-service`: Manages agent context and memory
 - `entity-service`: Handles entity management and relationships
-- `code-sandbox`: Executes code in isolated sandbox environments
+- `code-sandbox-v2`: Runs AI-generated TypeScript and Python in isolated containers ([Code Sandbox](../firefoundry/platform/services/code-sandbox/README.md)). `code-sandbox` is the deprecated legacy sandbox; don't enable it for new environments
 - `doc-proc-service`: Processes and extracts information from documents
 
 **Configuration Flexibility**: Each environment has its own database, logging, storage, and API key configuration.
@@ -39,18 +39,18 @@ Templates are reusable environment configurations stored as JSON files. They all
 - Version control your environment configurations
 - Share environment configurations across teams
 
-Templates are stored in `~/.ff/environments/templates/` and use placeholder values (e.g., `{{azure_connection_string}}`) that you can fill in when creating environments.
+ff-cli ships three built-in templates (`minimal-self-contained`, `full-self-contained`, `external-database`), and you can add your own in `~/.ff/environments/templates/`. Templates contain placeholder values (for example `PLACEHOLDER_CONTEXT_SERVICE_API_KEY` or `REPLACE_WITH_ADMIN_PASSWORD`) that you replace by editing the template before creating an environment. ff-cli does not prompt for or substitute placeholder values.
 
 ### Service Versions
 
-When creating environments, ff-cli can discover available chart versions from your cluster's helm-api service. This allows you to:
+Each environment pins a version of the `firefoundry-core` chart, set with the `chartVersion` key. This allows you to:
 
 - Select specific versions of the `firefoundry-core` chart
 - Pin environments to stable versions
 - Test new versions in isolated environments
 - Roll back to previous versions if needed
 
-Chart versions are automatically fetched and presented during the interactive creation process.
+If `chartVersion` is omitted, the latest available version is used. To see which versions your cluster's helm-api can install, run `ff-cli environment upgrade <name> --list-versions` against an existing environment.
 
 ## Creating Environments
 
@@ -67,64 +67,64 @@ Create a new FireFoundry environment with core services. Use this command when y
 #### Usage
 
 ```bash
-ff-cli environment create [OPTIONS]
+ff-cli environment create (--template <NAME> | --file <PATH>) --name <NAME> [--yes]
 ```
 
-#### Interactive Configuration
+#### Configuration Source
 
-When run without options, the command launches an interactive configuration wizard that prompts for:
+There is no interactive configuration wizard. The whole configuration comes from a template (`--template`) or a JSON configuration file (`--file`); exactly one of the two is required, along with `--name`. Before deploying, the command prints a summary (name, chart version, enabled services, and whether the database is bundled or external) and asks `Deploy this environment? [y/N]`, unless you pass `--yes`.
 
-1. **Environment Name**: The name of the environment (also the Kubernetes namespace)
-2. **Chart Version**: Select from available versions discovered from your cluster, or enter manually
-3. **Enabled Services**: Multi-select which FireFoundry services to enable
-4. **Logging Provider**: Choose Azure or GCP for logging
-   - Azure: Requires connection string
-   - GCP: Requires project ID and service account key
-5. **Database Configuration**: Database host, name, and passwords (admin, read, insert, broker)
-6. **API Keys**: Context service API key, working memory storage key
-7. **Broker Secrets**: LLM provider API keys (e.g., `OPENAI_API_KEY`)
-8. **Code Sandbox Connection Strings**: (Optional, only if code-sandbox service enabled)
+To customize an environment, edit a template or configuration file first. The configuration covers:
 
-The wizard uses intelligent defaults from your current profile when available.
+1. **Environment Name** (`environmentName`): The name of the environment (also the Kubernetes namespace). `--name` overrides it
+2. **Chart Version** (`chartVersion`): The `firefoundry-core` chart version; omit it to use the latest
+3. **Enabled Services** (`enabledServices`): Which FireFoundry services to enable
+4. **Logging** (`logging`): Logging provider settings
+   - Azure: `logging.azure.connectionString`
+   - GCP: `logging.gcp.projectId` and `logging.gcp.serviceAccountKey`
+5. **Database Configuration**: Either bundled PostgreSQL (`postgresql`) or an external database (`database`: host, name, and passwords for admin, read, insert, and broker)
+6. **API Keys** (`contextServiceApiKey`, `workingMemoryStorageKey`, `mcpSqlApiKey`)
+7. **Broker Secrets** (`brokerSecrets`): LLM provider API keys (e.g., `OPENAI_API_KEY`)
+8. **Code Sandbox Connection Strings** (`codeSandboxConnectionStrings`): Optional, legacy `code-sandbox` service only. Code Sandbox v2 reaches databases through the Data Access Service, configured per profile
+
+Keys are camelCase. Unrecognized keys (including snake_case spellings such as `enabled_services`) are ignored, and ff-cli prints a warning naming them. To check a configuration against the Helm API schema without creating anything, run `ff-cli environment config-schema validate --template <NAME>` (or `--file <PATH>`).
 
 #### Options and Flags
 
-- `-f, --file <PATH>`: Load configuration from a JSON or YAML file instead of interactive prompts
-- `-t, --template <NAME>`: Use a saved template instead of interactive prompts
-- `-s, --simple`: Use simplified menu-based configuration (same as default interactive mode)
-- `-n, --name <NAME>`: Override environment name from template/file, or specify directly
+- `-t, --template <NAME>`: Use a built-in or saved template
+- `-f, --file <PATH>`: Load configuration from a JSON file
+- `-n, --name <NAME>`: Environment name (required); overrides `environmentName` from the template or file
 - `-y, --yes`: Skip confirmation prompt and create immediately
 
 #### Service Configuration
 
-The following services can be enabled during environment creation:
+Services are enabled by listing them in `enabledServices`. The most common ones:
 
-| Service | Description | Default |
+| Service | Description | In built-in templates |
 |---------|-------------|---------|
 | `ff-broker` | LLM request router and provider abstraction | Yes |
 | `context-service` | Agent context and memory management | Yes |
 | `entity-service` | Entity management and relationships | Yes |
-| `code-sandbox` | Isolated code execution environment | No |
-| `doc-proc-service` | Document processing and extraction | No |
+| `code-sandbox-v2` | Isolated TypeScript/Python code execution (Code Sandbox v2) | Yes |
+| `doc-proc-service` | Document processing and extraction | Yes |
 
-The default selection includes the core services required for most agent workloads.
+The built-in templates include the core services required for most agent workloads. `full-self-contained` also enables `websearch-service`, `mcp-gateway`, `log-proxy-service`, `virtual-worker-manager`, `knowledge-service`, `skills-service`, and `identity-service`.
 
 #### Chart Version Selection
 
-When creating environments interactively, ff-cli:
+ff-cli does not present a version menu during creation:
 
-1. Connects to the helm-api service in your cluster
-2. Fetches available versions of the `firefoundry-core` chart
-3. Presents versions in a selection menu, with the latest version as the default
-4. Falls back to manual entry if helm-api is unavailable
+1. If the configuration sets `chartVersion`, that version is deployed
+2. If `chartVersion` is omitted, the latest version available from your cluster's helm-api is used, and the command reports which version was deployed
+3. To list available versions, run `ff-cli environment upgrade <name> --list-versions` against an existing environment
 
 This ensures you're always working with versions that are available in your cluster's Helm repository.
 
 #### Examples
 
-**Create environment with interactive prompts:**
+**Create environment from a built-in template:**
 ```bash
-ff-cli environment create
+ff-cli environment create --template minimal-self-contained --name my-env
 ```
 
 **Create environment from a template:**
@@ -134,7 +134,7 @@ ff-cli environment create --template production --name prod-2024-01
 
 **Create environment from configuration file:**
 ```bash
-ff-cli environment create --file dev-config.yaml
+ff-cli environment create --file dev-config.json --name dev-env
 ```
 
 **Create environment with name override:**
@@ -172,21 +172,21 @@ Templates provide reusable environment configurations that ensure consistency ac
 - **Staging Template**: All services enabled, staging database, production-like configuration
 - **Production Template**: All services, production database, high availability, resource guarantees
 
-Templates use placeholder syntax (`{{variable_name}}`) for values that should differ between environments (like passwords and API keys).
+Templates use placeholder values (such as `REPLACE_WITH_ADMIN_PASSWORD`) for values that should differ between environments (like passwords and API keys). Replace them by editing the template; ff-cli deploys values as written.
 
 ### `ff-cli environment template create` Command
 
 #### Creating a Template
 
-Create a new template by copying the default configuration and opening it in your editor.
+Create a new template by copying a base configuration and opening it in your editor.
 
 **Usage:**
 ```bash
-ff-cli environment template create <NAME>
+ff-cli environment template create <NAME> [--from <TEMPLATE>]
 ```
 
 **Behavior:**
-1. Copies `~/.ff/environments/default.json` to `~/.ff/environments/templates/<NAME>.json`
+1. Copies the base configuration to `~/.ff/environments/templates/<NAME>.json`. The base is the template named by `--from` (built-in or user), or else `~/.ff/environments/default.json` if it exists, or else the built-in `minimal-self-contained` template
 2. Opens the file in your default editor (`$EDITOR`)
 3. Waits for you to save and close the editor
 4. Validates and saves the template
@@ -209,42 +209,39 @@ Templates are JSON files with the following structure:
 
 ```json
 {
-  "environment_name": "TEMPLATE_PLACEHOLDER",
-  "chart_version": "0.9.0",
-  "enabled_services": ["ff-broker", "context-service", "entity-service"],
+  "environmentName": "TEMPLATE_PLACEHOLDER",
+  "chartVersion": "0.9.0",
+  "enabledServices": ["ff-broker", "context-service", "entity-service", "code-sandbox-v2"],
   "logging": {
     "provider": "azure",
     "azure": {
-      "connection_string": "{{azure_connection_string}}"
+      "connectionString": "REPLACE_WITH_AZURE_CONNECTION_STRING"
     }
   },
   "database": {
     "host": "your-postgres-host.postgres.database.azure.com",
     "database": "ff_int_dev",
-    "admin_password": "{{admin_password}}",
-    "read_password": "{{read_password}}",
-    "insert_password": "{{insert_password}}",
+    "adminPassword": "REPLACE_WITH_ADMIN_PASSWORD",
+    "readPassword": "REPLACE_WITH_READ_PASSWORD",
+    "insertPassword": "REPLACE_WITH_INSERT_PASSWORD",
     "broker": {
-      "password": "{{broker_password}}"
+      "password": "REPLACE_WITH_BROKER_PASSWORD"
     }
   },
-  "context_service_api_key": "{{context_service_api_key}}",
-  "working_memory_storage_key": "{{working_memory_storage_key}}",
-  "mcp_sql_api_key": "{{mcp_sql_api_key}}",
-  "broker_secrets": [
+  "contextServiceApiKey": "REPLACE_WITH_CONTEXT_SERVICE_API_KEY",
+  "workingMemoryStorageKey": "REPLACE_WITH_WORKING_MEMORY_STORAGE_KEY",
+  "mcpSqlApiKey": "REPLACE_WITH_MCP_SQL_API_KEY",
+  "brokerSecrets": [
     {
       "name": "OPENAI_API_KEY_EUS2",
-      "value": "{{openai_api_key}}"
+      "value": "REPLACE_WITH_OPENAI_API_KEY"
     }
   ],
-  "code_sandbox_connection_strings": [
-    {
-      "name": "ANALYTICS",
-      "value": "postgresql://fireread:{{read_password}}@your-host:5432/firekicks?ssl=true"
-    }
-  ]
+  "codeSandboxConnectionStrings": []
 }
 ```
+
+The `environmentName` value `TEMPLATE_PLACEHOLDER` is replaced by `--name` when you create an environment. Replace the other placeholder values with real values before creating an environment; they are deployed as written. To see a complete built-in template, run `ff-cli environment template show minimal-self-contained`.
 
 ### `ff-cli environment template list` Command
 
@@ -313,10 +310,10 @@ ff-cli environment template delete old-dev
 
 Templates streamline environment creation by providing pre-configured settings.
 
-**Create from template with prompts for placeholders:**
+**Create from template:**
 ```bash
-ff-cli environment create --template dev
-# Will prompt for environment name and any {{placeholder}} values
+ff-cli environment create --template dev --name dev-env
+# --name is required; placeholder values must already be replaced in the template
 ```
 
 **Create with name override:**
@@ -398,7 +395,7 @@ ff-cli environment get dev-alice
       }
     },
     "values": {
-      "enabled_services": ["ff-broker", "context-service", "entity-service"]
+      "enabledServices": ["ff-broker", "context-service", "entity-service"]
     }
   },
   "status": {
@@ -509,14 +506,14 @@ The command returns the full configuration that would be sent to the helm-api, i
 
 ```json
 {
-  "environment_name": "preview-environment",
-  "chart_version": "0.9.0",
-  "enabled_services": ["ff-broker", "context-service", "entity-service"],
+  "environmentName": "preview-environment",
+  "chartVersion": "0.9.0",
+  "enabledServices": ["ff-broker", "context-service", "entity-service"],
   "database": {
     "host": "your-postgres-host.postgres.database.azure.com",
     "database": "ff_int_dev",
     "port": 5432,
-    "ssl_disabled": false
+    "sslDisabled": false
   },
   "logging": {
     "provider": "azure"
@@ -528,35 +525,35 @@ The command returns the full configuration that would be sent to the helm-api, i
 
 ### Configuration Files
 
-Environment configuration can be provided via JSON or YAML files.
+Environment configuration is provided as a JSON file (`--file`). Keys are camelCase and match the template format.
 
 #### JSON Configuration Example
 
 ```json
 {
-  "environment_name": "my-dev-env",
-  "chart_version": "0.9.0",
-  "enabled_services": ["ff-broker", "context-service", "entity-service"],
+  "environmentName": "my-dev-env",
+  "chartVersion": "0.9.0",
+  "enabledServices": ["ff-broker", "context-service", "entity-service"],
   "logging": {
     "provider": "azure",
     "azure": {
-      "connection_string": "DefaultEndpointsProtocol=https;..."
+      "connectionString": "DefaultEndpointsProtocol=https;..."
     }
   },
   "database": {
     "host": "postgres.example.com",
     "database": "firefoundry_dev",
-    "admin_password": "admin_secret",
-    "read_password": "read_secret",
-    "insert_password": "insert_secret",
+    "adminPassword": "admin_secret",
+    "readPassword": "read_secret",
+    "insertPassword": "insert_secret",
     "broker": {
       "password": "broker_secret"
     }
   },
-  "context_service_api_key": "context_key_123",
-  "working_memory_storage_key": "wm_key_456",
-  "mcp_sql_api_key": "mcp_key_789",
-  "broker_secrets": [
+  "contextServiceApiKey": "context_key_123",
+  "workingMemoryStorageKey": "wm_key_456",
+  "mcpSqlApiKey": "mcp_key_789",
+  "brokerSecrets": [
     {
       "name": "OPENAI_API_KEY",
       "value": "sk-..."
@@ -565,34 +562,9 @@ Environment configuration can be provided via JSON or YAML files.
 }
 ```
 
-#### YAML Configuration Example
+#### YAML Configuration Files
 
-```yaml
-environment_name: my-dev-env
-chart_version: "0.9.0"
-enabled_services:
-  - ff-broker
-  - context-service
-  - entity-service
-logging:
-  provider: azure
-  azure:
-    connection_string: "DefaultEndpointsProtocol=https;..."
-database:
-  host: postgres.example.com
-  database: firefoundry_dev
-  admin_password: admin_secret
-  read_password: read_secret
-  insert_password: insert_secret
-  broker:
-    password: broker_secret
-context_service_api_key: context_key_123
-working_memory_storage_key: wm_key_456
-mcp_sql_api_key: mcp_key_789
-broker_secrets:
-  - name: OPENAI_API_KEY
-    value: sk-...
-```
+YAML is not supported yet. A `.yaml` or `.yml` file passed to `--file` is parsed as JSON, so use JSON configuration files.
 
 ### Environment Variables
 
@@ -601,7 +573,7 @@ The following environment variables affect environment management:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HOME` or `USERPROFILE` | User home directory for template storage | System default |
-| `EDITOR` | Editor for template editing | `vim`, `vi`, or system default |
+| `EDITOR` | Editor for template editing | `nano`, then `vim` or `vi` if available |
 
 ### Service Configuration
 
@@ -609,15 +581,18 @@ Each service in a FireFoundry environment can be configured through the environm
 
 #### Database Configuration
 
-All services share database configuration:
+All services share database configuration. For an external database, set `database`:
 - **host**: PostgreSQL server hostname
 - **database**: Database name
 - **port**: Database port (default: 5432)
-- **ssl_disabled**: Disable SSL connections (default: false)
-- **admin_password**: Admin user password
-- **read_password**: Read-only user password
-- **insert_password**: Insert-only user password
-- **broker.password**: Broker-specific database password
+- **sslDisabled**: Disable SSL connections (default: false)
+- **adminUsername**: Admin user name
+- **adminPassword**: Admin user password
+- **readPassword**: Read-only user password
+- **insertPassword**: Insert-only user password
+- **broker.username** / **broker.password**: Broker-specific database credentials
+
+For a database deployed inside the environment, set `postgresql` instead (`enabled: true`, plus optional `database`, `storageSize`, and `passwords`), as the self-contained built-in templates do.
 
 #### Logging Configuration
 
@@ -629,8 +604,8 @@ Centralized logging for all services:
   "logging": {
     "provider": "azure",
     "azure": {
-      "connection_string": "DefaultEndpointsProtocol=...",
-      "log_level": "info"
+      "connectionString": "DefaultEndpointsProtocol=...",
+      "logLevel": "info"
     }
   }
 }
@@ -642,9 +617,9 @@ Centralized logging for all services:
   "logging": {
     "provider": "gcp",
     "gcp": {
-      "project_id": "my-gcp-project",
-      "log_name": "firefoundry-logs",
-      "service_account_key": "{...}"
+      "projectId": "my-gcp-project",
+      "logName": "firefoundry-logs",
+      "serviceAccountKey": "{...}"
     }
   }
 }
@@ -652,27 +627,30 @@ Centralized logging for all services:
 
 #### Storage Configuration
 
-Optional object storage configuration for artifacts:
+Object storage for artifacts is either MinIO deployed in the environment (`minio`) or external storage (`storage`):
 
-**MinIO:**
+**Bundled MinIO:**
 ```json
 {
   "minio": {
-    "endpoint": "minio.example.com:9000",
-    "access_key": "access_key",
-    "secret_key": "secret_key",
-    "bucket": "firefoundry"
+    "enabled": true,
+    "defaultBuckets": "context-service,doc-proc",
+    "storageSize": "10Gi",
+    "auth": {
+      "rootUser": "minio_user",
+      "rootPassword": "minio_password"
+    }
   }
 }
 ```
 
-**Cloud Storage:**
+**Cloud Storage** (`provider` is `s3`, `azure`, or `gcs`; S3 uses `s3.endpoint`, `s3.bucket`, `s3.accessKeyId`, `s3.secretAccessKey`):
 ```json
 {
   "storage": {
     "provider": "azure",
     "azure": {
-      "connection_string": "DefaultEndpointsProtocol=...",
+      "storageKey": "REPLACE_WITH_STORAGE_KEY",
       "container": "firefoundry"
     }
   }
@@ -689,7 +667,7 @@ ff-cli environment template create dev
 ```
 
 Edit the template to:
-- Set `chart_version` to a stable development version
+- Set `chartVersion` to a stable development version
 - Enable core services: `ff-broker`, `context-service`, `entity-service`
 - Use a shared development database
 - Use placeholder values for secrets
@@ -701,7 +679,7 @@ ff-cli environment create --template dev --name alice-dev
 
 The command will:
 1. Load the dev template
-2. Prompt for environment-specific values (passwords, API keys)
+2. Apply the environment name from `--name`
 3. Show confirmation with environment details
 4. Create the environment in your cluster
 
@@ -899,8 +877,8 @@ Error: Template 'production' not found at '/home/user/.ff/environments/templates
 
 3. Use latest version instead:
    ```bash
-   ff-cli environment create --template dev
-   # Select "latest" when prompted for version
+   # Remove chartVersion from the template (or file) to use the latest version
+   ff-cli environment create --template dev --name my-env
    ```
 
 ### Issue: Database connection failures

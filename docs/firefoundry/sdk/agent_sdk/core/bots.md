@@ -721,39 +721,64 @@ export class CompilerErrorBot extends BotCustomErrorHandling<
 
 ### 5.2 InternalError and Automatic Retries
 
-The framework now includes `InternalError` for handling temporary/retryable failures:
+`InternalError` marks a *transient* failure (a dropped connection, a pod restart, a timed-out upstream call) as opposed to a problem with what the LLM produced. It is exported from `@firebrandanalytics/ff-agent-sdk/bot` alongside `CompilerError`, `RuntimeError` and `SQLError`:
 
 ```typescript
-// InternalError is automatically retried
-export class InternalError extends FFError {
-    details: InternalErrorDetails;
+// From the SDK (bot/coder/errors.ts)
+export class InternalError extends CodeExecutionError {
+    details: InternalErrorDetails; // originalType, originalError, stack, retryCount, maxRetries, ...
 
-    constructor(message: string, details: InternalErrorDetails = {}) {
-        super(message);
+    constructor(message: string, details: InternalErrorDetails = {}, stdout?: string, stderr?: string) {
+        super(message, stdout, stderr);
         this.name = "InternalError";
         this.details = details;
     }
 }
+```
 
-// Example usage in code execution with automatic retries
-export const executeCodeSandboxWithRetries = async function* (
-    runCodeArgs: ProcessCodeRequest,
-    workingMemoryId: UUID,
-    wmp: WorkingMemoryProvider,
-    botName: string,
-    maxRetries: number = 3
-): BotPostprocessGenerator<CODER_BTH> {
+The distinction matters because the two kinds of failure need different responses:
+
+- **Content errors** (`CompilerError`, `RuntimeError`, `SQLError`, validation errors) are sent back to the LLM through the bot's try loop and error-handler bots, so the next attempt can fix the output. Each one costs an LLM attempt (`max_tries`).
+- **Transient errors** (`InternalError`) are never dispatched to an error-handler bot. The operation is simply repeated, without asking the LLM for anything new.
+
+The coder bots (section 7.2) do this for you: when the Code Sandbox connection fails with a transient error, `CoderBot` re-runs the same code up to `maxSandboxRetries` times (default 3) before failing, and reports each retry as a progress update. In your own bots, apply the same pattern to any external call that can fail transiently: classify the failure as `InternalError` where it happens, and retry it in place.
+
+```typescript
+import { InternalError } from "@firebrandanalytics/ff-agent-sdk/bot";
+import type { BotPostprocessGenerator, BotTryRequest } from "@firebrandanalytics/ff-agent-sdk/bot";
+import type { BrokerTextContent } from "@firebrandanalytics/shared-types";
+
+// Classify transient failures of an external dependency as InternalError
+async function fetchEnrichment(recordId: string): Promise<Enrichment> {
+    try {
+        return await enrichmentClient.get(recordId);
+    } catch (error) {
+        const message = (error as Error).message ?? "";
+        if (/econnreset|fetch failed|terminated|timeout/i.test(message)) {
+            throw new InternalError(message, { originalError: error });
+        }
+        throw error; // anything else is not retryable here
+    }
+}
+
+// Inside your bot class
+override async *postprocess_generator(
+    broker_content: BrokerTextContent,
+    request: BotTryRequest<ENRICH_BTH>
+): BotPostprocessGenerator<ENRICH_BTH> {
+    const parsed = JSON.parse(broker_content.content);
+    const maxRetries = 3;
     let retryCount = 0;
-    
+
     while (true) {
         try {
-            return yield* executeCodeSandbox(runCodeArgs, workingMemoryId, wmp, botName);
+            const enrichment = await fetchEnrichment(parsed.record_id);
+            return { ...parsed, enrichment };
         } catch (error) {
             if (error instanceof InternalError && retryCount < maxRetries) {
                 retryCount++;
-                logger.detail(`[Bot] Caught InternalError, retrying (${retryCount}/${maxRetries})`);
-                
-                // Yield a retry progress update
+
+                // Let callers see the retry in the progress stream
                 yield {
                     type: "INTERNAL_UPDATE",
                     internal_step: "postprocessing",
@@ -762,104 +787,64 @@ export const executeCodeSandboxWithRetries = async function* (
                         stage: "retry",
                         retry_count: retryCount,
                         max_retries: maxRetries,
-                        error_message: error.message
+                        error_message: error.message,
                     },
-                    bot_name: botName,
+                    bot_name: this.name,
                 };
-                
-                // Short delay before retry
-                await new Promise(resolve => setTimeout(resolve, 3000));
+
+                await new Promise(resolve => setTimeout(resolve, 3000)); // short back-off
                 continue;
             }
-            
-            // Not retryable or max retries reached
+
+            // Not transient, or out of retries: let the bot's try loop handle it
             throw error;
         }
     }
 }
 ```
 
+Only retry operations that are safe to repeat. A retried Code Sandbox run executes the code again, so code that writes data should be idempotent (see [Code Sandbox concepts: Retries and Idempotency](../../../platform/services/code-sandbox/concepts.md#retries-and-idempotency)).
+
 ### 5.3 Direct Code Execution
 
-The framework supports bypassing the LLM and directly executing code:
+Sometimes you want to re-run code a bot generated earlier (a saved report, a scheduled refresh) without asking the LLM to write it again. The bot framework supports this as *direct execution*: when `should_use_direct_execution(request)` returns true and the bot has a `direct_execution_handler`, the bot skips the LLM call and runs the handler instead. By default, `should_use_direct_execution` returns true when the request args contain a `direct_code_reuse_path`.
+
+The coder bots (`GeneralCoderBot` and the other `CoderBot` variants) implement this for you. Pass the working-memory path of previously generated code as `direct_code_reuse_path`, and the bot:
+
+1. Resolves the path in the root entity's working memory and loads the stored code.
+2. Sends it to the Code Sandbox by working-memory reference (`source: { type: "context-service", id }`) using the bot's profile. The code is not sent inline, and no LLM call is made.
+3. Streams sandbox progress as bot progress updates and returns the same output shape as a normal run.
+
+If the stored code fails (for example, the schema changed since it was written), the error is classified as usual and the error-handler bots receive the stored code to fix, so a direct run can still recover through the LLM.
 
 ```typescript
-export class CodeExecutionBot extends Bot<CODE_BTH> {
-    constructor() {
-        super({
-            name: "CodeExecutionBot",
-            base_prompt_group: code_prompt_group,
-            model_pool_name: "azure_completion_4o",
-            static_args: {},
-            // Set up direct execution handlers
-            direct_execution_handler: async function* (request) {
-                return yield* this.handleDirectCodeExecution(request);
-            },
-            direct_execution_code_extractor: async (request) => {
-                return this.extractCodeForDirectExecution(request);
-            }
-        });
-    }
+// In an entity that runs a coder bot (see the Code Sandbox tutorial for the full entity)
+protected async get_bot_request_args_impl(
+    _preArgs: Partial<BotRequestArgs<CODER_BTH>>
+): Promise<BotRequestArgs<CODER_BTH>> {
+    const dto = await this.get_dto();
 
-    // Direct execution handler function
-    private async *handleDirectCodeExecution(
-        request: BotTryRequest<CODE_BTH>
-    ): BotPostprocessGenerator<CODE_BTH> {
-        logger.detail('[Bot] Handling direct code execution');
-        
-        const directReusePath = request.parent.args?.direct_code_reuse_path as string;
-        if (!directReusePath) {
-            throw new FFError("No direct_code_reuse_path provided");
-        }
-        
-        const wmp = request.parent.context_provider.working_memory_provider;
-        const memory_manifest = await wmp.get_working_memory_manifest_rpc(
-            request.parent.context.root_entity_node_dto.id
-        );
-        
-        const workingMemoryId = getMemoryId(memory_manifest, directReusePath);
-        if (!workingMemoryId) {
-            throw new FFError(`Working memory path not found: ${directReusePath}`);
-        }
-        
-        const content = await wmp.get_memory_content_rpc(workingMemoryId);
-        
-        yield {
-            type: "INTERNAL_UPDATE",
-            internal_step: "direct_execution",
-            message: "Retrieved code from working memory",
-            metadata: { stage: "code_retrieval" },
-            bot_name: this.name,
-        };
-        
-        // Execute the code and return results
-        return yield* executeCodeSandbox(run_code_args, workingMemoryId, wmp, this.name);
-    }
-
-    // Determine when to use direct execution
-    protected override should_use_direct_execution(request: BotRequest<CODE_BTH>): boolean {
-        const args = request.args;
-        if (args && typeof args === 'object' && 'direct_code_reuse_path' in args) {
-            return !!args.direct_code_reuse_path;
-        }
-        return false;
-    }
-    
-    // Extract code for error handlers
-    private async extractCodeForDirectExecution(
-        request: BotTryRequest<CODE_BTH>
-    ): Promise<string> {
-        const directReusePath = request.parent.args?.direct_code_reuse_path as string;
-        if (directReusePath) {
-            const wmp = request.parent.context_provider.working_memory_provider;
-            // Retrieve and return the code
-            const content = await wmp.get_memory_content_rpc(workingMemoryId);
-            return stripModuleImports(content);
-        }
-        return "";
-    }
+    return {
+        args: dto.data.reuse_path
+            // Re-run code stored earlier, e.g. "code/analysis.ts"; no LLM call
+            ? { direct_code_reuse_path: dto.data.reuse_path }
+            // Normal run: generate new code and store it at this path
+            : { output_working_memory_paths: ["code/analysis.ts"] },
+        input: dto.data.prompt,
+        context: new Context(dto),
+    };
 }
 ```
+
+For bots that aren't coder bots, the same mechanism is available through the `Bot` constructor options:
+
+| Option / method | Purpose |
+|-----------------|---------|
+| `direct_execution_handler` | `(request: BotTryRequest<BTH>) => BotPostprocessGenerator<BTH>`: produces the result without an LLM call |
+| `direct_execution_code_extractor` | `(request: BotTryRequest<BTH>) => Promise<string>`: returns the source that error handlers should see if the direct run fails |
+| `should_use_direct_execution(request)` | Override to change when direct execution is used (default: `direct_code_reuse_path` is set) |
+
+For how stored code is executed by the service, see [Code Sandbox concepts: Code Sources](../../../platform/services/code-sandbox/concepts.md#code-sources).
 
 ### 5.4 Working with Memory
 
@@ -1389,125 +1374,67 @@ Key patterns from this example:
 - Includes memory tidbits for additional context
 - Uses a focused user instruction
 
-### 7.2 CoderBot with Advanced Features
+### 7.2 Coder Bots with the Code Sandbox
 
-The CoderBot is one of the most sophisticated examples, demonstrating advanced error handling, direct code execution, tool calls, and working memory integration.
+Coder bots are the most complete example of the advanced features above: error classification with specialized error-handler bots, transient-error retries, direct code execution, streaming progress, and working memory integration. You rarely build one from scratch. The SDK ships `GeneralCoderBot`, which runs generated code on the [Code Sandbox Service](../../../platform/services/code-sandbox/README.md) (v2) using a named **profile** that defines the language, runtime, data connections and limits.
+
+> The legacy Code Sandbox (`ProcessCodeRequest`, harness-based requests through the old code sandbox client) is deprecated. Use `GeneralCoderBot` (or a `CoderBot` subclass) with a Code Sandbox v2 profile. The [Code Sandbox tutorial](../tutorials/code-sandbox/README.md) builds a complete application this way.
 
 ```typescript
-export default class CoderBot extends Bot<CODER_BTH> {
-  constructor() {
-    // Define a factory function for error handling
-    const errorHandlingFactory = new CoderErrorHandlingFactory();
-    
-    // Define dispatch table for tool calls
-    const coderDispatchTable: DispatchTable<CODER_PTH, CODER_OUTPUT> = {
-      execute_sql: {
-        func: async (request, args: { query: string }) => {
-          // Execute SQL query
-          const results = await executeSQLQuery(args.query);
-          return results;
-        },
-        spec: {
-          name: "execute_sql",
-          description: "Execute a SQL query",
-          inputSchema: {
-            type: "object",
-            properties: {
-              query: { type: "string", description: "SQL query to execute" }
-            },
-            required: ["query"]
-          }
-        }
-      },
-      save_chart: {
-        func: async (request, args: { chart_data: any, name: string }) => {
-          // Save chart to working memory
-          const wmp = request.parent.context_provider.working_memory_provider;
-          const { workingMemoryId } = await wmp.insert_code_memory({
-            entityNodeId: request.parent.context.prevailing_context_node_dto.id,
-            name: `${args.name}.json`,
-            memoryType: 'data/json',
-            contentType: 'application/json',
-            buffer: Buffer.from(JSON.stringify(args.chart_data, null, 2))
-          });
-          return { saved: true, workingMemoryId };
-        },
-        spec: {
-          name: "save_chart",
-          description: "Save chart data to working memory",
-          inputSchema: {
-            type: "object",
-            properties: {
-              chart_data: { type: "object", description: "Chart data to save" },
-              name: { type: "string", description: "Chart name" }
-            },
-            required: ["chart_data", "name"]
-          }
-        }
-      }
-    };
-    
-    super({
-      name: "CoderBot",
-      base_prompt_group: coder_prompt_group,
-      model_pool_name: "azure_completion_4o",
-      static_args: {},
-      thread_try_factory: (parent: Bot<CODER_BTH>) => 
-        errorHandlingFactory.createErrorHandlingTryFactory(parent),
-      max_tries: 5,
-      dispatch_table: coderDispatchTable,
-      direct_execution_handler: async function* (request) {
-        return yield* handleDirectCodeExecution(request);
-      },
-      direct_execution_code_extractor: async (request) => {
-        return extractCodeForDirectExecution(request);
-      }
-    });
-  }
+import {
+    GeneralCoderBot,
+    RegisterBot,
+    PromptTemplateSectionNode,
+} from "@firebrandanalytics/ff-agent-sdk";
+import type { CODER_PTH } from "@firebrandanalytics/ff-agent-sdk";
 
-  /**
-   * Determines if direct execution should be used for this request
-   */
-  protected override should_use_direct_execution(request: BotRequest<CODER_BTH>): boolean {
-    const args = request.args;
-    if (args && typeof args === 'object' && 'direct_code_reuse_path' in args) {
-      return !!args.direct_code_reuse_path;
+@RegisterBot("AnalyticsCoderBot")
+export class AnalyticsCoderBot extends GeneralCoderBot {
+    constructor() {
+        super({
+            name: "AnalyticsCoderBot",
+            modelPoolName: "firebrand-gpt-5.2-failover",
+            // Code Sandbox profile: language, runtime, DAS connections, limits
+            profile: process.env.CODE_SANDBOX_DS_PROFILE || "orders-app-analytics",
+            // Domain knowledge only; output format and run() contract are built in
+            domainPrompt: new PromptTemplateSectionNode<CODER_PTH>({
+                semantic_type: "context",
+                content: "Data:",
+                children: [
+                    "Query the orders database with `das['orders'].query_df('SELECT ...')`.",
+                    "Return JSON-serializable results; use `.to_dict('records')` for DataFrames.",
+                ],
+            }),
+            maxTries: 8,          // LLM attempts, including error-driven fixes
+            maxSandboxRetries: 3, // re-runs after transient (InternalError) failures
+        });
     }
-    return false;
-  }
-
-  /**
-   * Process LLM responses, extracting code and executing it
-   */
-  override async *postprocess_generator(
-    broker_content: BrokerTextContent,
-    request: BotTryRequest<CODER_BTH>
-  ): BotPostprocessGenerator<CODER_BTH> {
-    // Extract JSON metadata and TypeScript code
-    // Upload code to working memory
-    // Execute the code with automatic retries for InternalErrors
-    // Save essential data to working memory
-    // Return final output
-    
-    return yield* executeCodeSandboxWithRetries(
-      run_code_args,
-      workingMemoryId,
-      wmp,
-      this.name,
-      3 // max retries for InternalError
-    );
-  }
 }
 ```
 
+The bot's service address comes from the bundle environment: set `CODE_SANDBOX_URL` (and `CODE_SANDBOX_API_KEY` only if your deployment requires one). `init()` fetches the profile's metadata from the sandbox and fails if the profile doesn't exist or the sandbox is unreachable. To add prompt sections that depend on live data (for example, a schema loaded at startup), override `init()`, call `super.init()` first, and add sections to `this.base_prompt_group.get_prompt("system")`, as in [Part 2 of the tutorial](../tutorials/code-sandbox/part-02-data-science-and-domain-prompts.md).
+
+Each run of the bot:
+
+1. Calls the LLM with the intrinsic prompt (a JSON metadata block plus a code block that defines a `run()` entry point) and your domain prompt.
+2. Extracts the metadata and code, validates it, and stores the code in working memory at the path given in `output_working_memory_paths` (for example `code/analysis.py`).
+3. Executes the code in the sandbox with the bot's profile, streaming sandbox events (compiling, executing, output, done) as bot progress updates.
+4. On a `CompilerError`, `RuntimeError` or `SQLError`, dispatches to the matching error-handler bot (`CompilerErrorBot`, `RuntimeErrorBot`, `SQLErrorBot`) to fix the code, up to `maxTries`. On an `InternalError`, re-runs the same code, up to `maxSandboxRetries` (section 5.2).
+5. Returns `GeneralCoderOutput`: `{ description, result, stdout?, metadata? }`, with the LLM's metadata merged into `metadata`.
+
+Passing `direct_code_reuse_path` instead of `output_working_memory_paths` re-runs stored code without the LLM (section 5.3). Entities run the bot through `BotRunnableEntityMixin`, exactly as in [Part 1 of the tutorial](../tutorials/code-sandbox/part-01-first-code-execution.md).
+
+**Customizing further.** `GeneralCoderBot` accepts `errorPromptProviders` (custom prompt groups for the compiler, runtime and SQL error handlers). For a variant with its own validation or output shape, extend the abstract `CoderBot` base class, which `GeneralCoderBot`, `DataCoderBot`, `BICoderBot` and `TestCoderBot` all extend. A subclass must implement `getLanguage()` and `getModuleImports()`, and can override `validateCode()`, `processExecutionResult()`, `extractKnownLiterals()` and `buildExecuteRequest()`. Its constructor takes a `promptGroup`, a `SandboxClient` from `@firebrandanalytics/ff-sandbox-client`, and a `profile`.
+
 Key patterns from this example:
+- Profile-driven execution: the bot names a Code Sandbox profile; runtime and data access live in the profile
 - Custom error handling with specialized handlers for different error types
-- Direct code execution capability for reusing existing code
-- Tool calls for SQL execution and chart saving
-- Progress tracking throughout the execution process
-- Working memory integration for persistence
-- Automatic retries for InternalError
-- Structured output with metadata
+- Automatic retries for `InternalError`, separate from LLM retries
+- Direct code execution for reusing stored code
+- Progress streaming from the sandbox to the caller
+- Working memory integration for generated code
+
+For the service's API, profiles, and deployment settings, see the [Code Sandbox reference](../../../platform/services/code-sandbox/reference.md) and [operations guide](../../../platform/services/code-sandbox/operations.md).
 
 ### 7.3 Agent Bundle Integration
 
@@ -1522,7 +1449,7 @@ export class FinanceAnalyzerAgentBundle {
     
     // Initialize bots with shared configuration
     this.bots.set('knowledge_lookup', new KnowledgeLookupBot());
-    this.bots.set('coder', new CoderBot());
+    this.bots.set('coder', new AnalyticsCoderBot());
     this.bots.set('analyzer', new AnalyzerBot());
     this.bots.set('fact_sheet', new FactSheetBot());
   }
