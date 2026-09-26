@@ -139,7 +139,7 @@ Source code: [ff-app-system / rag-agent-bundle](https://github.com/firebrandanal
 ## Related Documentation
 
 - [System Agents Catalog](./README.md)
-- [Knowledge Service](../services/knowledge-service.md) — Knowledge-base catalog and ingestion lifecycle
+- [Knowledge Service](../services/knowledge-service/README.md) — Knowledge-base catalog and ingestion lifecycle
 - [Entity Service](../services/entity-service/README.md) — Underlying storage and vector search
 - [Document Processing Service](../services/doc-proc-service/README.md) — Document extraction backend
 - [Context Service](../services/context-service/README.md) — Working memory used during query

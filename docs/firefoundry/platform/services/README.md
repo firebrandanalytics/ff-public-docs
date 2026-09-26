@@ -21,7 +21,7 @@ Each is opt-in — turn it on if your application needs the capability, leave it
 - **[Context Service](./context-service/README.md)** — Working memory, blob storage, and conversation persistence for chat-style agents.
 - **[Data Access Service](./data-access/README.md)** — Multi-database SQL access with AST query translation, staged federation, scratch pad, and fine-grained ACL.
 - **[Document Processing Service](./doc-proc-service/README.md)** — Document extraction, generation, and transformation. OCR and table extraction via the Python worker backend.
-- **[Knowledge Service](./knowledge-service.md)** — CRUD for knowledge bases and document metadata, with ingestion delegated to the RAG agent bundle.
+- **[Knowledge Service](./knowledge-service/README.md)** — CRUD for knowledge bases and document metadata, with ingestion delegated to the RAG agent bundle.
 - **[Notification Service](./notification-service/README.md)** — Cloud-agnostic email and SMS delivery with pluggable provider adapters.
 - **[Skills Service](./skills-service/README.md)** — Skill registry, versioning, and environment-scoped installation for hosted agents.
 - **[Test Harness Service](./test-harness-service/README.md)** — Define, run, and analyze automated tests against agent bundles, with LLM-judged semantic assertions powered by the Test Evaluation Agent.
@@ -45,7 +45,7 @@ Background services that run in every environment but are not normally called by
 | [Context Service](./context-service/README.md) | Optional | Working memory, blob storage, conversation persistence | gRPC |
 | [Data Access Service](./data-access/README.md) | Optional | Multi-database SQL access with AST queries and ACL | gRPC + REST |
 | [Document Processing](./doc-proc-service/README.md) | Optional | Document extraction, OCR, generation, transformation | REST |
-| [Knowledge Service](./knowledge-service.md) | Optional | CRUD for knowledge bases; delegates ingestion to RAG agent | REST |
+| [Knowledge Service](./knowledge-service/README.md) | Optional | CRUD for knowledge bases; delegates ingestion to RAG agent | REST |
 | [Notification Service](./notification-service/README.md) | Optional | Email and SMS delivery with pluggable providers | REST |
 | [Skills Service](./skills-service/README.md) | Optional | Skill registry, versioning, and environment-scoped installation | REST |
 | [Test Harness Service](./test-harness-service/README.md) | Optional | Test suite management, execution, results, scheduled runs | REST |
