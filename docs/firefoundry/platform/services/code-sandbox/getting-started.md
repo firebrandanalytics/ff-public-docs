@@ -1,23 +1,29 @@
 # Code Sandbox — Getting Started
 
-This guide walks you through executing code in the sandbox, configuring database access, and processing results.
+This guide takes you from a health check to running code with database access, first with `curl` and then from an agent bundle.
 
 ## Prerequisites
 
-- A running Code Sandbox instance
-- An API key configured (via `API_KEY` environment variable)
-- Database connection strings configured (if using database features)
+- The Code Sandbox enabled in your FireFoundry environment (see [Operations](./operations.md#enabling-the-code-sandbox))
+- The sandbox API key, if your environment has one configured
+- For database access: at least one database configured for the sandbox (see [Operations](./operations.md#making-databases-available))
 
-## Step 1: Verify the Service is Running
+Inside the cluster, the sandbox is reachable at `http://firefoundry-core-code-sandbox:3000`. To try it from your workstation, port-forward it:
+
+```bash
+kubectl port-forward svc/firefoundry-core-code-sandbox -n <namespace> 3000:3000
+```
+
+The examples below use `http://localhost:3000`.
+
+## Step 1: Check That the Sandbox Is Reachable
 
 ```bash
 curl http://localhost:3000/health
 # Expected: "OK"
 ```
 
-## Step 2: Execute Simple Code
-
-Send a basic code execution request:
+## Step 2: Run Simple Code
 
 ```bash
 curl -X POST http://localhost:3000/process \
@@ -30,7 +36,8 @@ curl -X POST http://localhost:3000/process \
   }'
 ```
 
-**Response:**
+Response:
+
 ```json
 {
   "success": true,
@@ -41,9 +48,11 @@ curl -X POST http://localhost:3000/process \
 }
 ```
 
-## Step 3: Execute Code with Database Access
+Omit the `x-api-key` header if your environment does not configure one.
 
-Specify database requirements and the harness will establish connections:
+## Step 3: Query a Database
+
+List the databases the code needs. Each entry becomes a property on `dbs`:
 
 ```bash
 curl -X POST http://localhost:3000/process \
@@ -59,11 +68,11 @@ curl -X POST http://localhost:3000/process \
   }'
 ```
 
-The `dbs` parameter is automatically populated with pre-authenticated database adapters.
+`analytics` must be a database name configured for your environment.
 
-## Step 4: Use a Run Script
+## Step 4: Add a Run Script (Optional)
 
-For more complex execution, provide a separate run script:
+A `runScript` lets you keep the generated code separate from the code that drives it, for example to log intermediate output:
 
 ```bash
 curl -X POST http://localhost:3000/process \
@@ -80,9 +89,9 @@ curl -X POST http://localhost:3000/process \
   }'
 ```
 
-## Step 5: Use Streaming for Progress Updates
+## Step 5: Stream Progress
 
-For long-running operations, the sandbox streams progress events:
+For long-running code, request streamed progress events:
 
 ```bash
 curl -X POST http://localhost:3000/process \
@@ -97,16 +106,15 @@ curl -X POST http://localhost:3000/process \
   }'
 ```
 
-Stream events:
 ```json
 {"type":"compilation_complete","success":true,"data":{}}
 {"type":"execution_started"}
 {"type":"execution_complete","success":true,"result":{"returnData":{}}}
 ```
 
-## Step 6: Reference Code from Working Memory
+## Step 6: Run Code Stored in Working Memory
 
-Instead of inlining code, reference a working memory document:
+If your bundle saved the generated code to a [Context Service](../context-service/README.md) working memory document, reference it instead of sending the code inline:
 
 ```bash
 curl -X POST http://localhost:3000/process \
@@ -120,19 +128,18 @@ curl -X POST http://localhost:3000/process \
   }'
 ```
 
-## Using the Client SDK
+## Calling the Sandbox from an Agent Bundle
 
-For programmatic access from agent bundles:
+Use the TypeScript client, `@firebrandanalytics/code-sandbox-client`:
 
 ```typescript
-import { CodeSandboxClient } from '@firebrandanalytics/cs-client';
+import { CodeSandboxClient } from '@firebrandanalytics/code-sandbox-client';
 
 const client = CodeSandboxClient.create({
-  baseUrl: 'https://code-sandbox.firefoundry.com',
-  apiKey: process.env.SANDBOX_API_KEY
+  baseUrl: 'http://firefoundry-core-code-sandbox:3000',
+  apiKey: process.env.SANDBOX_API_KEY // omit if your environment has no sandbox key
 });
 
-// Simple execution
 const result = await client.runCode({
   code: `
     export const analyze = async (dbs) => {
@@ -147,19 +154,22 @@ const result = await client.runCode({
   databases: [{ name: 'analytics', type: 'postgres' }]
 });
 
+if (!result.success) {
+  // Send result.errors back to the bot that wrote the code and ask for a fix
+}
 console.log('Result:', result.returnData);
 ```
 
-### Streaming with the Client SDK
+### Streaming with the Client
 
 ```typescript
-const generator = client.runCodeWithProgress({
+const updates = client.runCodeWithProgress({
   code: '/* your code */',
   language: 'typescript',
   harness: 'finance'
 });
 
-for await (const update of generator) {
+for await (const update of updates) {
   switch (update.type) {
     case 'compilation_complete':
       console.log('Compiled:', update.success);
@@ -171,8 +181,12 @@ for await (const update of generator) {
 }
 ```
 
+### From MCP-Capable Agents
+
+Agents that use the [MCP Gateway](../mcp-gateway/README.md) can call the `sandbox_execute_code` tool instead. See [MCP Gateway tools](../mcp-gateway/tools.md#code-sandbox-adapter).
+
 ## Next Steps
 
-- Read [Concepts](./concepts.md) for the execution model, harness system, and security model
-- See [Reference](./reference.md) for the complete API specification
-- See [Operations](./operations.md) for deployment and configuration guidance
+- [Concepts](./concepts.md): harnesses, the security model, and app design patterns
+- [Reference](./reference.md): the full request and response contract
+- [Operations](./operations.md): enabling the sandbox and configuring databases

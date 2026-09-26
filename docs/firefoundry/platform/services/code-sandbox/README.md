@@ -2,67 +2,61 @@
 
 ## Overview
 
-The Code Sandbox is a secure code execution environment that enables AI agents to run TypeScript code with access to databases, visualization tools, and data processing libraries. It provides isolated execution with comprehensive security controls and resource management.
+The Code Sandbox lets your agent bundles run TypeScript code, typically code written by an LLM, in an isolated environment. That code can query your databases, work with tabular data, and render charts. Your bundle sends code to the sandbox and gets back a structured result: the value the code returned, its console output, and any compilation or runtime errors.
 
 ## Purpose and Role in Platform
 
-The Code Sandbox serves as the execution runtime for FireFoundry agent bundles, allowing AI-generated code to:
-- Query databases securely via ODBC connections (PostgreSQL, Databricks, SQL Server, MySQL, Oracle, Snowflake)
-- Process and analyze data using DataFrame operations
-- Generate visualizations with Chart.js and Canvas
-- Execute analytical workflows in controlled environments
+Use the Code Sandbox when an agent needs to compute an answer rather than just generate text. Typical examples:
 
-Agent bundles invoke the Code Sandbox via REST API to compile and run code, receiving structured execution results including output, errors, and return data.
+- **Analytics assistants**: the LLM writes a query plus some post-processing, the sandbox runs it against your data, and the bot explains the result.
+- **Text-to-SQL with verification**: generated SQL runs in the `sql` harness, and the rows come back for the bot to check or summarize.
+- **Charts and reports**: generated code builds a Chart.js chart or Canvas image from query results.
+- **Data transformation**: DataFrame-style reshaping and statistics over rows your bundle already has.
+
+The key design property is **credential isolation**. Generated code never sees connection strings or passwords. The sandbox opens the database connections your environment has configured and passes ready-to-use adapters into the code.
 
 ## Key Features
 
-- **Secure Code Execution**: Isolated execution environments with VM-based sandboxing or worker thread isolation
-- **Database Connectivity**: ODBC-based access to multiple database types with connection pooling
-- **Data Visualization**: Built-in Canvas and Chart.js support for generating charts and graphics
-- **DataFrame Processing**: Data analysis capabilities via dataframe-js and simple-statistics
-- **Dual Execution Modes**: Worker thread isolation (more secure) or direct execution (lower latency)
-- **Streaming Progress Updates**: Chunked transfer encoding for real-time compilation and execution status
-- **Customizable Harnesses**: Predefined execution contexts (finance, sql) with extensible architecture
+- **TypeScript execution**: code is compiled and run, and compile errors come back as structured errors.
+- **Harnesses**: predefined execution contexts (`finance` for analytical code, `sql` for query execution) that define which function your code must export.
+- **Injected database access**: named, pre-authenticated database adapters (PostgreSQL, Databricks, SQL Server, MySQL, Oracle, Snowflake).
+- **Bundled libraries**: `dataframe-js`, `simple-statistics`, `chart.js`, and `canvas` are available to executed code.
+- **Streaming progress**: optional streamed events for compilation and execution status.
+- **Working memory input**: run code stored in a Context Service working memory document instead of sending it inline.
+- **Client library and MCP tool**: call it from a bundle with the TypeScript client, or from MCP-capable agents through the MCP Gateway.
 
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  REST API Layer                      │
-│              POST /process endpoint                  │
-│         API key authentication + rate limiting       │
-└───────────────────┬─────────────────────────────────┘
-                    │
-┌───────────────────▼─────────────────────────────────┐
-│              Harness Selection                       │
-│   Finance Harness  |  SQL Harness  |  Custom        │
-│   Database injection + context setup                 │
-└───────────────────┬─────────────────────────────────┘
-                    │
-┌───────────────────▼─────────────────────────────────┐
-│             TypeScript Compiler                      │
-│        Compilation → Execution → Result              │
-│   Worker Threads mode  |  Direct execution mode      │
-└───────────────────┬─────────────────────────────────┘
-                    │
-┌───────────────────▼─────────────────────────────────┐
-│             External Services                        │
-│   Databases (ODBC)  |  KeyVault  |  Blob Storage     │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  Your agent bundle (bot generates code)      │
+└──────────────────┬───────────────────────────┘
+                   │  POST /process (client library or REST)
+                   │  or sandbox_execute_code via MCP Gateway
+┌──────────────────▼───────────────────────────┐
+│               Code Sandbox                    │
+│  compile → run in harness → collect result   │
+└───────┬───────────────────────────┬──────────┘
+        │ connections configured    │ optional: load code
+        │ for your environment      │ from working memory
+┌───────▼──────────────────┐   ┌────▼─────────────────┐
+│ Your databases           │   │ Context Service      │
+│ (Postgres, Databricks,   │   │                      │
+│  SQL Server, ...)        │   │                      │
+└──────────────────────────┘   └──────────────────────┘
 ```
 
 ## Documentation
 
-- **[Concepts](./concepts.md)** — Execution model, harness system, isolation strategy, security model
-- **[Getting Started](./getting-started.md)** — First code execution, harness configuration, database access
-- **[Reference](./reference.md)** — API endpoints, request/response schemas, configuration variables
-- **[Operations](./operations.md)** — Deployment, scaling, security configuration, troubleshooting
+- **[Concepts](./concepts.md)**: harnesses, database injection, the security model, and app design patterns
+- **[Getting Started](./getting-started.md)**: run your first code, add database access, and call it from a bundle
+- **[Reference](./reference.md)**: the `/process` API, harness exports, the database adapter, and errors
+- **[Operations](./operations.md)**: enabling the sandbox, configuring databases, limits, and troubleshooting
 
 ## Version and Maturity
 
 - **Current Version**: 2.0.0
 - **Status**: GA (Generally Available, Stable)
-- **Node.js Version**: 23.x required (uses `--experimental-vm-modules`)
 
 ## Repository
 
@@ -72,4 +66,5 @@ Source code: [code-sandbox](https://github.com/firebrandanalytics/code-sandbox) 
 
 - [Platform Services Overview](../README.md)
 - [Platform Architecture](../../architecture.md)
-- [Agent SDK](../../../sdk/agent_sdk/README.md) — Building agent bundles that use Code Sandbox
+- [Agent SDK](../../../sdk/agent_sdk/README.md): building the agent bundles that call the Code Sandbox
+- [MCP Gateway tools](../mcp-gateway/tools.md#code-sandbox-adapter): the `sandbox_execute_code` MCP tool

@@ -1,150 +1,95 @@
 # Code Sandbox — Operations
 
-Deployment, scaling, security configuration, and troubleshooting for the Code Sandbox.
+Enabling the Code Sandbox for your app, making databases available to executed code, limits to design around, and caller-side troubleshooting.
 
-## Deployment
+## Enabling the Code Sandbox
 
-### Docker
-
-```bash
-# Build image locally
-docker build -t code-sandbox:local .
-
-# Run with environment file
-docker run -p 3000:3000 --env-file .env code-sandbox:local
-```
-
-The Docker image uses Node.js 23 and includes:
-- ODBC drivers for supported databases
-- Chromium (for any future puppeteer support)
-- PM2 for process management
-
-### Kubernetes
-
-The service is stateless and runs behind a standard Kubernetes deployment:
+The Code Sandbox is a component of the `firefoundry-core` Helm chart. Turn it on in your environment's values:
 
 ```yaml
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 3000
-  initialDelaySeconds: 10
-  periodSeconds: 15
-
-readinessProbe:
-  httpGet:
-    path: /health
-    port: 3000
-  initialDelaySeconds: 15
-  periodSeconds: 10
+code-sandbox:
+  enabled: true
 ```
 
-### Resource Recommendations
+Once enabled, bundles in the cluster reach it at `http://firefoundry-core-code-sandbox:3000`. It is not exposed outside the cluster by default.
+
+### API key
+
+If your environment administrator sets an API key for the sandbox, callers must send it in the `x-api-key` header. Get the value from your administrator and give it to your bundle as a secret (for example an environment variable such as `SANDBOX_API_KEY`). Never put it in prompts or generated code.
+
+## Making Databases Available
+
+Each database that executed code can use is configured once for the environment, under a **name**. Requests refer to the database by that name, and the code sees it as `dbs.<name>`.
+
+For most database types, the connection string goes in the sandbox's secret values as `<NAME>_CONNECTION_STRING`:
 
 ```yaml
-resources:
-  requests:
-    cpu: "1"
-    memory: "2Gi"
-  limits:
-    cpu: "2"
-    memory: "4Gi"
+code-sandbox:
+  secret:
+    data:
+      ANALYTICS_CONNECTION_STRING: "postgresql://readonly_user:<password>@db-host:5432/analytics?ssl=true"
 ```
 
-TypeScript compilation and data processing can be memory-intensive. Monitor actual usage and adjust accordingly.
+With that setting, a request can include `{ "name": "analytics", "type": "postgres" }`.
 
-## Execution Mode Selection
+Recommendations:
 
-| Mode | Setting | Pros | Cons |
-|------|---------|------|------|
-| Direct | `USE_WORKER_THREADS=false` | Lower latency, simpler | Less isolation between requests |
-| Worker Threads | `USE_WORKER_THREADS=true` | Better isolation | Higher overhead per execution |
+- **Use a dedicated, least-privilege database user.** Generated code can run any SQL that user is allowed to run. For analytics, use a read-only user limited to the schemas the app needs.
+- **Keep connection strings in secrets**, for example through your environment's secret management, not in plain values files checked into source control.
+- **Name databases for what they mean to the app** (`analytics`, `warehouse`), and use the same names in your prompts so the LLM writes `dbs.analytics` correctly.
 
-**Production recommendation**: Direct execution with horizontal scaling via Kubernetes. Scale the number of replicas rather than worker threads within a single container.
+### Databricks
 
-**High-isolation needs**: Worker threads mode with `NUM_WORKERS` set to match expected concurrency.
+Databricks connections use these settings, also under `code-sandbox.secret.data`, instead of a connection string:
 
-## Scaling Strategy
+| Setting | Purpose |
+|---------|---------|
+| `DATABRICKS_HOST` | Databricks workspace hostname |
+| `DATABRICKS_HTTP_PATH` | SQL warehouse HTTP path |
+| `DATABRICKS_CLIENT_ID` | Azure AD app (service principal) client ID |
+| `DATABRICKS_CLIENT_SECRET` | Azure AD app secret |
+| `DATABRICKS_TENANT_ID` | Azure tenant ID |
+| `DATABRICKS_CATALOG` | Default catalog |
+| `DATABRICKS_PORT` | Port (typically 443) |
+| `DATABRICKS_DRIVER` | ODBC driver name |
 
-- Scale based on HTTP request concurrency
-- Each container handles requests sequentially (direct mode) or via worker pool
-- No shared state between containers — stateless design
-- Use Kubernetes HPA with CPU or request-count metrics
+If you don't manage your environment's values yourself, ask your environment administrator to add the database for you.
 
-## Security Configuration
+## Verifying Access from a Bundle
 
-### API Key Management
+1. From inside the cluster (or through a port-forward), `GET /health` should return `OK`.
+2. Run a trivial `finance` request with no databases (see [Getting Started](./getting-started.md#step-2-run-simple-code)). This confirms the API key and the harness.
+3. Run a `SELECT 1` against each configured database name. This confirms the connection settings and network access to the database.
 
-- Set `API_KEY` environment variable for production
-- Omit `API_KEY` to disable authentication in development
-- Rotate keys regularly via environment variable updates
+## Limits and Behavior to Design Around
 
-### Network Security
-
-- Restrict egress to known database endpoints and Azure services
-- Use Kubernetes NetworkPolicy to limit pod-to-pod communication
-- The sandbox does not need internet access for code execution
-
-### Database Credential Security
-
-Database connection strings should be stored in Azure KeyVault or Kubernetes secrets, not hardcoded:
-
-```yaml
-# Kubernetes secret reference
-env:
-  - name: ANALYTICS_CONNECTION_STRING
-    valueFrom:
-      secretKeyRef:
-        name: sandbox-db-secrets
-        key: analytics-connection-string
-```
-
-## Monitoring
-
-### Key Metrics
-
-| Metric | What to Watch |
-|--------|---------------|
-| Compilation time | Increases may indicate complex code or resource pressure |
-| Execution time | Set timeout alerts for runaway code |
-| Error rate | Compilation failures vs. runtime errors |
-| Memory usage | TypeScript compilation is memory-intensive |
-| ODBC connection pool | Connection exhaustion causes timeouts |
-
-### Application Insights
-
-Set `APPLICATIONINSIGHTS_CONNECTION_STRING` to enable Azure Application Insights telemetry. This captures:
-- Request traces with correlation IDs
-- Dependency calls (database queries)
-- Exception logging
-- Performance metrics
+- **Stateless requests**: nothing persists between requests. Send all inputs with each request.
+- **Execution time**: runs are bounded by a timeout. Keep queries selective and split large analyses into several smaller runs.
+- **Memory**: compilation and data processing run in memory. Aggregate in SQL and use `LIMIT` rather than pulling whole tables into the sandbox.
+- **Libraries**: only the [bundled libraries](./concepts.md#available-libraries) are available. Imports of anything else fail at compile time.
+- **Rate limiting**: the sandbox rate-limits callers. Back off and retry when a request is rejected for rate.
+- **No automatic idempotency**: a retried request runs the code again (see [Concepts](./concepts.md#retries-and-idempotency)).
 
 ## Troubleshooting
 
-### Common Issues
+**Compilation errors**
+- Check that the code exports the harness entry point: `analyze` for `finance`, `run` for `sql`.
+- Check TypeScript syntax. Compilation is strict.
+- Check for imports of libraries the sandbox doesn't include.
+- In a generate-and-run loop, send the `errors` array back to the bot that wrote the code.
 
-**Compilation errors:**
-- Check that the code exports the required function for the harness (`analyze` for finance, `run` for sql)
-- Verify TypeScript syntax — the sandbox uses strict compilation
-- Check for missing library imports (only bundled libraries are available)
+**`dbs.<name>` is undefined, or a database connection fails**
+- The request's `databases` array must include that name, and the name must be configured for the environment.
+- For connection-string databases, check the `<NAME>_CONNECTION_STRING` value with your environment administrator.
+- Confirm the database accepts connections from the cluster.
+- For Databricks, check the client ID, secret, and tenant ID.
 
-**Database connection failures:**
-- Verify connection string environment variables are set and correctly named
-- Check ODBC driver availability in the container
-- Ensure network connectivity from the sandbox pod to the database
-- For Databricks: verify client credentials and tenant ID
+**Authentication failures**
+- Send `x-api-key` with the value your environment configures, and check that your bundle's secret matches it.
 
-**Timeout errors:**
-- Default execution timeout is configurable — check if the workload needs more time
-- Long-running queries should be optimized at the database level
-- Consider breaking large analyses into smaller code executions
+**Timeouts**
+- Make the queries more selective, or break the work into smaller runs.
+- Use streaming to see whether the time is going to compilation or execution.
 
-**Worker thread failures:**
-- Check `NUM_WORKERS` does not exceed available CPU cores
-- Monitor container memory — each worker consumes additional memory
-- Fall back to direct mode if worker threads are unstable
-
-**Out of memory:**
-- Increase container memory limits
-- Reduce data volume in queries (use LIMIT clauses)
-- Process data in batches rather than loading everything into memory
+**Out of memory**
+- Reduce the data volume the code loads. Aggregate in SQL and process in batches.

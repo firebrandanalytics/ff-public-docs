@@ -1,33 +1,36 @@
 # Web Search — Getting Started
 
-This guide walks you through executing search queries, using structured queries, and integrating search into agent workflows.
+This guide takes you from a first search to structured queries, pagination, and calling the service from an agent bundle.
 
 ## Prerequisites
 
-- A running Web Search Service instance
-- Bing Web Search API key (see [Operations](./operations.md) for setup)
-- PostgreSQL with the `websearch` schema migrated
+- The Web Search Service enabled in your FireFoundry environment, with a search provider key configured (see [Operations](./operations.md#enabling-the-web-search-service))
 
-## Step 1: Verify the Service is Running
+Inside the cluster, the service is reachable at `http://firefoundry-core-websearch-service:8080`. To try it from your workstation, port-forward it:
 
 ```bash
-# Health check
-curl http://localhost:8080/health
-# Expected: healthy response
+kubectl port-forward svc/firefoundry-core-websearch-service -n <namespace> 8080:8080
+```
 
-# Readiness check (verifies Bing API and database connectivity)
+The `curl` examples below use `http://localhost:8080`.
+
+## Step 1: Check That the Service Is Ready
+
+```bash
 curl http://localhost:8080/ready
 ```
 
-## Step 2: Simple Search
+A ready response means the service can reach its search provider and its database. If it is not ready, see [Troubleshooting](./operations.md#troubleshooting).
 
-### GET Request
+## Step 2: Run a Simple Search
+
+### GET
 
 ```bash
 curl "http://localhost:8080/v1/search?q=kubernetes+best+practices&limit=5"
 ```
 
-### POST Request
+### POST
 
 ```bash
 curl -X POST http://localhost:8080/v1/search \
@@ -35,7 +38,7 @@ curl -X POST http://localhost:8080/v1/search \
   -d '{"query": "typescript best practices", "limit": 10}'
 ```
 
-Response:
+Response (abridged):
 
 ```json
 {
@@ -50,7 +53,6 @@ Response:
   ],
   "meta": {
     "processingTimeMs": 150,
-    "provider": "bing",
     "totalResults": 1000000
   },
   "pagination": {
@@ -61,9 +63,9 @@ Response:
 }
 ```
 
-## Step 3: Structured Queries
+## Step 3: Use a Structured Query
 
-Build complex searches with domain filtering, exact phrases, and exclusions:
+Restrict domains, require phrases, and filter by file type:
 
 ```bash
 curl -X POST http://localhost:8080/v1/search \
@@ -84,75 +86,66 @@ curl -X POST http://localhost:8080/v1/search \
 
 ## Step 4: Filter by Freshness
 
-Limit results to recent content:
-
 ```bash
-# Results from the past day
 curl "http://localhost:8080/v1/search?q=latest+ai+news&freshness=day"
-
-# Results from the past week
 curl "http://localhost:8080/v1/search?q=kubernetes+release&freshness=week"
-
-# Results from the past month
 curl "http://localhost:8080/v1/search?q=typescript+updates&freshness=month"
 ```
 
-## Step 5: Pagination
-
-Retrieve more results by adjusting `offset`:
+## Step 5: Paginate
 
 ```bash
-# First page
 curl "http://localhost:8080/v1/search?q=react+hooks&limit=10&offset=0"
-
-# Second page
 curl "http://localhost:8080/v1/search?q=react+hooks&limit=10&offset=10"
-
-# Third page
-curl "http://localhost:8080/v1/search?q=react+hooks&limit=10&offset=20"
 ```
 
-Check `pagination.hasMore` in the response to know if more results are available.
+Keep paging while `pagination.hasMore` is `true`, up to whatever budget your app sets.
 
-## Step 6: Request Tracing
-
-Include a request ID for end-to-end tracing:
+## Step 6: Add a Request ID
 
 ```bash
 curl -H "X-Request-ID: agent-research-task-123" \
   "http://localhost:8080/v1/search?q=kubernetes+networking"
 ```
 
-The request ID appears in response metadata and database logs.
+The ID comes back in `meta.requestId`.
 
-## Step 7: Integration with Agent Bundles
+## Calling the Service from an Agent Bundle
 
-### Basic Search Integration
+### With the client library
+
+`@firebrandanalytics/web-search-client` wraps search and page fetching:
 
 ```typescript
-async function searchAndSummarize(query: string): Promise<string> {
-  const response = await fetch('http://websearch-service:8080/v1/search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, limit: 5 })
-  });
+import { WebSearchClient } from '@firebrandanalytics/web-search-client';
 
-  const data = await response.json();
+const client = WebSearchClient.create({
+  baseUrl: 'http://firefoundry-core-websearch-service:8080',
+});
 
-  if (!data.success) {
-    throw new Error(`Search failed: ${data.error.message}`);
-  }
+// Search
+const search = await client.search('kubernetes networking', {
+  limit: 5,
+  freshness: 'month',
+});
 
-  return data.results
-    .map(r => `${r.title}: ${r.snippet}`)
-    .join('\n\n');
-}
+// Read the top results as Markdown for a prompt
+const pages = await client.fetchBatch(
+  search.results.slice(0, 3).map(r => r.url),
+  { contentMode: 'markdown', concurrency: 3 }
+);
+
+const context = pages.results
+  .map(p => `Source: ${p.url}\n\n${p.content}`)
+  .join('\n\n---\n\n');
 ```
 
-### Structured Research Query
+### With plain HTTP
+
+Structured queries go in the `POST /v1/search` body:
 
 ```typescript
-const response = await fetch('http://websearch-service:8080/v1/search', {
+const response = await fetch('http://firefoundry-core-websearch-service:8080/v1/search', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -169,10 +162,20 @@ const response = await fetch('http://websearch-service:8080/v1/search', {
     freshness: 'month'
   })
 });
+
+const data = await response.json();
+if (!data.success) {
+  throw new Error(`Search failed: ${data.error.code} ${data.error.message}`);
+}
+const summary = data.results.map(r => `${r.title}: ${r.snippet}`).join('\n\n');
 ```
+
+### From MCP-capable agents
+
+Agents that use the [MCP Gateway](../mcp-gateway/README.md) get `websearch_search`, `websearch_fetch`, and `websearch_fetch_batch` as tools. See [MCP Gateway tools](../mcp-gateway/tools.md#web-search-adapter).
 
 ## Next Steps
 
-- Read [Concepts](./concepts.md) for query types, provider abstraction, and the response model
-- See [Reference](./reference.md) for the complete API specification
-- See [Operations](./operations.md) for deployment and Bing API setup
+- [Concepts](./concepts.md): query types, the response model, and design patterns
+- [Reference](./reference.md): the full API specification
+- [Operations](./operations.md): enabling the service and troubleshooting

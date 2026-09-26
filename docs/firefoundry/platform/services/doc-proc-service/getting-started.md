@@ -1,38 +1,42 @@
 # Document Processing — Getting Started
 
-This guide walks you through extracting text from documents, generating PDFs, and performing document transformations.
+This guide walks through extracting text, handling scanned documents, generating PDFs, and transforming PDFs.
 
 ## Prerequisites
 
-- A running Document Processing Service instance
-- PostgreSQL with the `document_processing` schema migrated
-- (Optional) Azure Document Intelligence API key for OCR features
-- (Optional) Chromium installed for HTML-to-PDF generation
+- The Document Processing Service enabled in your FireFoundry environment (see [Operations](./operations.md#enabling-the-service))
+- Optional: Azure Document Intelligence configured, for the OCR steps (the fallback in Step 3, and Step 8)
+- Optional: the [Python worker](../doc-proc-pyworker/README.md) enabled, for Step 9
 
-## Step 1: Verify the Service is Running
+Inside the cluster, the service is reachable at `http://firefoundry-core-doc-proc-service:8081`. To try it from your workstation, port-forward it:
 
 ```bash
-# Health check
-curl http://localhost:8080/health
-# Expected: {"status":"ok"}
+kubectl port-forward svc/firefoundry-core-doc-proc-service -n <namespace> 8081:8081
+```
 
-# Readiness check (verifies database and Azure connectivity)
-curl http://localhost:8080/ready
+The examples below use `http://localhost:8081`.
+
+## Step 1: Check That the Service Is Ready
+
+```bash
+curl http://localhost:8081/health
+# Expected: {"status":"healthy", ...}
+
+curl http://localhost:8081/ready
+# Expected: {"ready":true,"services":{...}}
 ```
 
 ## Step 2: Extract Text from a PDF
 
 ```bash
-curl -X POST http://localhost:8080/api/extract-text \
+curl -X POST http://localhost:8081/api/extract-text \
   -F "file=@document.pdf"
 ```
 
-Response: Plain text content of the PDF.
-
-For structured output with metadata:
+The response is the document's plain text. For the JSON envelope with metadata:
 
 ```bash
-curl -X POST http://localhost:8080/api/extract-text \
+curl -X POST http://localhost:8081/api/extract-text \
   -F "file=@document.pdf" \
   -H "Accept: application/json"
 ```
@@ -41,7 +45,7 @@ curl -X POST http://localhost:8080/api/extract-text \
 {
   "success": true,
   "data": "Extracted text content...",
-  "format": "text",
+  "format": "text/plain",
   "metadata": {
     "backend_used": "pdf-parse",
     "processing_time_ms": 120,
@@ -50,44 +54,44 @@ curl -X POST http://localhost:8080/api/extract-text \
 }
 ```
 
-## Step 3: Intelligent Extraction with OCR Fallback
-
-The `/api/extract-general` endpoint automatically detects low-quality PDFs and falls back to OCR:
+## Step 3: Extract Text When You Don't Know If the PDF Is Scanned
 
 ```bash
-curl -X POST http://localhost:8080/api/extract-general \
-  -F "file=@scanned-document.pdf" \
+curl -X POST http://localhost:8081/api/extract-general \
+  -F "file=@maybe-scanned.pdf" \
   -H "Accept: application/json"
 ```
 
-If the PDF appears to be a scan (few characters per page), the service transparently uses Azure Document Intelligence for OCR.
+If the PDF looks like a scan, the service uses OCR automatically (when OCR is configured). Check `metadata.extraction_method` to see which path ran. The same endpoint also accepts DOCX, Excel, CSV, text, and image files.
 
-## Step 4: Extract Structured Data
+## Step 4: Extract Structured Data and Metadata
 
-Get page-by-page extraction with metadata:
+Page-by-page content from a PDF, or sheets and slides from Excel and PowerPoint:
 
 ```bash
-curl -X POST http://localhost:8080/api/extract-structured \
-  -F "file=@report.pdf" \
-  -H "Accept: application/json"
+curl -X POST http://localhost:8081/api/extract-structured \
+  -F "file=@report.pdf"
+
+curl -X POST http://localhost:8081/api/extract-structured \
+  -F "file=@deck.pptx" -F "includeImages=false"
 ```
 
-Get document metadata (title, author, dates, page count):
+Document properties (title, author, dates, page count):
 
 ```bash
-curl -X POST http://localhost:8080/api/extract-metadata \
+curl -X POST http://localhost:8081/api/extract-metadata \
   -F "file=@report.pdf"
 ```
 
 ## Step 5: Convert Excel to CSV
 
 ```bash
-# Convert the first sheet
-curl -X POST http://localhost:8080/api/extract-sheet-to-csv \
+# First sheet
+curl -X POST http://localhost:8081/api/extract-sheet-to-csv \
   -F "file=@spreadsheet.xlsx"
 
-# Convert a specific sheet with custom formatting
-curl -X POST http://localhost:8080/api/extract-sheet-to-csv \
+# A specific sheet with a custom separator
+curl -X POST http://localhost:8081/api/extract-sheet-to-csv \
   -F "file=@spreadsheet.xlsx" \
   -F "sheet=Summary" \
   -F "separator=;" \
@@ -97,7 +101,7 @@ curl -X POST http://localhost:8080/api/extract-sheet-to-csv \
 ## Step 6: Generate a PDF from HTML
 
 ```bash
-curl -X POST http://localhost:8080/api/html-to-pdf \
+curl -X POST http://localhost:8081/api/html-to-pdf \
   -F "file=@report.html" \
   -F "format=Letter" \
   -F "landscape=true" \
@@ -106,65 +110,94 @@ curl -X POST http://localhost:8080/api/html-to-pdf \
   --output report.pdf
 ```
 
-## Step 7: Manipulate PDFs
+Make the HTML self-contained, with inline CSS and embedded images.
 
-### Extract Specific Pages
+To fill a designed template instead, use `create-excel` or `create-docx`:
 
 ```bash
-curl -X POST http://localhost:8080/api/extract-pages \
-  -F "file=@document.pdf" \
-  -F "pages=1,3,5-10" \
-  --output extracted.pdf
+curl -X POST http://localhost:8081/api/create-excel \
+  -F "file=@invoice-template.xlsx" \
+  -F "mode=cells" \
+  -F 'data={"Invoice": {"B2": "ACME Corp", "B3": "2026-09-26", "E20": 1250.00}}' \
+  --output invoice.xlsx
 ```
 
-### Split a PDF into Chunks
+## Step 7: Transform PDFs
 
 ```bash
-curl -X POST http://localhost:8080/api/split-pdf \
-  -F "file=@document.pdf" \
-  -F "chunkSize=5"
+# Extract specific pages
+curl -X POST http://localhost:8081/api/extract-pages \
+  -F "file=@document.pdf" -F "pages=1,3,5-10" --output extracted.pdf
+
+# Split into 5-page chunks (JSON with base64-encoded PDF chunks)
+curl -X POST http://localhost:8081/api/split-pdf \
+  -F "file=@document.pdf" -F "chunkSize=5"
+
+# Wrap a photo or scan in a Letter-size PDF
+curl -X POST http://localhost:8081/api/image-to-pdf \
+  -F "file=@receipt.jpg" -F "pageSize=Letter" --output receipt.pdf
 ```
 
-### Merge Multiple PDFs
+## Step 8: OCR and Layout Analysis
+
+These calls require Azure Document Intelligence to be configured in your environment.
 
 ```bash
-curl -X POST http://localhost:8080/api/merge-documents \
-  -F "files=@part1.pdf" \
-  -F "files=@part2.pdf" \
-  -F "files=@part3.pdf" \
-  --output merged.pdf
-```
-
-### Compress a PDF
-
-```bash
-curl -X POST http://localhost:8080/api/compress-pdf \
-  -F "file=@large-document.pdf" \
-  --output compressed.pdf
-```
-
-## Step 8: Azure Document Intelligence (OCR)
-
-For scanned documents and images, use the Azure-powered endpoints:
-
-```bash
-# Full document analysis with layout
-curl -X POST http://localhost:8080/api/analyze-document \
+# Full layout analysis with confidence scores
+curl -X POST http://localhost:8081/api/analyze-document \
   -F "file=@scanned-invoice.pdf" \
   -F "output_format=json" \
   -F "include_confidence=true"
 
-# OCR text extraction with confidence scores
-curl -X POST http://localhost:8080/api/extract-text-ocr \
+# OCR text
+curl -X POST http://localhost:8081/api/extract-text-ocr \
   -F "file=@scan.png"
 
-# Table extraction
-curl -X POST http://localhost:8080/api/extract-tables \
-  -F "file=@spreadsheet-scan.pdf"
+# Tables
+curl -X POST http://localhost:8081/api/extract-tables \
+  -F "file=@statement-scan.pdf"
 ```
+
+If the Python worker is enabled in your environment, `extract-tables` runs on the worker instead of Azure (see [Reference](./reference.md#post-apiextract-tables)).
+
+## Step 9: Page Images and Local OCR (Python Worker)
+
+These calls require the [Python worker](../doc-proc-pyworker/README.md). Local OCR also needs the extended worker image.
+
+```bash
+# Render pages 1-3 as PNG at 150 DPI
+curl -X POST http://localhost:8081/api/pdf-to-images \
+  -F "file=@document.pdf" -F "pages=1-3" -F "dpi=150"
+
+# OCR inside your environment
+curl -X POST http://localhost:8081/api/ocr-local \
+  -F "file=@scan.pdf" -F "language=eng"
+```
+
+## Calling the Service from an Agent Bundle
+
+From a bundle, call the in-cluster URL with a multipart upload and ask for the JSON envelope:
+
+```typescript
+const form = new FormData();
+form.append('file', new Blob([pdfBuffer], { type: 'application/pdf' }), 'document.pdf');
+
+const response = await fetch(
+  'http://firefoundry-core-doc-proc-service:8081/api/extract-general',
+  { method: 'POST', body: form, headers: { Accept: 'application/json' } }
+);
+const result = await response.json();
+if (!result.success) {
+  throw new Error(`Extraction failed: ${result.error}`);
+}
+const text: string = result.data;
+```
+
+A TypeScript client package, `@firebrandanalytics/doc-proc-client`, is also available. Agents that use the [MCP Gateway](../mcp-gateway/README.md) can call the `docproc_*` tools instead. See [MCP Gateway tools](../mcp-gateway/tools.md#document-processing-adapter).
 
 ## Next Steps
 
-- Read [Concepts](./concepts.md) for the processing pipeline, caching, and quality detection
-- See [Reference](./reference.md) for the complete API specification
-- See [Operations](./operations.md) for deployment and Azure configuration
+- [Concepts](./concepts.md): choosing operations, OCR fallback, caching, and design patterns
+- [Reference](./reference.md): all endpoints and parameters
+- [Operations](./operations.md): enabling optional backends, limits, and troubleshooting
+- [Python Worker](../doc-proc-pyworker/README.md): page images, local OCR, and image operations

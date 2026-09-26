@@ -2,59 +2,59 @@
 
 ## Overview
 
-The Web Search Service is a FireFoundry microservice that provides a provider-agnostic web search API for AI agents. It currently integrates with Microsoft Bing Web Search API v7, with an architecture designed to support additional providers (Tavily, Brave, Google) in future releases.
+The Web Search Service gives your agent bundles one web search API that does not depend on a particular provider. Your bundle sends a query and gets back a consistent list of results (title, URL, snippet, date), with pagination, spelling corrections, and related searches. The service can also fetch pages and extract their content, so an agent can read the pages it finds. The current search provider is the Brave Search API.
 
 ## Purpose and Role in Platform
 
-The Web Search Service enables FireFoundry agents to:
-- **Search the Web**: Execute queries and retrieve relevant results in real-time
-- **Access Current Information**: Supplement agent knowledge with up-to-date web data
-- **Augment Context**: Provide search results for RAG (Retrieval-Augmented Generation) patterns
-- **Structured Queries**: Build complex searches with exact phrases, domain filtering, and exclusions
-- **Research Workflows**: Support multi-step research with pagination and related searches
+Use the Web Search Service when your app needs current information from the web and you want to control the research loop yourself:
+
+- **Grounding answers**: search, then put the top snippets or fetched page text into a prompt, with URLs for citations.
+- **Targeted research**: restrict to specific domains or file types, require exact phrases, and exclude noise.
+- **Freshness-sensitive features**: news digests, release tracking, and monitoring, using the `freshness` filter.
+- **Tool use**: expose search and fetch as tools that an agent calls when it decides it needs them.
+
+If you just want a researched, cited answer to a question and don't need to control each search, use the [Web Search Agent](../../system-agents/web-search.md) instead. It runs the whole search, evaluate, and refine loop for you.
 
 ## Key Features
 
-- **Unified Search API**: Provider-agnostic endpoints supporting both GET and POST methods
-- **Structured Queries**: JSON-based query format for complex searches (AND/OR terms, site filters, file types)
-- **Bing Integration**: Microsoft Bing Web Search API v7 as the initial provider
-- **Spelling Corrections**: Automatic query correction with original and corrected query in response
-- **Related Searches**: Suggestions for related queries to expand research
-- **Request Logging**: All searches logged to PostgreSQL for analytics and debugging
-- **Fire-and-Forget Logging**: Database writes don't block search responses
+- **Simple and structured queries**: a plain query string, or a JSON query with AND/OR terms, exact phrases, exclusions, site filters, and file types
+- **Consistent response shape**: the same result, pagination, and metadata fields regardless of provider
+- **Filters**: freshness (`day`, `week`, `month`), SafeSearch level, and market/locale
+- **Pagination**: `limit`/`offset` with a `hasMore` flag
+- **Spelling corrections and related searches** when the provider returns them
+- **Page fetching**: fetch one URL or up to 20 at once as Markdown, text, HTML, or raw content, with optional JavaScript rendering and screenshots
+- **Request tracing**: send `X-Request-ID` to correlate searches with your own workflow
 
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                 REST API Layer                       │
-│              RouteManager (/v1/search)               │
-│         GET (simple query) | POST (structured)       │
-└───────────────────┬─────────────────────────────────┘
-                    │
-┌───────────────────▼─────────────────────────────────┐
-│              Search Provider                         │
-│          SearchProviderInterface                     │
-│   BingSearchProvider | (Future: Tavily, Brave...)    │
-└───────────────────┬─────────────────────────────────┘
-                    │
-┌───────────────────▼─────────────────────────────────┐
-│            Search Log Repository                     │
-│          (Fire-and-Forget to PostgreSQL)              │
-│              websearch.search_logs                    │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  Your agent bundle / application             │
+└──────────────────┬───────────────────────────┘
+                   │  REST (/v1/search) or client library,
+                   │  or websearch_* tools via MCP Gateway
+┌──────────────────▼───────────────────────────┐
+│             Web Search Service               │
+│  query building, normalized results,         │
+│  page fetching, request logging              │
+└──────────────────┬───────────────────────────┘
+                   │  outbound HTTPS
+┌──────────────────▼───────────────────────────┐
+│  Search provider (Brave Search API)          │
+│  and the web pages being fetched             │
+└──────────────────────────────────────────────┘
 ```
 
 ## Documentation
 
-- **[Concepts](./concepts.md)** — Query types, provider abstraction, structured queries, response model
-- **[Getting Started](./getting-started.md)** — First search request, structured queries, pagination
-- **[Reference](./reference.md)** — API endpoints, request/response schemas, error codes, configuration
-- **[Operations](./operations.md)** — Deployment, Bing API setup, monitoring, troubleshooting
+- **[Concepts](./concepts.md)**: query types, the response model, and app design patterns
+- **[Getting Started](./getting-started.md)**: first search, structured queries, pagination, and calling from a bundle
+- **[Reference](./reference.md)**: endpoints, request and response schemas, and error codes
+- **[Operations](./operations.md)**: enabling the service, settings, limits, and troubleshooting
 
 ## Version
 
-- **Current Version**: 0.1.0
+- **Current Version**: 0.2.4
 
 ## Repository
 
@@ -63,5 +63,7 @@ Source code: [ff-services-websearch](https://github.com/firebrandanalytics/ff-se
 ## Related
 
 - [Platform Services Overview](../README.md)
-- [Context Service](../context-service/README.md) — Store search results in working memory
-- [FF Broker](../ff-broker/README.md) — AI model routing for processing search results
+- [Web Search Agent](../../system-agents/web-search.md): iterative, LLM-driven research with a cited summary
+- [MCP Gateway tools](../mcp-gateway/tools.md#web-search-adapter): `websearch_search`, `websearch_fetch`, `websearch_fetch_batch`
+- [Context Service](../context-service/README.md): store search results in working memory
+- [FF Broker](../ff-broker/README.md): AI model routing for processing search results

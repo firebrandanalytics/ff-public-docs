@@ -1,33 +1,35 @@
 # Web Search — Reference
 
-Complete API reference for the Web Search Service, including endpoints, request/response schemas, error codes, and configuration variables.
+The Web Search Service API contract: endpoints, request and response schemas, page-fetching options, and error codes.
+
+In-cluster base URL: `http://firefoundry-core-websearch-service:8080`.
 
 ## Search Endpoints
 
 ### GET /v1/search
 
-Simple string query via URL parameters.
-
-**Query Parameters:**
+Simple string query in URL parameters.
 
 | Parameter | Type | Default | Required | Description |
 |-----------|------|---------|----------|-------------|
 | `q` | string | | Yes | Search query (1–500 characters) |
-| `limit` | number | `10` | No | Results per page (1–50) |
+| `limit` | number | `10`* | No | Results per page (1–50) |
 | `offset` | number | `0` | No | Pagination offset |
-| `safeSearch` | string | `moderate` | No | `off`, `moderate`, `strict` |
-| `market` | string | | No | Locale (e.g., `en-US`, `de-DE`) |
+| `safeSearch` | string | `moderate`* | No | `off`, `moderate`, `strict` |
+| `market` | string | | No | Locale (e.g. `en-US`, `de-DE`) |
 | `freshness` | string | | No | `day`, `week`, `month` |
 
+\*Environment default; see [Operations](./operations.md#settings-you-may-change).
+
 ```bash
-curl "http://localhost:8080/v1/search?q=kubernetes+best+practices&limit=10"
+curl "http://firefoundry-core-websearch-service:8080/v1/search?q=kubernetes+best+practices&limit=10"
 ```
 
 ### POST /v1/search
 
-Simple or structured query via JSON body.
+Simple or structured query in a JSON body. Send `Content-Type: application/json`.
 
-**Simple Query:**
+**Simple query:**
 
 ```json
 {
@@ -40,7 +42,7 @@ Simple or structured query via JSON body.
 }
 ```
 
-**Structured Query:**
+**Structured query** (use `structuredQuery` instead of `query`):
 
 ```json
 {
@@ -65,7 +67,9 @@ Simple or structured query via JSON body.
 }
 ```
 
-## Response Schema
+See [Concepts](./concepts.md#structured-queries) for what each structured field does.
+
+## Search Response
 
 ### Success (200)
 
@@ -87,7 +91,7 @@ Simple or structured query via JSON body.
     "requestId": "uuid",
     "processingTimeMs": 150,
     "timestamp": "2026-01-14T12:00:00.000Z",
-    "provider": "bing",
+    "provider": "<provider name>",
     "totalResults": 1000000
   },
   "pagination": {
@@ -105,7 +109,9 @@ Simple or structured query via JSON body.
 }
 ```
 
-### Error Response
+`spellingCorrection` and `relatedSearches` are present only when the provider returns them.
+
+### Error
 
 ```json
 {
@@ -121,52 +127,60 @@ Simple or structured query via JSON body.
 }
 ```
 
-## Error Codes
+### Error codes
 
-| Code | HTTP Status | Description |
-|------|-------------|-------------|
-| `VALIDATION_ERROR` | 400 | Invalid request parameters |
-| `BING_ERROR` | 502 | Bing API returned an error |
-| `FETCH_ERROR` | 502 | Network error calling Bing API |
-| `TIMEOUT` | 504 | Bing API request timed out |
-| `RATE_LIMITED` | 429 | Too many requests |
-| `INTERNAL_ERROR` | 500 | Unexpected server error |
+| Code | HTTP Status | Meaning for the caller | Retry? |
+|------|-------------|------------------------|--------|
+| `VALIDATION_ERROR` | 400 | Invalid parameters; see `details` | No; fix the request |
+| `RATE_LIMITED` | 429 | Too many requests | Yes, with backoff |
+| provider error code | 502 | The search provider returned an error | Yes, a limited number of times |
+| `FETCH_ERROR` | 502 | The service could not reach the search provider | Yes, a limited number of times |
+| `TIMEOUT` | 504 | The search provider did not respond in time | Yes, a limited number of times |
+| `INTERNAL_ERROR` | 500 | Unexpected server error | Once at most |
+
+## Page Fetching
+
+Page fetching is available through the client library (`fetch`, `fetchBatch`) and the MCP tools (`websearch_fetch`, `websearch_fetch_batch`).
+
+| Option (client / MCP) | Values | Description |
+|-----------------------|--------|-------------|
+| `contentMode` / `content_mode` | `markdown` (default), `text`, `html`, `raw` | How page content is extracted |
+| `renderMode` / `render_mode` | `static`, `dynamic` | `dynamic` renders JavaScript before extraction |
+| `timeoutMs` / `timeout_ms` | 1000–60000 | Per-fetch timeout in ms |
+| `extractMetadata` / `extract_metadata` | boolean | Include page metadata (single fetch) |
+| `includeScreenshot` / `include_screenshot` | boolean | Capture a screenshot; requires `dynamic` |
+| `viewport` | `{ width: 320–3840, height: 240–2160 }` | Viewport size for screenshots |
+| `concurrency` | 1–10 | Parallel fetches (batch only) |
+
+A batch accepts 1–20 URLs.
+
+Each fetch result includes `url`, `finalUrl` (after redirects), `statusCode`, `contentType`, `content`, `metadata`, `screenshot`, `fetchTimeMs`, and `contentLength`. A batch result also includes `errors` for URLs that failed, and `meta`.
+
+## Client Library
+
+`@firebrandanalytics/web-search-client`:
+
+| Method | Description |
+|--------|-------------|
+| `WebSearchClient.create({ baseUrl, apiKey? })` | Create a client |
+| `search(query, { limit, offset, safeSearch, market, freshness })` | Simple string search. Returns `{ results, pagination, meta, spellingCorrection, relatedSearches }`. |
+| `fetch(url, options)` | Fetch one page. Returns `{ result }` with the fields above. |
+| `fetchBatch(urls, options)` | Fetch up to 20 pages. Returns `{ results, errors, meta }`. |
+
+For structured queries, call `POST /v1/search` directly.
 
 ## System Endpoints
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `GET /` | GET | Service info and available endpoints |
-| `GET /health` | GET | Liveness probe (always healthy if running) |
-| `GET /ready` | GET | Readiness probe (checks Bing API and database) |
-| `GET /status` | GET | Service version, uptime, and environment |
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /` | Service info and available endpoints |
+| `GET /health` | Liveness: the service is running |
+| `GET /ready` | Readiness: the service can reach its search provider and database |
+| `GET /status` | Service version, uptime, and environment |
 
 ## Request Headers
 
 | Header | Purpose |
 |--------|---------|
-| `Content-Type` | Must be `application/json` for POST requests |
-| `X-Request-ID` | Optional request correlation ID for tracing |
-
-## Configuration Variables
-
-### Required
-
-| Variable | Purpose |
-|----------|---------|
-| `BING_API_KEY` | Bing Web Search API subscription key |
-| `PG_DATABASE` | Database name for request logging |
-
-Database connection variables (`PG_HOST`, `PG_PASSWORD`, etc.) are handled by `@firebrandanalytics/shared-utils` PostgresProvider.
-
-### Optional
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `BING_API_ENDPOINT` | `https://api.bing.microsoft.com/v7.0/search` | Bing API endpoint URL |
-| `BING_TIMEOUT_MS` | `5000` | Request timeout (ms) |
-| `SEARCH_DEFAULT_LIMIT` | `10` | Default results per page |
-| `SEARCH_DEFAULT_SAFE_SEARCH` | `moderate` | Default safe search level |
-| `PORT` | `8080` | Server port |
-| `NODE_ENV` | `development` | Environment |
-| `LOG_LEVEL` | `info` | Logging level |
+| `Content-Type` | `application/json` for POST requests |
+| `X-Request-ID` | Optional correlation ID, returned in `meta.requestId` |

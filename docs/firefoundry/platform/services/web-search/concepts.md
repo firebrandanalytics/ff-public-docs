@@ -1,24 +1,22 @@
 # Web Search — Concepts
 
-This page explains the core concepts underlying the Web Search Service: query types, provider abstraction, structured queries, and the response model.
+This page explains the query types, the response model, and the patterns for building apps on the Web Search Service.
 
 ## Query Types
 
-The service supports two query patterns:
+### Simple string queries
 
-### Simple String Queries
-
-A plain text search string, like what you would type into a search engine:
+A plain search string, like what you would type into a search engine:
 
 ```
 "kubernetes deployment best practices"
 ```
 
-Simple queries are sent via GET parameter or POST body and passed directly to the search provider.
+Send it as the `q` parameter on `GET /v1/search`, or as `query` in a `POST` body. This is the best fit when an LLM writes the query itself.
 
-### Structured Queries
+### Structured queries
 
-A JSON object that composes complex search logic:
+A JSON object that describes the search logically:
 
 ```json
 {
@@ -34,87 +32,63 @@ A JSON object that composes complex search logic:
 }
 ```
 
-Structured queries are compiled into provider-specific query syntax. This abstraction allows the same query structure to work across different search providers.
-
-### Structured Query Fields
+The service turns this into the provider's query syntax, so your code doesn't need to know search-operator syntax and doesn't change if the provider does. Structured queries work well when your app, rather than the LLM, owns part of the query. For example, your app can always restrict to an allow-list of trusted domains while the LLM supplies the terms.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `terms` | string[] | Required. Terms that must all appear (AND logic) |
-| `exactPhrases` | string[] | Exact phrase matches (wrapped in quotes) |
-| `anyOf` | string[] | Alternative terms (OR logic) |
-| `exclude` | string[] | Terms to exclude from results |
-| `sites.include` | string[] | Only include results from these domains |
-| `sites.exclude` | string[] | Exclude results from these domains |
-| `fileTypes` | string[] | Filter by file type (pdf, doc, xls, etc.) |
-| `inTitle` | string[] | Terms that must appear in page title* |
-| `inBody` | string[] | Terms that must appear in page body* |
-| `rawQuery` | string | Raw suffix for provider-specific operators |
+| `terms` | string[] | Required. Terms that must all appear (AND) |
+| `exactPhrases` | string[] | Exact phrase matches |
+| `anyOf` | string[] | Alternative terms (OR) |
+| `exclude` | string[] | Terms to exclude |
+| `sites.include` | string[] | Only return results from these domains |
+| `sites.exclude` | string[] | Never return results from these domains |
+| `fileTypes` | string[] | Filter by file type (`pdf`, `doc`, `xls`, ...) |
+| `inTitle` | string[] | Terms that must appear in the page title* |
+| `inBody` | string[] | Terms that must appear in the page body* |
+| `rawQuery` | string | Raw suffix appended for provider-specific operators |
 
-*Not all providers support `inTitle` and `inBody`. Bing degrades these to regular terms.
-
-## Provider Abstraction
-
-The service defines a `SearchProviderInterface` that any search provider must implement. This abstraction enables:
-
-- **Testing**: Mock providers for unit and integration tests
-- **Swappability**: Switch providers without changing client code
-- **Future expansion**: Add Tavily, Brave, Google, or Serper providers
-
-### Provider Capabilities Matrix
-
-| Feature | Bing | Google* | Brave* |
-|---------|------|---------|--------|
-| exactPhrases | Yes | Yes | Yes |
-| sites (include/exclude) | Yes | Yes | Yes |
-| fileTypes | Yes | Yes | Yes |
-| anyOf (OR) | Yes | Yes | Yes |
-| exclude | Yes | Yes | Yes |
-| inTitle | No | Yes | Yes |
-| inBody | No | Yes | Yes |
-
-*Future provider support planned.
+\*Support for `inTitle` and `inBody` depends on the provider. Where they are not supported, they may be treated as ordinary terms. Don't rely on them for strict filtering. `rawQuery` is provider-specific by definition, so avoid it if you want provider independence.
 
 ## Response Model
 
-Every search response follows a consistent structure:
+Every successful search returns the same shape.
 
-### Result Objects
-
-Each search result contains:
+### Results
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Result identifier (e.g., `result-0`) |
+| `id` | string | Result identifier within this response (e.g. `result-0`) |
 | `title` | string | Page title |
 | `url` | string | Full URL |
 | `displayUrl` | string | Shortened display URL |
 | `snippet` | string | Text excerpt from the page |
-| `datePublished` | string | Publication date (ISO 8601) |
-| `siteName` | string | Website name |
+| `datePublished` | string | Publication date (ISO 8601), when known |
+| `siteName` | string | Website name, when known |
+
+Treat `datePublished` and `siteName` as optional.
 
 ### Metadata
 
-Response metadata includes:
-
 | Field | Description |
 |-------|-------------|
-| `requestId` | Unique request identifier for tracing |
+| `requestId` | Request identifier; echoes `X-Request-ID` if you sent one |
 | `processingTimeMs` | Server-side processing time |
 | `timestamp` | Response timestamp |
-| `provider` | Which search provider was used |
-| `totalResults` | Estimated total matching results |
+| `provider` | Which search provider served the request |
+| `totalResults` | Provider's estimate of total matches |
 
 ### Pagination
 
 | Field | Description |
 |-------|-------------|
-| `offset` | Current offset in result set |
+| `offset` | Current offset |
 | `limit` | Results per page |
 | `total` | Estimated total results |
 | `hasMore` | Whether more results are available |
 
-### Spelling Corrections
+`total` and `totalResults` are estimates. Use `hasMore` to decide whether to fetch another page.
+
+### Spelling corrections and related searches
 
 If the provider detects a likely typo, the response includes:
 
@@ -128,30 +102,37 @@ If the provider detects a likely typo, the response includes:
 }
 ```
 
-### Related Searches
+Related query suggestions, when available, come back in `relatedSearches`. Both fields are optional.
 
-The provider may suggest related queries for expanding research:
+## Page Fetching
 
-```json
-{
-  "relatedSearches": ["typescript tutorial", "typescript vs javascript"]
-}
-```
+Search results only contain snippets. To read a page, fetch it through the service (with the client library or the MCP tools):
 
-## Request Logging
+- **Content modes**: `markdown` (default, the best choice for LLM prompts), `text`, `html`, or `raw`
+- **Render modes**: `static` for plain HTML, or `dynamic` to render JavaScript-heavy pages
+- **Screenshots**: optional, and require `dynamic` rendering
+- **Batch fetch**: up to 20 URLs in one call, with configurable concurrency. Per-URL failures are reported in `errors` without failing the whole batch.
 
-All search requests are logged to `websearch.search_logs` in PostgreSQL using a fire-and-forget pattern:
-
-- Logging is asynchronous — it does not block search responses
-- Logged data: request ID, query, parameters, provider, result count, response time, errors
-- Useful for analytics, debugging, and usage monitoring
+See [Reference](./reference.md#page-fetching) for the options.
 
 ## Request Tracing
 
-Include the `X-Request-ID` header to correlate search requests with upstream operations:
+Send `X-Request-ID` to correlate a search with your own workflow, for example your bundle's entity or request ID:
 
 ```bash
-curl -H "X-Request-ID: my-trace-id" "http://localhost:8080/v1/search?q=test"
+curl -H "X-Request-ID: my-trace-id" "http://firefoundry-core-websearch-service:8080/v1/search?q=test"
 ```
 
-The request ID appears in response metadata and logs, enabling end-to-end request tracing.
+The ID is returned in `meta.requestId` and recorded in the service's logs, which makes it easy to find a specific search when you debug.
+
+## App Design Patterns
+
+**Search, then read.** Search for candidates, pick the top few by snippet, fetch them as Markdown, and give the page text (not just snippets) to the LLM. Keep the URLs so the answer can cite its sources.
+
+**Let the app own the guardrails.** Have the LLM produce `terms` and `exactPhrases`, while your code adds `sites.include` / `sites.exclude`, `safeSearch`, and `freshness` from app policy. The model then can't widen the search beyond what you allow.
+
+**Budget searches per task.** Every search is an external call with latency and provider cost. Cap the number of searches and pages per user request, and cache results in working memory when the same research is likely to be reused.
+
+**Handle "no results" deliberately.** Overly specific structured queries often return nothing. Retry once with fewer constraints (drop `exactPhrases` or `sites.include`) before telling the user nothing was found.
+
+**Choose the right level.** For a single cited answer, the [Web Search Agent](../../system-agents/web-search.md) is less code. Use this service directly when you need custom ranking, domain policies, or search inside your own agent's reasoning loop.

@@ -1,37 +1,37 @@
 # Code Sandbox — Reference
 
-Complete API reference for the Code Sandbox, including endpoints, request/response schemas, supported databases, and configuration variables.
+The Code Sandbox API contract: endpoints, request and response shapes, harness exports, the database adapter, and errors.
 
 ## Endpoints
 
 ### POST /process
 
-Compile and execute code in a sandbox environment.
+Compile and run code.
 
-**Authentication**: Requires `x-api-key` header.
+**Authentication**: send the sandbox API key in the `x-api-key` header when your environment configures one.
 
-**Request Body**:
+**Request body**:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `code` | string | Yes* | TypeScript source code |
-| `codeWorkingMemoryId` | UUID | Yes* | Working memory reference (alternative to `code`) |
-| `runScript` | string | No | Separate runner script |
-| `language` | string | Yes | `typescript` (only supported value currently) |
-| `harness` | string | Yes | Execution harness: `finance`, `sql` |
-| `databases` | Database[] | No | Database requirements |
-| `useWorkerThreads` | boolean | No | Override execution mode (default: server setting) |
+| `codeWorkingMemoryId` | UUID | Yes* | Working memory document containing the code (alternative to `code`) |
+| `runScript` | string | No | Separate driver script that calls the harness entry point |
+| `language` | string | Yes | `typescript` |
+| `harness` | string | Yes | `finance` or `sql` |
+| `databases` | Database[] | No | Databases to open and inject as `dbs` |
+| `useWorkerThreads` | boolean | No | Run in an isolated worker thread for this request. Defaults to the environment setting. |
 
-*One of `code` or `codeWorkingMemoryId` is required.
+\*Provide exactly one of `code` or `codeWorkingMemoryId`.
 
-**Database Object**:
+**Database object**:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | string | Database identifier (matches env var prefix) |
-| `type` | string | Database type: `postgres`, `databricks`, `sqlserver`, `mysql`, `oracle`, `snowflake` |
+| `name` | string | Database name configured for your environment. Becomes the property name on `dbs`. |
+| `type` | string | `postgres`, `databricks`, `sqlserver`, `mysql`, `oracle`, or `snowflake` |
 
-**Response (Non-streaming)** (200):
+**Response** (200):
 
 ```json
 {
@@ -43,7 +43,14 @@ Compile and execute code in a sandbox environment.
 }
 ```
 
-**Response (Streaming)** — chunked JSON lines:
+| Field | Description |
+|-------|-------------|
+| `success` | `true` if the code compiled and ran without throwing |
+| `returnData` | The value returned by the harness entry point |
+| `stdout` / `stderr` | Console output from the code |
+| `errors` | Compilation or runtime error messages |
+
+**Streaming response**: when the request asks for streaming (`Accept: text/event-stream`, or `runCodeWithProgress` in the client), the response is a sequence of JSON events:
 
 ```json
 {"type": "compilation_complete", "success": true, "data": {}}
@@ -51,7 +58,7 @@ Compile and execute code in a sandbox environment.
 {"type": "execution_complete", "success": true, "result": {"returnData": {}}}
 ```
 
-**Error Response** (4xx/5xx):
+**Error response** (4xx/5xx):
 
 ```json
 {
@@ -62,67 +69,43 @@ Compile and execute code in a sandbox environment.
 }
 ```
 
+Requests that fail validation (for example, no `code` or an unknown harness), lack a valid API key, or exceed the sandbox's rate limit are rejected with a 4xx status. Compilation, execution, and database connection failures return `success: false` with details in `errors` and `stderr`. Treat rate-limit rejections as retryable with backoff.
+
 ### GET /health
 
-Health check endpoint (no authentication required).
+Reachability check. No authentication. Returns `"OK"` with status 200.
 
-**Response**: `"OK"` (200 status)
+## Harness Exports
 
-## Supported Database Types
-
-| Type | Driver | Connection String Pattern |
-|------|--------|--------------------------|
-| `postgres` | ODBC (PostgreSQL driver) | `ANALYTICS_CONNECTION_STRING=postgresql://...` |
-| `databricks` | ODBC (Databricks driver) | See Databricks configuration below |
-| `sqlserver` | ODBC (SQL Server driver) | Standard SQL Server ODBC connection string |
-| `mysql` | ODBC (MySQL driver) | Standard MySQL ODBC connection string |
-| `oracle` | ODBC (Oracle driver) | Standard Oracle ODBC connection string |
-| `snowflake` | ODBC (Snowflake driver) | Standard Snowflake ODBC connection string |
-
-### Databricks Configuration
-
-| Variable | Purpose |
-|----------|---------|
-| `DATABRICKS_HOST` | Databricks instance hostname |
-| `DATABRICKS_HTTP_PATH` | SQL warehouse HTTP path |
-| `DATABRICKS_CLIENT_ID` | Azure AD app client ID |
-| `DATABRICKS_CLIENT_SECRET` | Azure AD app secret (from KeyVault) |
-| `DATABRICKS_TENANT_ID` | Azure tenant ID |
-| `DATABRICKS_CATALOG` | Default catalog |
-| `DATABRICKS_PORT` | Port (typically 443) |
-| `DATABRICKS_DRIVER` | ODBC driver name |
-
-## Harness Required Exports
-
-### Finance Harness
+### `finance`
 
 ```typescript
-// Required export
+// Required
 export const analyze = async (
   dbs: Record<string, DatabaseAdapter>
 ): Promise<any> => {
-  // Your analysis code
+  // Your analysis code; the return value becomes returnData
 };
 
-// Optional sanity check
+// Optional
 export const sanityCheck = (): boolean => {
   return true;
 };
 ```
 
-### SQL Harness
+### `sql`
 
 ```typescript
 export const run = async (
   dbs: Record<string, DatabaseAdapter>
 ): Promise<any> => {
-  // Your SQL execution code
+  // Your SQL execution code; the return value becomes returnData
 };
 ```
 
-## Database Adapter Interface
+## Database Adapter
 
-The injected database adapter provides:
+Each entry on `dbs` provides:
 
 ```typescript
 interface DatabaseAdapter {
@@ -136,38 +119,33 @@ interface QueryResult {
 }
 ```
 
-## Configuration Variables
+Use `params` for values that come from users or other untrusted input rather than concatenating them into the SQL string.
 
-### Server
+## Supported Database Types
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `PORT` | `3000` | HTTP server port |
-| `API_KEY` | | Authentication key (omit to disable auth in dev) |
+| `type` | Database |
+|--------|----------|
+| `postgres` | PostgreSQL |
+| `databricks` | Databricks SQL warehouse |
+| `sqlserver` | Microsoft SQL Server |
+| `mysql` | MySQL |
+| `oracle` | Oracle |
+| `snowflake` | Snowflake |
 
-### Execution
+How a database name is configured for an environment is covered in [Operations](./operations.md#making-databases-available).
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `USE_WORKER_THREADS` | `false` | Use worker thread isolation |
-| `NUM_WORKERS` | `1` | Worker thread count |
+## Client Library
 
-### Database Connections
+`@firebrandanalytics/code-sandbox-client`:
 
-Database connection strings follow the naming pattern `{NAME}_CONNECTION_STRING`:
+| Method | Description |
+|--------|-------------|
+| `CodeSandboxClient.create({ baseUrl, apiKey? })` | Create a client |
+| `runCode(request)` | Run code and return the final result (same fields as the `/process` response) |
+| `runCodeWithProgress(request)` | Run code and yield streamed progress events |
 
-```bash
-ANALYTICS_CONNECTION_STRING=postgresql://...
-DATAWAREHOUSE_CONNECTION_STRING=...
-```
+The request object has the same fields as the `/process` body.
 
-The `{NAME}` must match the `name` field in the request's `databases` array.
+## MCP Tool
 
-### Logging and Monitoring
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `CONSOLE_LOG_LEVEL` | `debug` | Log verbosity |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | | Azure Application Insights |
-| `CONTEXT_SERVICE_ADDRESS` | | Context Service URL (for working memory) |
-| `CONTEXT_SERVICE_API_KEY` | | Context Service API key |
+Through the MCP Gateway, the sandbox is available as `sandbox_execute_code`. See [MCP Gateway tools](../mcp-gateway/tools.md#code-sandbox-adapter).

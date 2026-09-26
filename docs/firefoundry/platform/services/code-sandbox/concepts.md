@@ -1,138 +1,81 @@
 # Code Sandbox — Concepts
 
-This page explains the core concepts underlying the Code Sandbox: the execution model, harness system, isolation strategy, and security model.
+This page covers what you need to design an app around the Code Sandbox: how a request runs, what harnesses are, how database access works, and the security and retry behavior your bundle has to account for.
 
-## Execution Model
+## How a Request Runs
 
-The Code Sandbox uses a two-phase execution model:
+Each `/process` request goes through two phases:
 
-1. **Compilation Phase**: TypeScript code is compiled using the TypeScript compiler API. The compiler validates syntax, resolves types, and produces executable JavaScript.
-2. **Execution Phase**: Compiled code runs in one of two modes (see Isolation Strategy below). The harness establishes database connections and injects them into the execution context before code runs.
-
-### Request Flow
+1. **Compile**: the TypeScript is compiled. Syntax and type errors stop the request and come back in `errors`.
+2. **Execute**: the harness opens the databases the request names, calls the function your code exports, and collects the return value and console output.
 
 ```
-Client Request → API Auth → Harness Selection → DB Connection Setup
-    → TypeScript Compilation → Code Execution → Result Collection → Response
+Your bundle → POST /process → compile → open requested databases
+    → call harness entry point → return { success, returnData, stdout, stderr, errors }
 ```
 
-Each phase reports progress via streaming updates, allowing clients to monitor compilation and execution status in real-time.
+With streaming enabled, the sandbox sends a progress event after each phase (see [Streaming Progress](#streaming-progress)).
 
-## Harness System
+Each request is independent. Nothing your code creates in memory survives to the next request, so pass everything the code needs in the request itself or have it re-query the database.
 
-A **harness** defines the execution environment and available capabilities for a code execution request. Harnesses manage:
+## Harnesses
 
-- Which database connections are established
-- What exported functions the code must provide
-- What libraries and globals are available in the execution context
+A **harness** is the execution context for a request. It decides which function your code must export and how that function is called.
 
-### Built-in Harnesses
+| Harness | Use it for | Required export |
+|---------|------------|-----------------|
+| `finance` | Analytical code: queries plus computation, statistics, charts | `analyze(dbs)`; optional `sanityCheck()` |
+| `sql` | Running SQL and returning rows | `run(dbs)` |
 
-| Harness | Purpose | Required Exports |
-|---------|---------|------------------|
-| `finance` | Analytical workloads with database access | `analyze(dbs)`, `sanityCheck()` |
-| `sql` | SQL query execution | `run(dbs)` |
+When you prompt an LLM to write sandbox code, tell it which harness it is targeting and which function to export. A missing or misnamed export is the most common cause of failed runs.
 
-### How Harnesses Work
+## Database Injection
 
-1. The client specifies a harness name and database requirements in the request
-2. The harness establishes ODBC connections to the requested databases
-3. Pre-authenticated database adapter objects are passed to the user's code
-4. The user's code calls methods on the adapter (e.g., `dbs.analytics.executeQuery(...)`)
-5. After execution, the harness cleans up database connections
-
-### Database Injection
-
-Harnesses create database connections and inject them as a `dbs` object:
+The request lists the databases the code needs by name. The harness connects to each one and passes the connections to your function as a `dbs` object, keyed by name:
 
 ```typescript
 export const analyze = async (dbs: Record<string, DatabaseAdapter>) => {
-  // dbs.analytics, dbs.datawarehouse, etc. are pre-authenticated
+  // dbs.analytics was listed in the request's `databases` array
   const result = await dbs.analytics.executeQuery(
-    'SELECT COUNT(*) as total FROM users'
+    'SELECT COUNT(*) AS total FROM users'
   );
   return result.rows[0];
 };
 ```
 
-The code never sees connection strings, passwords, or credentials.
-
-## Isolation Strategy
-
-Code isolation happens at multiple levels:
-
-### Process-Level Isolation
-
-- The sandbox runs as an isolated Node.js process managed by PM2
-- Kubernetes resource limits (CPU, memory) bound the process
-
-### Execution Mode: Direct (Default)
-
-- Code executes in the main process
-- Lower overhead, faster startup
-- Recommended for production with horizontal scaling
-- Set `USE_WORKER_THREADS=false`
-
-### Execution Mode: Worker Threads
-
-- Code executes in Node.js worker threads
-- Better isolation between concurrent requests
-- Higher overhead per execution
-- Set `USE_WORKER_THREADS=true` with `NUM_WORKERS=N`
-
-### Network-Level Isolation (Planned)
-
-- Egress whitelisting to control outbound connections
-- Currently, network isolation relies on Kubernetes network policies
+Which database names are available is set per environment (see [Operations](./operations.md#making-databases-available)). A request can only use names that exist in the environment.
 
 ## Security Model
 
-### Secrets Management
+**Generated code never receives secrets.** The sandbox holds the database credentials, opens the connections, and gives your code connection objects, not connection strings or passwords. This makes it reasonable to run LLM-generated code against production data sources, within the permissions of the database account the environment is configured with.
 
-**Critical principle**: AI-generated code NEVER receives secrets directly.
+What this means for your app design:
 
-The security model ensures credential isolation through:
+- **Scope data access with the database account.** The sandbox does not filter queries. If generated code should only read certain tables, give the configured database user only those permissions. Prefer read-only accounts for analytical use.
+- **Authenticate your calls.** If your environment configures a sandbox API key, every `/process` call must send it in the `x-api-key` header.
+- **Don't put secrets in code or prompts.** Anything in `code` or `runScript` is visible to the LLM that wrote it and may appear in logs.
 
-1. **KeyVault Integration**: Database credentials stored in Azure KeyVault or environment variables
-2. **Connection Abstraction**: The sandbox (not user code) establishes database connections
-3. **Connection Injection**: Pre-authenticated database adapters passed to user code
-4. **No Direct Access**: Code receives connection objects, not connection strings or passwords
+## Retries and Idempotency
 
-### API Authentication
+The Code Sandbox does **not** guarantee idempotent execution. If your bundle retries a request, the code runs again.
 
-- All `/process` requests require a valid API key via `x-api-key` header
-- In development mode, API key validation can be disabled by omitting the `API_KEY` variable
+- Read-only analysis is naturally safe to retry.
+- Code that writes to a database may apply its writes more than once. Design such code to be idempotent (upserts, natural keys), wrap the work in a transaction, or don't retry automatically.
 
-### Request Validation
+## Available Libraries
 
-- Zod schemas validate all request parameters
-- Rate limiting via express-rate-limit prevents abuse
-- Security headers applied via Helmet middleware
-- Correlation IDs via AsyncLocalStorage for audit logging
-
-### Idempotency
-
-The Code Sandbox does **not** guarantee idempotent execution:
-- Most use cases involve read-only database queries (naturally idempotent)
-- Write operations may execute multiple times on retry
-- Calling services must implement appropriate retry safeguards
-- Design agent code for idempotent operations or use transaction patterns
-
-## Supported Libraries
-
-The TypeScript runtime includes these libraries in the execution context:
+Executed code can use these libraries. Other imports are not available.
 
 | Library | Purpose |
 |---------|---------|
-| `dataframe-js` | DataFrame operations for tabular data |
-| `simple-statistics` | Statistical analysis functions |
+| `dataframe-js` | DataFrame operations on tabular data |
+| `simple-statistics` | Statistical functions |
 | `chart.js` | Chart generation |
 | `canvas` | Low-level graphics and image rendering |
-| `odbc` | Database connectivity |
 
 ## Streaming Progress
 
-The sandbox reports execution progress via chunked transfer encoding:
+For long-running code, ask for streamed progress. The sandbox sends newline-delimited JSON events:
 
 ```json
 {"type": "compilation_complete", "success": true, "data": {...}}
@@ -140,4 +83,14 @@ The sandbox reports execution progress via chunked transfer encoding:
 {"type": "execution_complete", "success": true, "result": {...}}
 ```
 
-This allows clients to show real-time status during long-running compilations or executions.
+Use these to show status in a UI, or to fail fast on a compile error without waiting for a full response.
+
+## App Design Patterns
+
+**Generate, run, repair.** A bot writes code for the harness. The bundle runs it. If `success` is false, the bundle sends the compile or runtime errors back to the bot and asks for a fix, up to a small retry limit. The sandbox's structured `errors` make this loop straightforward.
+
+**Keep the LLM out of the numbers.** Have the LLM write the query and the computation, then let it explain `returnData`. It should not do the arithmetic itself. This gives exact figures and an auditable artifact (the code) for every answer.
+
+**Store the code with the result.** Save generated code (for example in working memory, and reference it with `codeWorkingMemoryId`) so a user or reviewer can see exactly what produced an answer, and so it can be re-run later.
+
+**Bound the result size.** Tell the generated code to aggregate or `LIMIT` its queries and return summaries rather than whole tables. Large results are slow to return and expensive to put back into a prompt.

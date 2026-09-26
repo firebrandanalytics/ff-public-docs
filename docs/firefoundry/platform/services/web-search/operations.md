@@ -1,165 +1,77 @@
 # Web Search — Operations
 
-Deployment, Bing API setup, monitoring, and troubleshooting for the Web Search Service.
+Enabling the Web Search Service for your app, the settings an app team may change, limits to design around, and caller-side troubleshooting.
 
-## Bing API Setup
+## Enabling the Web Search Service
 
-### Getting an API Key
-
-1. Go to [Azure Portal](https://portal.azure.com)
-2. Create a resource → Search for "Bing Search v7"
-3. Select a pricing tier:
-   - **F0 (Free)**: 3 calls/second, 1,000 calls/month
-   - **S1**: Higher limits for production use
-4. Copy the API key from Keys and Endpoint
-
-### Configuration
-
-```bash
-BING_API_KEY=your-api-key
-BING_API_ENDPOINT=https://api.bing.microsoft.com/v7.0/search  # default
-BING_TIMEOUT_MS=5000  # default
-```
-
-## Deployment
-
-### Docker
-
-```bash
-# Build
-docker build -t web-search:local .
-
-# Run
-docker run -p 8080:8080 --env-file .env web-search:local
-```
-
-### Kubernetes
+The Web Search Service is a component of the `firefoundry-core` Helm chart and is disabled by default. It needs a search provider API key. The current provider is the [Brave Search API](https://brave.com/search/api/).
 
 ```yaml
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 8080
-  initialDelaySeconds: 5
-  periodSeconds: 10
-
-readinessProbe:
-  httpGet:
-    path: /ready
-    port: 8080
-  initialDelaySeconds: 10
-  periodSeconds: 5
+websearch-service:
+  enabled: true
+  secret:
+    data:
+      BRAVE_API_KEY: "your-brave-api-key"
 ```
 
-The `/ready` endpoint checks both Bing API connectivity and database availability. If either is down, the service reports not ready and Kubernetes stops routing traffic.
+Keep the key in your environment's secret management, not in a values file in source control. The component also needs a database credential when it is installed; your environment administrator provides it.
 
-### Resource Recommendations
+Once enabled, bundles in the cluster reach the service at `http://firefoundry-core-websearch-service:8080`. It is not exposed outside the cluster by default.
 
-```yaml
-resources:
-  requests:
-    cpu: "100m"
-    memory: "128Mi"
-  limits:
-    cpu: "500m"
-    memory: "512Mi"
-```
+## Settings You May Change
 
-The Web Search Service is lightweight — most processing happens at the Bing API. Resource needs are modest.
+These go under `websearch-service.configMap.data`:
 
-### CI/CD
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `SEARCH_DEFAULT_LIMIT` | `10` | Results per page when the caller doesn't send `limit` |
+| `SEARCH_DEFAULT_SAFE_SEARCH` | `moderate` | SafeSearch level when the caller doesn't send `safeSearch` (`off`, `moderate`, `strict`) |
+| `BRAVE_TIMEOUT_MS` | `5000` | How long the service waits for the provider before returning `TIMEOUT` |
+| `LOG_LEVEL` | `info` | Service log verbosity (`debug`, `info`, `warn`, `error`) |
 
-GitHub Actions workflow builds on push to:
-- `main` — Production (semantic version + `latest` tag)
-- `dev` — Development (version-dev.sha + `dev` tag)
-- `feat/**`, `fix/**` — Branch builds
+The service reads these at startup, so restart it after a change.
 
-## Database
+## Verifying Access from a Bundle
 
-### Schema Migration
+1. `GET /ready` from inside the cluster (or through a port-forward) should succeed. Not-ready usually means a missing or invalid provider key or no outbound network access.
+2. Run `GET /v1/search?q=test&limit=1`. A result confirms the provider key works.
+3. Send an `X-Request-ID` and check it comes back in `meta.requestId`.
 
-```bash
-psql -f migrations/001_create_search_logs.sql
-```
+## Limits and Behavior to Design Around
 
-Creates:
-- `websearch` schema
-- `websearch.search_logs` table
-- Grants for `fireread` (SELECT) and `fireinsert` (SELECT, INSERT)
-
-### Log Retention
-
-Search logs grow over time. Consider periodic cleanup:
-
-```sql
-DELETE FROM websearch.search_logs
-WHERE created_at < NOW() - INTERVAL '30 days';
-```
-
-## Monitoring
-
-### Key Metrics
-
-| Metric | Source | What to Watch |
-|--------|--------|---------------|
-| Response time | `search_logs.response_time_ms` | p95 should be < 2s |
-| Error rate | `search_logs` where `success = false` | Should be < 5% |
-| Result count | `search_logs.result_count` | Zero results may indicate query issues |
-| Bing API latency | Application logs | Increases may indicate Bing throttling |
-
-### Query the Logs
-
-```sql
--- Recent search summary
-SELECT
-  date_trunc('hour', created_at) as hour,
-  COUNT(*) as total,
-  AVG(response_time_ms) as avg_ms,
-  COUNT(*) FILTER (WHERE success = false) as errors
-FROM websearch.search_logs
-WHERE created_at > NOW() - INTERVAL '24 hours'
-GROUP BY 1
-ORDER BY 1 DESC;
-
--- Most common error codes
-SELECT error_code, COUNT(*)
-FROM websearch.search_logs
-WHERE success = false
-  AND created_at > NOW() - INTERVAL '7 days'
-GROUP BY error_code
-ORDER BY COUNT(*) DESC;
-```
+- **Query length**: 1–500 characters.
+- **Page size**: 1–50 results per request. Page with `offset` and stop when `hasMore` is `false`.
+- **Estimates**: `totalResults` and `pagination.total` are provider estimates, not exact counts.
+- **Latency**: every search is a round trip to an external provider, bounded by `BRAVE_TIMEOUT_MS`. Run independent searches in parallel, and cap searches per user request.
+- **Provider quotas and cost**: your provider plan's rate limits and pricing apply. Bursty agent loops can hit provider limits, which show up as errors with HTTP 502 or `RATE_LIMITED` (429).
+- **Page fetching**: up to 20 URLs per batch and 60 seconds per fetch. `dynamic` rendering and screenshots are slower than `static` fetches.
+- **Outbound access**: the service must be able to reach the provider and any pages you fetch over HTTPS.
+- **Logging**: searches (query, parameters, result count, timing) are logged by the service for debugging and usage analysis. Don't put secrets or personal data in queries.
 
 ## Troubleshooting
 
-### Common Issues
+**`/ready` fails or every search fails**
+- Check that the provider API key is set and valid.
+- Check that the cluster allows outbound HTTPS to the provider.
+- Ask your environment administrator to check the service's database connection.
 
-**Readiness probe fails:**
-- Check `BING_API_KEY` is set and valid
-- Verify database connectivity (`PG_HOST`, `PG_DATABASE`, `PG_PASSWORD`)
-- Check network egress to `api.bing.microsoft.com`
+**HTTP 502 errors**
+- The provider rejected or failed the request. Check that the key is valid and your provider plan has quota left.
+- Retry a limited number of times with backoff.
 
-**BING_ERROR (502):**
-- The Bing API returned an error — check API key validity
-- May indicate rate limiting on the Bing side
-- Check Azure Portal for Bing service health
+**`TIMEOUT` (504)**
+- The provider was slow. Retry, or ask for `BRAVE_TIMEOUT_MS` to be raised if it happens often.
 
-**TIMEOUT (504):**
-- Bing API didn't respond within `BING_TIMEOUT_MS`
-- Increase timeout for slow networks
-- Check if the Bing API endpoint is reachable
+**`RATE_LIMITED` (429)**
+- Too many requests. Add backoff and a per-request search budget, and run fewer searches in parallel.
 
-**RATE_LIMITED (429):**
-- Too many requests to the service
-- Scale horizontally to handle more concurrent requests
-- Consider implementing client-side request queuing
+**`VALIDATION_ERROR` (400)**
+- Check `error.details`. Common causes are an empty query, a query longer than 500 characters, or `limit` outside 1–50.
 
-**Empty results:**
-- The query may be too restrictive — try relaxing structured query constraints
-- Remove domain restrictions (`sites.include`) to broaden results
-- Check if `safeSearch=strict` is filtering relevant results
+**Empty results**
+- The query may be too restrictive. Drop `exactPhrases`, `sites.include`, or `fileTypes` and retry.
+- `safeSearch=strict` can remove relevant results.
+- A short `freshness` window (`day`) may exclude everything.
 
-**Logging failures don't affect search:**
-- By design — logging is fire-and-forget
-- Check database connectivity if logs are missing
-- Verify the `websearch.search_logs` table exists
+**Finding a specific search**
+- Send `X-Request-ID` with every search and log it in your bundle. Give that ID to your environment administrator when you ask them to look up the service's logs.
