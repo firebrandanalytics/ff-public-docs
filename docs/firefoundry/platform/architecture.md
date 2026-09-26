@@ -8,7 +8,7 @@ Contains the runtime services that power your AI agents:
 
 - **ff-broker**: Routes requests between different LLM providers and manages model selection
 - **context-service**: Handles conversation context, memory, and information retrieval
-- **code-sandbox**: Provides secure, isolated environments for agent code execution
+- **code-sandbox-v2**: Runs agent-generated TypeScript and Python in isolated, per-run containers
 
 ## Control Plane Namespace (`ff-control-plane`)
 
@@ -43,10 +43,11 @@ This separation allows you to:
   - Manages vector embeddings for semantic search
   - Handles context windowing and summarization
 
-- **Code Sandbox**: `firefoundry-code-sandbox.ff-dev.svc.cluster.local:3000` (HTTP)
-  - Provides secure code execution environment
-  - Supports multiple programming languages
-  - Implements resource limits and timeout handling
+- **Code Sandbox (v2)**: `firefoundry-core-code-sandbox-v2.ff-dev.svc.cluster.local:8080` (HTTP)
+  - Runs agent-generated TypeScript and Python in an isolated container per run
+  - Named profiles set the runtime, Data Access Service connections, and limits
+  - Enforces per-run timeouts (up to 5 minutes) and rate limits
+  - See [Code Sandbox](./services/code-sandbox/README.md)
 
 ### Control Plane Services (ff-control-plane namespace)
 

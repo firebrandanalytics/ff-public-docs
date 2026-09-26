@@ -17,7 +17,7 @@ Two services form the foundation of every FireFoundry environment. They are runn
 
 Each is opt-in — turn it on if your application needs the capability, leave it off if not.
 
-- **[Code Sandbox](./code-sandbox/README.md)** — Secure execution environment for agent-generated TypeScript with database adapters and Chart.js.
+- **[Code Sandbox](./code-sandbox/README.md)** — Runs agent-generated TypeScript and Python in an isolated container per run, with profile-based configuration and credential-free database access through the Data Access Service. *Preview.*
 - **[Context Service](./context-service/README.md)** — Working memory, blob storage, and conversation persistence for chat-style agents.
 - **[Browser Worker Manager](./browser-worker-manager/README.md)** — Persistent, per-session headless browser pods that agents drive step by step (navigate, snapshot, click, fill, log in, PDF, download), with mounted-secret credential fill and redaction. *Preview.*
 - **[Data Access Service](./data-access/README.md)** — Multi-database SQL access with AST query translation, staged federation, scratch pad, and fine-grained ACL.
@@ -27,7 +27,7 @@ Each is opt-in — turn it on if your application needs the capability, leave it
 - **[Knowledge Service](./knowledge-service/README.md)** — CRUD for knowledge bases and document metadata over the entity graph, with ingestion delegated to the RAG agent bundle and section/page navigation of ingested documents.
 - **[MCP Gateway](./mcp-gateway/README.md)** — Exposes FireFoundry services as Model Context Protocol tools, resources, and prompts for AI agents such as Claude Code and Virtual Workers. Enabled by default in `firefoundry-core`.
 - **[Notification Service](./notification-service/README.md)** — Cloud-agnostic email and SMS delivery with pluggable provider adapters.
-- **[Skills Service](./skills-service/README.md)** — Skill registry, versioning, and environment-scoped installation for hosted agents.
+- **[Skills Service](./skills-service/README.md)** — Versioned, access-controlled skills that agents load at runtime (usually through the MCP Gateway) — and that agents can create and update themselves, making skills one of FireFoundry's main learning loops.
 - **[Test Harness Service](./test-harness-service/README.md)** — Define, run, and analyze automated tests against agent bundles, and track run history. *Preview* — real bundle execution and LLM-judged assertions via the Test Evaluation Agent are in development.
 - **[Virtual Worker Manager](./virtual-workers/README.md)** — Orchestrates CLI coding agents (Claude Code, Cursor, Gemini, OpenCode) with managed sessions and persistent workspaces.
 - **[Web Search Service](./web-search/README.md)** — Web search and page fetching for agents, backed by the Brave Search API.
@@ -46,7 +46,7 @@ Background services that are not normally called by application code. App develo
 |---------|----------|---------|----------|
 | [FF Broker](./ff-broker/README.md) | Core | AI model routing across multiple providers | gRPC |
 | [Entity Service](./entity-service/README.md) | Core | Entity graph with vector semantic search | REST |
-| [Code Sandbox](./code-sandbox/README.md) | Optional | Secure code execution with database connectivity | REST |
+| [Code Sandbox](./code-sandbox/README.md) | Optional | Isolated execution of agent-generated TypeScript and Python | REST |
 | [Context Service](./context-service/README.md) | Optional | Working memory, blob storage, conversation persistence | gRPC |
 | [Browser Worker Manager](./browser-worker-manager/README.md) | Optional | Persistent per-session browser pods for agent site navigation | REST |
 | [Data Access Service](./data-access/README.md) | Optional | Multi-database SQL access with AST queries and ACL | gRPC + REST |
@@ -56,7 +56,7 @@ Background services that are not normally called by application code. App develo
 | [Knowledge Service](./knowledge-service/README.md) | Optional | CRUD for knowledge bases; delegates ingestion to RAG agent | REST |
 | [MCP Gateway](./mcp-gateway/README.md) | Optional | FireFoundry services as MCP tools, resources, and prompts | MCP (JSON-RPC over HTTP) + REST |
 | [Notification Service](./notification-service/README.md) | Optional | Email and SMS delivery with pluggable providers | REST |
-| [Skills Service](./skills-service/README.md) | Optional | Skill registry, versioning, and environment-scoped installation | REST |
+| [Skills Service](./skills-service/README.md) | Optional | Versioned skills agents load at runtime and can create or update | REST |
 | [Test Harness Service](./test-harness-service/README.md) | Optional | Test suite management, execution, results, run history | REST |
 | [Virtual Worker Manager](./virtual-workers/README.md) | Optional | CLI coding agent orchestration with managed sessions | REST |
 | [Web Search Service](./web-search/README.md) | Optional | Web search and page fetching for agents, backed by the Brave Search API | REST |

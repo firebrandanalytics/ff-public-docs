@@ -24,7 +24,7 @@ An **adapter** exposes one FireFoundry service as MCP tools. Each adapter has a 
 | `context` | [Context Service](../context-service/README.md) | 13 |
 | `docproc` | [Document Processing](../doc-proc-service/README.md) | 5 |
 | `telemetry` | [Telemetry Service](../telemetry-service/README.md) | 9 |
-| `sandbox` | [Code Sandbox](../code-sandbox/README.md) | 1 |
+| `sandbox` | Legacy Code Sandbox API (deprecated; not compatible with [Code Sandbox v2](../code-sandbox/README.md) — see [Tools](./tools.md#code-sandbox-adapter)) | 1 |
 | `websearch` | [Web Search](../web-search/README.md) | 3 |
 | `dataaccess` | [Data Access Service](../data-access/README.md) | 7 |
 | `knowledgebase` | Earlier standalone KB ingestion and RAG query APIs (not the current Knowledge Service — see [Tools](./tools.md#knowledge-base-adapter)) | 7 |

@@ -63,8 +63,7 @@ configMap:
     LLM_BROKER_HOST: firefoundry-core-ff-broker
     LLM_BROKER_PORT: "50051"
     # Other services
-    CODE_SANDBOX_HOST: firefoundry-core-code-sandbox
-    CODE_SANDBOX_PORT: "3000"
+    CODE_SANDBOX_URL: http://firefoundry-core-code-sandbox-v2:8080
     CONTEXT_SERVICE_ADDRESS: http://firefoundry-core-context-service:50051
     # Runtime
     PORT: "3000"

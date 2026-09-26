@@ -6,7 +6,7 @@ This document provides comprehensive configuration options for the `firefoundry-
 
 The `firefoundry-core` chart deploys FireFoundry's AI application services as a cohesive stack. It includes:
 
-- **Core Services**: FF Broker, Context Service, Code Sandbox, Entity Service
+- **Core Services**: FF Broker, Context Service, Code Sandbox (v2), Entity Service
 - **Optional Services**: Web Search, Document Processing, Virtual Worker Manager, MCP Gateway (enabled by default), Log Proxy (opt-in)
 - **Bundled Dependencies**: PostgreSQL and MinIO (optional, for self-contained deployments)
 
@@ -87,18 +87,18 @@ context-service:
       WORKING_MEMORY_STORAGE_KEY: "your-storage-key"
 ```
 
-### Code Sandbox
+### Code Sandbox (v2)
 
-Secure code execution environment for AI-generated code.
+Isolated TypeScript and Python execution for AI-generated code, with data access through the Data Access Service. Reachable in-cluster at `http://<release>-code-sandbox-v2:8080`. See the [Code Sandbox documentation](../firefoundry/platform/services/code-sandbox/README.md).
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `code-sandbox.enabled` | Enable Code Sandbox | `true` |
-| `code-sandbox.replicaCount` | Number of replicas | `1` |
-| `code-sandbox.image.tag` | Image version | `2.0.0` |
-| `code-sandbox.configMap.data.USE_DIRECT_EXECUTION` | Execution mode | `true` |
-| `code-sandbox.secret.data.ANALYTICS_CONNECTION_STRING` | Database connection | Required |
-| `code-sandbox.resources.limits.memory` | Memory limit | `2Gi` |
+| `code-sandbox-v2.enabled` | Enable Code Sandbox v2 | `false` (ff-cli environment templates enable it through `enabledServices`) |
+| `code-sandbox-v2.replicaCount` | Number of replicas | `1` |
+| `code-sandbox-v2.autoscaling.maxReplicas` | Maximum replicas | `3` |
+| `code-sandbox-v2.migration.adminPassword` | Database admin password for the service's one-time setup | Required when enabled |
+
+The `code-sandbox` block in the chart is the deprecated legacy sandbox. Leave it disabled.
 
 ### Entity Service
 
@@ -302,10 +302,10 @@ entity-service:
   migration:
     adminPassword: "firebrand-secret"
 
-code-sandbox:
-  secret:
-    data:
-      ANALYTICS_CONNECTION_STRING: "postgresql://fireread:fireread-secret@firefoundry-core-postgresql:5432/firefoundry"
+code-sandbox-v2:
+  enabled: true
+  migration:
+    adminPassword: "firebrand-secret"
 ```
 
 ### Production with External Database

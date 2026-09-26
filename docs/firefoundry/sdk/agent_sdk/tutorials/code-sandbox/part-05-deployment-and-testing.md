@@ -64,7 +64,7 @@ The agent bundle needs several environment variables to connect to platform serv
 |----------|---------|---------|
 | `LLM_BROKER_HOST` | LLM broker service hostname | `firefoundry-core-ff-broker` |
 | `LLM_BROKER_PORT` | LLM broker service gRPC port | `50051` |
-| `CODE_SANDBOX_URL` | Code Sandbox Service URL | `http://ff-code-sandbox:8080` |
+| `CODE_SANDBOX_URL` | Code Sandbox Service URL | `http://firefoundry-core-code-sandbox-v2:8080` |
 | `DATA_ACCESS_URL` | Data Access Service URL | `http://ff-data-access:8080` |
 | `CODE_SANDBOX_TS_PROFILE` | TypeScript profile name (optional) | `finance-typescript` |
 | `CODE_SANDBOX_DS_PROFILE` | Python profile name (optional) | `firekicks-datascience` |

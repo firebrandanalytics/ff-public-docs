@@ -1,192 +1,154 @@
 # Code Sandbox — Getting Started
 
-This guide takes you from a health check to running code with database access, first with `curl` and then from an agent bundle.
+This guide checks that the sandbox is reachable, runs code with `curl` so you can see the raw contract, and then runs LLM-generated code from an agent bundle with `GeneralCoderBot`. For a complete app, follow the [Code Sandbox tutorial](../../../sdk/agent_sdk/tutorials/code-sandbox/README.md).
 
 ## Prerequisites
 
-- The Code Sandbox enabled in your FireFoundry environment (see [Operations](./operations.md#enabling-the-code-sandbox))
-- The sandbox API key, if your environment has one configured
-- For database access: at least one database configured for the sandbox (see [Operations](./operations.md#making-databases-available))
+- Code Sandbox v2 enabled in your environment (see [Operations](./operations.md#enabling-the-code-sandbox))
+- At least one profile you can use. Ask your environment administrator which profiles exist, or create one (see [Operations](./operations.md#setting-up-profiles)). The examples use `finance-typescript` (TypeScript) and `firekicks-datascience` (Python with a DAS connection named `firekicks`), the profile names the tutorial uses.
+- `kubectl` access to the environment's namespace, for the `curl` steps
 
-Inside the cluster, the sandbox is reachable at `http://firefoundry-core-code-sandbox:3000`. To try it from your workstation, port-forward it:
+Inside the cluster, the sandbox is at `http://firefoundry-core-code-sandbox-v2:8080` (for the default `firefoundry-core` release name). To try it from your workstation, port-forward it:
 
 ```bash
-kubectl port-forward svc/firefoundry-core-code-sandbox -n <namespace> 3000:3000
+kubectl port-forward svc/firefoundry-core-code-sandbox-v2 -n <namespace> 8080:8080
 ```
 
-The examples below use `http://localhost:3000`.
+The examples below use `http://localhost:8080`.
 
-## Step 1: Check That the Sandbox Is Reachable
+## Step 1: Check the Service
 
 ```bash
-curl http://localhost:3000/health
-# Expected: "OK"
+curl http://localhost:8080/health
+# {"status":"healthy"}
+
+curl http://localhost:8080/ready
+# {"ready":true,"database":true,"kubernetes":true}
 ```
 
-## Step 2: Run Simple Code
+Then confirm your profile exists and see what it provides:
 
 ```bash
-curl -X POST http://localhost:3000/process \
+curl http://localhost:8080/profiles/finance-typescript/metadata
+# {"language":"typescript","harness":"finance","runScriptPrompt":null,"dasConnections":[]}
+```
+
+A `404` means the profile doesn't exist in this environment.
+
+## Step 2: Run TypeScript
+
+```bash
+curl -X POST http://localhost:8080/v2/execute \
   -H "Content-Type: application/json" \
-  -H "x-api-key: your-api-key" \
+  -H "X-App-Id: my-app" \
   -d '{
-    "code": "export const analyze = async () => { return { message: \"Hello from sandbox!\" }; };",
-    "language": "typescript",
-    "harness": "finance"
+    "profile": "finance-typescript",
+    "source": {
+      "type": "inline",
+      "code": "export async function run() { const fib = [0, 1]; while (fib.length < 10) fib.push(fib[fib.length - 1] + fib[fib.length - 2]); return { description: \"First 10 Fibonacci numbers\", result: fib }; }"
+    }
   }'
 ```
 
-Response:
+Response (abridged):
 
 ```json
 {
-  "success": true,
-  "stdout": "",
-  "stderr": "",
-  "returnData": { "message": "Hello from sandbox!" },
-  "errors": []
+  "executionId": "6f1c…",
+  "compilation": { "success": true },
+  "execution": {
+    "success": true,
+    "result": { "description": "First 10 Fibonacci numbers", "result": [0, 1, 1, 2, 3, 5, 8, 13, 21, 34] },
+    "stdout": "",
+    "stderr": ""
+  },
+  "totalDurationMs": 4210
 }
 ```
 
-Omit the `x-api-key` header if your environment does not configure one.
+Most of `totalDurationMs` is starting the run's container. The code itself ran in milliseconds.
 
-## Step 3: Query a Database
+Now break the code (for example, `throw new Error("boom")` inside `run`). The HTTP status is still `200`, and `execution.success` is `false` with the error in `execution.errors`. Your bot feeds that back to the LLM.
 
-List the databases the code needs. Each entry becomes a property on `dbs`:
+## Step 3: Query Data from Python
+
+With a profile that enables a DAS connection, the code gets a `das` client for it:
 
 ```bash
-curl -X POST http://localhost:3000/process \
+curl -X POST http://localhost:8080/v2/execute \
   -H "Content-Type: application/json" \
-  -H "x-api-key: your-api-key" \
+  -H "X-App-Id: my-app" \
   -d '{
-    "code": "export const analyze = async (dbs) => {\n  const result = await dbs.analytics.executeQuery(\"SELECT COUNT(*) as total FROM users\");\n  return result.rows[0];\n};",
-    "language": "typescript",
-    "harness": "finance",
-    "databases": [
-      { "name": "analytics", "type": "postgres" }
-    ]
+    "profile": "firekicks-datascience",
+    "source": {
+      "type": "inline",
+      "code": "import pandas as pd\n\ndef run():\n    df = das[\"firekicks\"].query_df(\"SELECT COUNT(*) AS n FROM orders\")\n    return {\"description\": \"Order count\", \"result\": int(df[\"n\"].iloc[0])}\n"
+    }
   }'
 ```
 
-`analytics` must be a database name configured for your environment.
+The code never sees a database credential. DAS runs the query under the connection's permissions.
 
-## Step 4: Add a Run Script (Optional)
+## Step 4: Stream Progress
 
-A `runScript` lets you keep the generated code separate from the code that drives it, for example to log intermediate output:
-
-```bash
-curl -X POST http://localhost:3000/process \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: your-api-key" \
-  -d '{
-    "code": "export const analyze = async (dbs) => {\n  const orders = await dbs.analytics.executeQuery(\"SELECT * FROM orders LIMIT 100\");\n  return { count: orders.rows.length, sample: orders.rows[0] };\n};",
-    "runScript": "export const run = async () => { const result = await analyze(dbs); console.log(JSON.stringify(result)); return result; };",
-    "language": "typescript",
-    "harness": "finance",
-    "databases": [
-      { "name": "analytics", "type": "postgres" }
-    ]
-  }'
-```
-
-## Step 5: Stream Progress
-
-For long-running code, request streamed progress events:
+Add `"stream": true` to get Server-Sent Events instead of a single response:
 
 ```bash
-curl -X POST http://localhost:3000/process \
+curl -N -X POST http://localhost:8080/v2/execute \
   -H "Content-Type: application/json" \
-  -H "x-api-key: your-api-key" \
-  -H "Accept: text/event-stream" \
-  -d '{
-    "code": "export const analyze = async (dbs) => { /* long analysis */ };",
-    "language": "typescript",
-    "harness": "finance",
-    "databases": [{ "name": "analytics", "type": "postgres" }]
-  }'
+  -d '{"profile": "finance-typescript", "stream": true,
+       "source": {"type": "inline", "code": "export function run() { console.log(\"working\"); return 42; }"}}'
 ```
 
-```json
-{"type":"compilation_complete","success":true,"data":{}}
-{"type":"execution_started"}
-{"type":"execution_complete","success":true,"result":{"returnData":{}}}
+```
+event: started
+data: {"executionId":"…"}
+
+event: compilation_started
+…
+event: output
+data: {"stream":"stdout","text":"working"}
+
+event: execution_complete
+data: {"success":true,"result":42}
+
+event: done
+data: {"totalDurationMs":3890}
 ```
 
-## Step 6: Run Code Stored in Working Memory
+Console output arrives as one `output` event per stream after the code finishes, not line by line. The stream ends after the final `done` (or an `error`) event.
 
-If your bundle saved the generated code to a [Context Service](../context-service/README.md) working memory document, reference it instead of sending the code inline:
+## Step 5: Run LLM-Generated Code from a Bundle
 
-```bash
-curl -X POST http://localhost:3000/process \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: your-api-key" \
-  -d '{
-    "codeWorkingMemoryId": "wm-12345-uuid",
-    "language": "typescript",
-    "harness": "finance",
-    "databases": [{ "name": "analytics", "type": "postgres" }]
-  }'
-```
-
-## Calling the Sandbox from an Agent Bundle
-
-Use the TypeScript client, `@firebrandanalytics/code-sandbox-client`:
+In a bundle, use `GeneralCoderBot` from the Agent SDK. It fetches the profile's metadata at startup, prompts the LLM for code with a `run()` entry point, stores the code in working memory, runs it through the sandbox, and retries on errors:
 
 ```typescript
-import { CodeSandboxClient } from '@firebrandanalytics/code-sandbox-client';
+import { GeneralCoderBot, RegisterBot } from "@firebrandanalytics/ff-agent-sdk";
 
-const client = CodeSandboxClient.create({
-  baseUrl: 'http://firefoundry-core-code-sandbox:3000',
-  apiKey: process.env.SANDBOX_API_KEY // omit if your environment has no sandbox key
-});
-
-const result = await client.runCode({
-  code: `
-    export const analyze = async (dbs) => {
-      const result = await dbs.analytics.executeQuery(
-        'SELECT COUNT(*) as total FROM users'
-      );
-      return result.rows[0];
-    };
-  `,
-  language: 'typescript',
-  harness: 'finance',
-  databases: [{ name: 'analytics', type: 'postgres' }]
-});
-
-if (!result.success) {
-  // Send result.errors back to the bot that wrote the code and ask for a fix
-}
-console.log('Result:', result.returnData);
-```
-
-### Streaming with the Client
-
-```typescript
-const updates = client.runCodeWithProgress({
-  code: '/* your code */',
-  language: 'typescript',
-  harness: 'finance'
-});
-
-for await (const update of updates) {
-  switch (update.type) {
-    case 'compilation_complete':
-      console.log('Compiled:', update.success);
-      break;
-    case 'execution_complete':
-      console.log('Result:', update.result.returnData);
-      break;
+@RegisterBot("AnalyticsCoderBot")
+export class AnalyticsCoderBot extends GeneralCoderBot {
+  constructor() {
+    super({
+      name: "AnalyticsCoderBot",
+      modelPoolName: "firebrand-gpt-5.2-failover",
+      profile: process.env.CODE_SANDBOX_TS_PROFILE || "finance-typescript",
+    });
   }
 }
 ```
 
-### From MCP-Capable Agents
+Give the bundle the sandbox's address:
 
-Agents that use the [MCP Gateway](../mcp-gateway/README.md) can call the `sandbox_execute_code` tool instead. See [MCP Gateway tools](../mcp-gateway/tools.md#code-sandbox-adapter).
+| Variable | Value |
+|----------|-------|
+| `CODE_SANDBOX_URL` | `http://firefoundry-core-code-sandbox-v2:8080` |
+
+Always set `CODE_SANDBOX_URL`: the SDK's built-in default address does not match a standard FireFoundry deployment. See [Operations](./operations.md#configuring-your-bundle) for the full list.
+
+To wire the bot to an entity and an API endpoint, add a domain prompt, and query data, follow the tutorial from [Part 1: Your First Code Execution](../../../sdk/agent_sdk/tutorials/code-sandbox/part-01-first-code-execution.md).
 
 ## Next Steps
 
-- [Concepts](./concepts.md): harnesses, the security model, and app design patterns
-- [Reference](./reference.md): the full request and response contract
-- [Operations](./operations.md): enabling the sandbox and configuring databases
+- [Concepts](./concepts.md): profiles, entry points, DAS access, and design patterns
+- [Reference](./reference.md): the full request and response shapes
+- [Operations](./operations.md): profiles, limits, and troubleshooting

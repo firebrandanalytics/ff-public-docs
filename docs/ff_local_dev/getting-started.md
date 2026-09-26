@@ -232,7 +232,7 @@ ff-cli env create -t minimal-self-contained -n ff-dev -y
 This deploys:
 - **FF Broker** - LLM orchestration service
 - **Context Service** - Working memory management
-- **Code Sandbox** - Secure code execution
+- **Code Sandbox (v2)** - Isolated TypeScript and Python code execution
 - **Entity Service** - Graph-based data storage
 - **PostgreSQL** - Environment database
 - **MinIO** - Object storage for working memory
@@ -313,7 +313,7 @@ The `minimal-self-contained` template provides sensible defaults, but you may ne
    {
      "environmentName": "my-custom-env",
      "chartVersion": "0.19.0",
-     "enabledServices": ["ff-broker", "context-service", "code-sandbox", "entity-service"],
+     "enabledServices": ["ff-broker", "context-service", "code-sandbox-v2", "entity-service"],
      "postgresql": {
        "enabled": true,
        "storageSize": "16Gi"

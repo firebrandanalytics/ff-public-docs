@@ -195,13 +195,16 @@ Provider accounts (API endpoints, keys, and model mappings) are configured in th
 
 ## Code Sandbox Configuration
 
-<!-- TODO: Document Code Sandbox settings -->
+Code Sandbox v2 runs AI-generated TypeScript and Python in isolated containers. Enable it with the `code-sandbox-v2` block (the `code-sandbox` block is the deprecated legacy service; leave it disabled):
 
 ```yaml
-code-sandbox:
-  enabled: false
-  # TODO: Add configuration options
+code-sandbox-v2:
+  enabled: true
+  migration:
+    adminPassword: "<database admin password>"  # required when enabled
 ```
+
+Environments created with ff-cli enable it by including `code-sandbox-v2` in `enabledServices`. Bundles reach it at `http://firefoundry-core-code-sandbox-v2:8080`. Profiles, runtimes, and data access are configured through the service's API; see [Code Sandbox Operations](../services/code-sandbox/operations.md).
 
 ## Entity Service Configuration
 
@@ -254,7 +257,6 @@ See each service's documentation for complete environment variable references:
 <!--
 TODO: This document needs significant expansion with:
 - Complete FF Broker configuration
-- Code Sandbox configuration
 - Entity Service configuration
 - Doc Proc Service configuration
 - Network policies

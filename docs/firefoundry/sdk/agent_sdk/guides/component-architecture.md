@@ -507,7 +507,7 @@ Each service has a typed client library in `@firebrandanalytics/ff-core-types`:
 | Working Memory | Via entity client | Blob/record storage |
 | Data Access | `@firefoundry/data-access-client` | SQL queries |
 | Doc Processor | `@firebrandanalytics/doc-proc-client` | Document operations |
-| Code Sandbox | `@firebrandanalytics/code-sandbox-client` | Secure code execution |
+| Code Sandbox | `GeneralCoderBot` in the Agent SDK (uses `@firebrandanalytics/ff-sandbox-client`; set `CODE_SANDBOX_URL`) | Generating and running TypeScript/Python in isolated containers ([Code Sandbox](../../../platform/services/code-sandbox/README.md)) |
 | Web Search | `@firebrandanalytics/web-search-client` | Internet search |
 
 ---

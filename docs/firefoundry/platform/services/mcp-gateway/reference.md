@@ -297,7 +297,7 @@ An adapter is active when its service setting is present.
 | `CONTEXT_SERVICE_ADDRESS` | `context` (gRPC `host:port`) |
 | `DOC_PROC_SERVICE_URL` | `docproc` |
 | `TELEMETRY_SERVICE_URL` | `telemetry` |
-| `SANDBOX_SERVICE_URL` | `sandbox` |
+| `SANDBOX_SERVICE_URL` | `sandbox` (legacy Code Sandbox API only; not compatible with Code Sandbox v2) |
 | `WEB_SEARCH_SERVICE_URL` | `websearch` |
 | `DATA_ACCESS_SERVICE_URL` | `dataaccess` |
 | `KB_INGESTION_SERVICE_URL` and `KB_RAG_QUERY_SERVICE_URL` | `knowledgebase` (both required) |

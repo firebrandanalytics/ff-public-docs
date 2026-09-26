@@ -96,11 +96,11 @@ The "get" tools return an error result when the event does not exist. `telemetry
 
 ## Code Sandbox Adapter
 
-Isolated code execution on the [Code Sandbox](../code-sandbox/README.md).
+Code execution through the **legacy** Code Sandbox API. This adapter calls the deprecated legacy sandbox service. It does not work with [Code Sandbox v2](../code-sandbox/README.md), which uses a different API (profiles, `POST /execute` with a `source` object). In an environment that runs only Code Sandbox v2, calls to this tool fail. For new apps, run generated code from your agent bundle with `GeneralCoderBot` and a v2 profile (see the [Code Sandbox tutorial](../../../sdk/agent_sdk/tutorials/code-sandbox/README.md)).
 
 | Tool | Description | Arguments |
 |------|-------------|-----------|
-| `sandbox_execute_code` | Execute code in a sandbox | `code` (string, Req); `language` (`typescript` \| `python` \| `sql`, Req); `harness` (`finance` \| `sql`, Req) |
+| `sandbox_execute_code` | Execute code on the legacy sandbox | `code` (string, Req); `language` (`typescript` \| `python` \| `sql`, Req); `harness` (`finance` \| `sql`, Req) |
 
 Result: `{ success, stdout, stderr, returnData, errors }`.
 
@@ -148,15 +148,15 @@ RAG queries and ingestion jobs against the standalone knowledge-base ingestion a
 
 ## Skills Adapter
 
-Read access to the [Skills Service](../skills-service/README.md). The caller's `X-On-Behalf-Of` identity is forwarded so skill resolution respects the caller's scope.
+Read access to the [Skills Service](../skills-service/README.md). The caller's `X-On-Behalf-Of` identity is forwarded, so results are limited to the skills the caller's application can see. Without an identity, `skills_list` returns `[]` and the read tools fail with `Access denied`.
 
 | Tool | Description | Arguments |
 |------|-------------|-----------|
-| `skills_list` | List skills (front-matter metadata only) | `tags` (string[]); `name` (string, partial match) |
-| `skills_read` | Read a skill's full definition, including content | `name` (string, Req) |
-| `skills_read_file` | Read one file inside a skill | `name` (string, Req); `path` (string, Req) — relative path within the skill |
+| `skills_list` | List visible skills (metadata only: name, description, tags, mode names, companion file paths) | `tags` (string[]) — a skill must have all of them; `name` (string) — glob on the skill name, e.g. `ticket*` (no wildcards = exact name) |
+| `skills_read` | Read a skill's full definition, including content, at its most recently uploaded version | `name` (string, Req) |
+| `skills_read_file` | Read one file inside a skill | `name` (string, Req); `path` (string, Req) — path within the skill, e.g. `references/routing.md` |
 
-`skills_read_file` returns the raw file text rather than JSON.
+`skills_read_file` returns the raw file text rather than JSON. The adapter is read-only: skills are created and versioned through the Skills Service admin API, including by agents that publish what they learned. See [Skills in Agent Bundles](../../../sdk/agent_sdk/feature_guides/skills.md) for how bots and bundles use these tools.
 
 ## gRPC Adapter (Dynamic)
 

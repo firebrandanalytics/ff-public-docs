@@ -22,7 +22,7 @@ Every MCP and admin request needs the `X-Api-Key` header. The key is the `mcp-ga
 
 ## Enabling Adapters for Your App
 
-Out of the box the `entity`, `context`, `docproc`, `sandbox`, and `websearch` adapters are active. `telemetry`, `dataaccess`, `knowledgebase`, `skills`, `grpc`, and `a2a-client` are off until their settings are added.
+Out of the box the `entity`, `context`, `docproc`, `sandbox`, and `websearch` adapters are active. `telemetry`, `dataaccess`, `knowledgebase`, `skills`, `grpc`, and `a2a-client` are off until their settings are added. Note that the `sandbox` adapter targets the legacy Code Sandbox API and does not work against [Code Sandbox v2](../code-sandbox/README.md); see [tools.md](./tools.md) for details.
 
 For the entity tools to work against your app, the gateway must be told which agent bundle (and optionally which graph) to act as. Example overrides:
 
