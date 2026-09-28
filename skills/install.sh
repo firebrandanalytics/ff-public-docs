@@ -75,7 +75,7 @@ if $UNINSTALL; then
       if [[ -d "$HOME/.claude/skills/$skill" ]]; then
         rm -rf "$HOME/.claude/skills/$skill"
         echo "Removed Claude Code skill: $skill"
-        ((count++))
+        count=$((count + 1))
       fi
     done
   fi
@@ -84,7 +84,7 @@ if $UNINSTALL; then
       if [[ -f "$PROJECT_DIR/.cursor/rules/$skill.mdc" ]]; then
         rm "$PROJECT_DIR/.cursor/rules/$skill.mdc"
         echo "Removed Cursor rule: $skill"
-        ((count++))
+        count=$((count + 1))
       fi
     done
   fi
@@ -113,7 +113,7 @@ for skill in "${SKILLS[@]}"; do
     if [[ -d "$skill_dir/modes" ]]; then
       cp -r "$skill_dir/modes" "$dest/"
     fi
-    ((claude_count++))
+    claude_count=$((claude_count + 1))
   fi
 
   # Cursor: generate .mdc file
@@ -130,7 +130,7 @@ for skill in "${SKILLS[@]}"; do
       echo "---"
       echo "$body"
     } > "$dest"
-    ((cursor_count++))
+    cursor_count=$((cursor_count + 1))
   fi
 done
 
